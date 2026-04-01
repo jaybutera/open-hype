@@ -259,8 +259,17 @@ export function TradingChart({ engine }: Props) {
   }, [allMids, currentAsset, paperPositions, setDraftOrder, setShowConfirm]);
 
   const placeFromDraft = useCallback((draft: DraftOrder, sizeUsdc: string, priceNum: number) => {
-    const assetSize = (parseFloat(sizeUsdc) / priceNum).toString();
     const isReduceOnly = draft.type === 'tp' || draft.type === 'stop';
+
+    // For TP/SL, use the full position size so it closes entirely.
+    // Using sizeUsdc / triggerPrice would under-size the close order.
+    let assetSize: string;
+    if (isReduceOnly) {
+      const pos = engine.getPosition(currentAsset);
+      assetSize = pos ? pos.szi.abs().toString() : (parseFloat(sizeUsdc) / priceNum).toString();
+    } else {
+      assetSize = (parseFloat(sizeUsdc) / priceNum).toString();
+    }
 
     let orderType: import('../../types/order.ts').OrderType;
     if (draft.type === 'limit') {

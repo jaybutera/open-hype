@@ -284,6 +284,207 @@ describe('onUpdate callback', () => {
   });
 });
 
+describe('TP/SL via onUpdate callback (UI integration)', () => {
+  it('emits empty positions and orders when TP fills on same asset', () => {
+    const states: ReturnType<PaperEngine['getState']>[] = [];
+    const eng = new PaperEngine({
+      initialBalance: '10000',
+      leverage: 10,
+      onUpdate: (state) => states.push(state),
+    });
+
+    // Simulate OrderPanel market buy flow:
+    // 1. Place limit order at mid price
+    eng.placeOrder({
+      coin: 'BTC', side: 'buy', price: '50000', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
+    });
+    // 2. Immediately fill via onPriceUpdate (like OrderPanel line 83)
+    eng.onPriceUpdate('BTC', '50000');
+    expect(eng.getPositions()).toHaveLength(1);
+
+    // 3. Place TP and SL (like OrderPanel lines 87-109)
+    eng.placeOrder({
+      coin: 'BTC', side: 'sell', price: '55000', size: '1',
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
+    });
+    eng.placeOrder({
+      coin: 'BTC', side: 'sell', price: '48000', size: '1',
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
+    });
+    expect(eng.getOpenOrders()).toHaveLength(2);
+
+    // Clear update history to focus on the TP fill
+    states.length = 0;
+
+    // Price rises past TP — same asset, same tick
+    eng.onPriceUpdate('BTC', '56000');
+
+    // Engine state should be clean
+    expect(eng.getPositions()).toHaveLength(0);
+    expect(eng.getOpenOrders()).toHaveLength(0);
+
+    // The last emitted state (what the UI sees) should also be clean
+    const lastState = states[states.length - 1];
+    expect(lastState.positions).toHaveLength(0);
+    expect(lastState.openOrders).toHaveLength(0);
+  });
+
+  it('emits empty positions and orders when SL fills on same asset', () => {
+    const states: ReturnType<PaperEngine['getState']>[] = [];
+    const eng = new PaperEngine({
+      initialBalance: '10000',
+      leverage: 10,
+      onUpdate: (state) => states.push(state),
+    });
+
+    // Market buy
+    eng.placeOrder({
+      coin: 'BTC', side: 'buy', price: '50000', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
+    });
+    eng.onPriceUpdate('BTC', '50000');
+
+    // TP and SL
+    eng.placeOrder({
+      coin: 'BTC', side: 'sell', price: '55000', size: '1',
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
+    });
+    eng.placeOrder({
+      coin: 'BTC', side: 'sell', price: '48000', size: '1',
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
+    });
+
+    states.length = 0;
+
+    // Price drops past SL
+    eng.onPriceUpdate('BTC', '47000');
+
+    expect(eng.getPositions()).toHaveLength(0);
+    expect(eng.getOpenOrders()).toHaveLength(0);
+
+    const lastState = states[states.length - 1];
+    expect(lastState.positions).toHaveLength(0);
+    expect(lastState.openOrders).toHaveLength(0);
+  });
+
+  it('TP fills with fractional USDC-derived sizes', () => {
+    // Simulate the exact OrderPanel flow: USDC → asset size via parseFloat division
+    const sizeUsdc = '500';
+    const price = '50000';
+    const assetSize = (parseFloat(sizeUsdc) / parseFloat(price)).toString(); // "0.01"
+
+    const states: ReturnType<PaperEngine['getState']>[] = [];
+    const eng = new PaperEngine({
+      initialBalance: '10000',
+      leverage: 10,
+      onUpdate: (state) => states.push(state),
+    });
+
+    eng.placeOrder({
+      coin: 'BTC', side: 'buy', price, size: assetSize,
+      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
+    });
+    eng.onPriceUpdate('BTC', price);
+    expect(eng.getPositions()).toHaveLength(1);
+
+    // TP and SL use the same assetSize string
+    eng.placeOrder({
+      coin: 'BTC', side: 'sell', price: '55000', size: assetSize,
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
+    });
+    eng.placeOrder({
+      coin: 'BTC', side: 'sell', price: '48000', size: assetSize,
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
+    });
+
+    states.length = 0;
+    eng.onPriceUpdate('BTC', '55500');
+
+    expect(eng.getPositions()).toHaveLength(0);
+    expect(eng.getOpenOrders()).toHaveLength(0);
+
+    const lastState = states[states.length - 1];
+    expect(lastState.positions).toHaveLength(0);
+    expect(lastState.openOrders).toHaveLength(0);
+  });
+});
+
+describe('TP/SL with non-reduceOnly orders on same coin', () => {
+  it('does not cancel non-reduceOnly orders when position closes via TP', () => {
+    // Open long
+    engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: '50000', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
+    });
+    engine.onPriceUpdate('BTC', '50000');
+
+    // Place TP
+    engine.placeOrder({
+      coin: 'BTC', side: 'sell', price: '55000', size: '1',
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
+    });
+
+    // Also have a regular (non-reduceOnly) limit order on BTC
+    engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: '45000', size: '0.5',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
+    expect(engine.getOpenOrders()).toHaveLength(2);
+
+    // TP fills
+    engine.onPriceUpdate('BTC', '56000');
+
+    // Position closed, TP removed, but the non-reduceOnly limit order survives
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(1);
+    expect(engine.getOpenOrders()[0].reduceOnly).toBe(false);
+  });
+});
+
+describe('TP/SL after rehydration from persisted state', () => {
+  it('TP still triggers after JSON round-trip', () => {
+    // Set up position + TP + SL
+    engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: '50000', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
+    });
+    engine.onPriceUpdate('BTC', '50000');
+
+    engine.placeOrder({
+      coin: 'BTC', side: 'sell', price: '55000', size: '1',
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
+    });
+    engine.placeOrder({
+      coin: 'BTC', side: 'sell', price: '48000', size: '1',
+      reduceOnly: true,
+      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
+    });
+
+    // Simulate persist → reload: JSON round-trip
+    const serialized = JSON.parse(JSON.stringify(engine.getState()));
+    const engine2 = new PaperEngine({ initialBalance: '10000', leverage: 10 });
+    engine2.loadState(serialized);
+
+    expect(engine2.getPositions()).toHaveLength(1);
+    expect(engine2.getOpenOrders()).toHaveLength(2);
+
+    // Price rises past TP
+    engine2.onPriceUpdate('BTC', '56000');
+
+    expect(engine2.getPositions()).toHaveLength(0);
+    expect(engine2.getOpenOrders()).toHaveLength(0);
+  });
+});
+
 describe('balance tracking through multiple trades', () => {
   it('accumulates realized PnL and fees correctly', () => {
     // Use smaller sizes so margin isn't an issue

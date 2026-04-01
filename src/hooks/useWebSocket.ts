@@ -29,9 +29,20 @@ export function useWebSocket(engine: PaperEngine): void {
       if (!msg.mids) return;
       useMarketStore.getState().batchUpdateMids(msg.mids);
 
-      const currentCoin = useMarketStore.getState().currentAsset;
-      const mid = msg.mids[currentCoin];
-      if (mid) engine.onPriceUpdate(currentCoin, mid);
+      // Forward price updates for all coins with positions or open orders
+      // so TP/SL triggers even when viewing a different coin
+      const positions = engine.getPositions();
+      const orders = engine.getOpenOrders();
+      const activeCoins = new Set<string>();
+      for (const p of positions) activeCoins.add(p.coin);
+      for (const o of orders) activeCoins.add(o.coin);
+      // Always include the currently viewed coin for PnL updates
+      activeCoins.add(useMarketStore.getState().currentAsset);
+
+      for (const coin of activeCoins) {
+        const mid = msg.mids[coin];
+        if (mid) engine.onPriceUpdate(coin, mid);
+      }
     });
   }, [engine]);
 
@@ -42,9 +53,17 @@ export function useWebSocket(engine: PaperEngine): void {
       if (!msg.mids) return;
       useMarketStore.getState().batchUpdateMids(msg.mids);
 
-      const currentCoin = useMarketStore.getState().currentAsset;
-      const mid = msg.mids[currentCoin];
-      if (mid) engine.onPriceUpdate(currentCoin, mid);
+      const positions = engine.getPositions();
+      const orders = engine.getOpenOrders();
+      const activeCoins = new Set<string>();
+      for (const p of positions) activeCoins.add(p.coin);
+      for (const o of orders) activeCoins.add(o.coin);
+      activeCoins.add(useMarketStore.getState().currentAsset);
+
+      for (const coin of activeCoins) {
+        const mid = msg.mids[coin];
+        if (mid) engine.onPriceUpdate(coin, mid);
+      }
     });
   }, [engine]);
 

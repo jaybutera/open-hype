@@ -18,6 +18,7 @@ export function OrderConfirmModal({ engine }: Props) {
 
   if (!showConfirm || !draftOrder) return null;
 
+  const isReduceOnly = draftOrder.type === 'tp' || draftOrder.type === 'stop';
   const assetSize = parseFloat(sizeUsdc) / draftOrder.price;
 
   const handleConfirm = () => {
@@ -27,7 +28,6 @@ export function OrderConfirmModal({ engine }: Props) {
     }
 
     let orderType: OrderType;
-    const isReduceOnly = draftOrder.type === 'tp' || draftOrder.type === 'stop';
 
     if (draftOrder.type === 'limit') {
       orderType = { limit: { tif: 'Gtc' } };
@@ -41,11 +41,20 @@ export function OrderConfirmModal({ engine }: Props) {
       };
     }
 
+    // For TP/SL, use the full position size so it closes entirely
+    let size: string;
+    if (isReduceOnly) {
+      const pos = engine.getPosition(currentAsset);
+      size = pos ? pos.szi.abs().toString() : assetSize.toString();
+    } else {
+      size = assetSize.toString();
+    }
+
     const result = engine.placeOrder({
       coin: currentAsset,
       side: draftOrder.side,
       price: draftOrder.price.toFixed(2),
-      size: assetSize.toString(),
+      size,
       reduceOnly: isReduceOnly,
       orderType,
     });
