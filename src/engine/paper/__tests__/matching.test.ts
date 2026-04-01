@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Decimal from 'decimal.js';
-import { shouldFillLimit, shouldTrigger, matchOrders, type PaperOrder } from '../matching.ts';
+import { shouldFillLimit, shouldTrigger, shouldTriggerFromCandle, matchTriggersByCandle, matchOrders, type PaperOrder } from '../matching.ts';
 
 function makeOrder(overrides: Partial<PaperOrder> = {}): PaperOrder {
   return {
@@ -155,5 +155,89 @@ describe('matchOrders', () => {
     ];
     const fills = matchOrders(orders, new Decimal('49000'));
     expect(fills).toHaveLength(2);
+  });
+});
+
+describe('shouldTriggerFromCandle', () => {
+  it('triggers long TP when candle high reaches trigger price', () => {
+    const order = makeOrder({
+      type: 'trigger',
+      side: 'sell',
+      tpsl: 'tp',
+      triggerPx: new Decimal('55000'),
+    });
+    // Mid might be 54500 but candle wick hit 55100
+    expect(shouldTriggerFromCandle(order, new Decimal('55100'), new Decimal('54000'))).toBe(true);
+  });
+
+  it('does not trigger long TP when candle high is below trigger', () => {
+    const order = makeOrder({
+      type: 'trigger',
+      side: 'sell',
+      tpsl: 'tp',
+      triggerPx: new Decimal('55000'),
+    });
+    expect(shouldTriggerFromCandle(order, new Decimal('54900'), new Decimal('54000'))).toBe(false);
+  });
+
+  it('triggers long SL when candle low reaches trigger price', () => {
+    const order = makeOrder({
+      type: 'trigger',
+      side: 'sell',
+      tpsl: 'sl',
+      triggerPx: new Decimal('48000'),
+    });
+    expect(shouldTriggerFromCandle(order, new Decimal('50000'), new Decimal('47500'))).toBe(true);
+  });
+
+  it('does not trigger long SL when candle low is above trigger', () => {
+    const order = makeOrder({
+      type: 'trigger',
+      side: 'sell',
+      tpsl: 'sl',
+      triggerPx: new Decimal('48000'),
+    });
+    expect(shouldTriggerFromCandle(order, new Decimal('50000'), new Decimal('48500'))).toBe(false);
+  });
+
+  it('triggers short TP when candle low reaches trigger price', () => {
+    const order = makeOrder({
+      type: 'trigger',
+      side: 'buy',
+      tpsl: 'tp',
+      triggerPx: new Decimal('45000'),
+    });
+    expect(shouldTriggerFromCandle(order, new Decimal('50000'), new Decimal('44500'))).toBe(true);
+  });
+
+  it('triggers short SL when candle high reaches trigger price', () => {
+    const order = makeOrder({
+      type: 'trigger',
+      side: 'buy',
+      tpsl: 'sl',
+      triggerPx: new Decimal('52000'),
+    });
+    expect(shouldTriggerFromCandle(order, new Decimal('52500'), new Decimal('49000'))).toBe(true);
+  });
+});
+
+describe('matchTriggersByCandle', () => {
+  it('fills at trigger price, not mid', () => {
+    const order = makeOrder({
+      type: 'trigger',
+      side: 'sell',
+      tpsl: 'tp',
+      triggerPx: new Decimal('55000'),
+      isMarket: true,
+    });
+    const fills = matchTriggersByCandle([order], new Decimal('55500'), new Decimal('54000'));
+    expect(fills).toHaveLength(1);
+    expect(fills[0].fillPrice.toString()).toBe('55000');
+  });
+
+  it('ignores limit orders', () => {
+    const order = makeOrder({ type: 'limit' });
+    const fills = matchTriggersByCandle([order], new Decimal('60000'), new Decimal('40000'));
+    expect(fills).toHaveLength(0);
   });
 });

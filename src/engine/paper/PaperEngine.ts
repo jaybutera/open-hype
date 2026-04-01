@@ -1,7 +1,7 @@
 import Decimal from 'decimal.js';
 import type { OrderRequest, PlaceOrderResult, Side } from '../../types/order.ts';
 import { DEFAULT_LEVERAGE, MAINTENANCE_MARGIN_RATE, MAKER_FEE_RATE, TAKER_FEE_RATE } from '../../config/constants.ts';
-import { matchOrders, type PaperOrder, type FillResult } from './matching.ts';
+import { matchOrders, matchTriggersByCandle, type PaperOrder, type FillResult } from './matching.ts';
 import { applyFill, computeUnrealizedPnl, computeLiquidationPrice, type PaperPosition } from './positions.ts';
 import { calculateFee } from './pnl.ts';
 import { createLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
@@ -201,6 +201,27 @@ export class PaperEngine {
       this.executeFill(fill);
     }
 
+    this.emitUpdate();
+  }
+
+  /**
+   * Called on candle updates. Checks trigger orders against the candle
+   * high/low to catch wicks that the mid price might miss.
+   */
+  onCandleUpdate(coin: string, high: string, low: string): void {
+    const coinOrders = this.openOrders.filter(
+      o => o.coin === coin && o.type === 'trigger',
+    );
+    if (coinOrders.length === 0) return;
+
+    const h = new Decimal(high);
+    const l = new Decimal(low);
+    const fillResults = matchTriggersByCandle(coinOrders, h, l);
+    if (fillResults.length === 0) return;
+
+    for (const fill of fillResults) {
+      this.executeFill(fill);
+    }
     this.emitUpdate();
   }
 

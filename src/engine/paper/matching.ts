@@ -51,6 +51,54 @@ export function shouldTrigger(order: PaperOrder, midPrice: Decimal): boolean {
 }
 
 /**
+ * Check if a trigger order should activate given a candle's high and low.
+ * This catches wicks that cross the trigger but where mid price may not.
+ */
+export function shouldTriggerFromCandle(
+  order: PaperOrder,
+  high: Decimal,
+  low: Decimal,
+): boolean {
+  if (order.type !== 'trigger' || !order.triggerPx) return false;
+
+  if (order.tpsl === 'sl') {
+    if (order.side === 'sell') return low.lte(order.triggerPx);  // long SL
+    return high.gte(order.triggerPx);  // short SL
+  }
+  if (order.tpsl === 'tp') {
+    if (order.side === 'sell') return high.gte(order.triggerPx); // long TP
+    return low.lte(order.triggerPx);  // short TP
+  }
+  return false;
+}
+
+/**
+ * Match trigger orders against candle high/low.
+ * Fills at the trigger price (the order would have been hit at that exact level).
+ */
+export function matchTriggersByCandle(
+  orders: PaperOrder[],
+  high: Decimal,
+  low: Decimal,
+): FillResult[] {
+  const fills: FillResult[] = [];
+
+  for (const order of orders) {
+    if (order.type !== 'trigger') continue;
+    if (!shouldTriggerFromCandle(order, high, low)) continue;
+
+    fills.push({
+      order,
+      fillPrice: order.triggerPx!,  // fill at trigger price
+      fillSize: order.size,
+      isMaker: false,
+    });
+  }
+
+  return fills;
+}
+
+/**
  * Attempt to fill orders against a new price tick.
  * Returns orders that should be filled this tick.
  */

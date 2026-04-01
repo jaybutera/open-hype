@@ -74,6 +74,9 @@ export function useWebSocket(engine: PaperEngine): void {
       const candle = data as CandleData;
       if (candle && candle.t !== undefined && candle.s === coin) {
         appendCandle(candle);
+        // Forward candle high/low to paper engine for TP/SL trigger checking.
+        // Mid price alone can miss wicks that cross trigger levels.
+        engine.onCandleUpdate(coin, candle.h, candle.l);
       }
     });
   }, [currentAsset, interval, appendCandle]);
