@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
+import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { OrderType, Side } from '../../types/order.ts';
 
@@ -43,7 +44,81 @@ export function OrderPanel({ engine }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const riskUsdc = useSettingsStore(s => s.riskUsdc);
+  const setRiskUsdc = useSettingsStore(s => s.setRiskUsdc);
+  const pendingSetup = useTradeSetupStore(s => s.pendingSetup);
+  const activeSetups = useTradeSetupStore(s => s.activeSetups);
+  const startSetup = useTradeSetupStore(s => s.startSetup);
+  const removeSetup = useTradeSetupStore(s => s.removeSetup);
+  const clearPending = useTradeSetupStore(s => s.clearPending);
+
   const mid = allMids[currentAsset] ?? '0';
+
+  const handleExecuteSetup = (id: string) => {
+    const setup = useTradeSetupStore.getState().activeSetups.find(s => s.id === id);
+    if (!setup) {
+      setError('Setup not found');
+      return;
+    }
+
+    // Recalculate size from current risk in case it was set/changed after setup creation
+    const currentRisk = parseFloat(useSettingsStore.getState().riskUsdc) || 0;
+    const riskPerUnit = Math.abs(setup.entryPrice - setup.slPrice);
+    const assetSize = riskPerUnit > 0 && currentRisk > 0
+      ? currentRisk / riskPerUnit
+      : setup.assetSize;
+    const sizeStr = assetSize.toString();
+
+    if (assetSize <= 0) {
+      setError('Risk not set — size is zero');
+      return;
+    }
+
+    const closeSide: Side = setup.side === 'buy' ? 'sell' : 'buy';
+
+    const errors: string[] = [];
+
+    const r1 = engine.placeOrder({
+      coin: currentAsset,
+      side: setup.side,
+      price: setup.entryPrice.toFixed(2),
+      size: sizeStr,
+      reduceOnly: false,
+      orderType: { limit: { tif: 'Gtc' } },
+    });
+    if (!r1.success) errors.push(`Entry: ${r1.error}`);
+
+    const r2 = engine.placeOrder({
+      coin: currentAsset,
+      side: closeSide,
+      price: setup.tpPrice.toFixed(2),
+      size: sizeStr,
+      reduceOnly: false,
+      orderType: { trigger: { isMarket: true, triggerPx: setup.tpPrice.toFixed(2), tpsl: 'tp' } },
+    });
+    if (!r2.success) errors.push(`TP: ${r2.error}`);
+
+    const r3 = engine.placeOrder({
+      coin: currentAsset,
+      side: closeSide,
+      price: setup.slPrice.toFixed(2),
+      size: sizeStr,
+      reduceOnly: false,
+      orderType: { trigger: { isMarket: true, triggerPx: setup.slPrice.toFixed(2), tpsl: 'sl' } },
+    });
+    if (!r3.success) errors.push(`SL: ${r3.error}`);
+
+    if (errors.length > 0) {
+      setError(errors.join(' | '));
+      // Still remove setup even on partial failure
+    }
+
+    removeSetup(id);
+    if (errors.length === 0) {
+      setSuccess('Setup executed — 3 orders placed');
+      setTimeout(() => setSuccess(null), 2000);
+    }
+  };
 
   const handleSubmit = () => {
     setError(null);
@@ -155,6 +230,103 @@ export function OrderPanel({ engine }: Props) {
           Short
         </button>
       </div>
+
+      {/* Risk-based trade setup */}
+      <div>
+        <label style={labelStyle}>Risk (USDC)</label>
+        <input
+          value={riskUsdc}
+          onChange={e => setRiskUsdc(e.target.value)}
+          placeholder="20.00"
+          style={inputStyle}
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button
+          onClick={() => startSetup('buy')}
+          disabled={!!pendingSetup}
+          style={{
+            flex: 1, padding: '8px', border: 'none', borderRadius: 6,
+            cursor: pendingSetup ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: 12,
+            background: '#0ecb81', color: '#0a0e17', opacity: pendingSetup ? 0.4 : 1,
+          }}
+        >
+          Set Up Long
+        </button>
+        <button
+          onClick={() => startSetup('sell')}
+          disabled={!!pendingSetup}
+          style={{
+            flex: 1, padding: '8px', border: 'none', borderRadius: 6,
+            cursor: pendingSetup ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: 12,
+            background: '#f6465d', color: '#fff', opacity: pendingSetup ? 0.4 : 1,
+          }}
+        >
+          Set Up Short
+        </button>
+      </div>
+      {pendingSetup && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+          <span style={{ color: pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d' }}>
+            Click chart: {pendingSetup.clicks.length}/3 levels
+          </span>
+          <button
+            onClick={clearPending}
+            style={{
+              background: 'none', border: '1px solid #2a2f3e', borderRadius: 4,
+              color: '#8a8f98', fontSize: 11, padding: '2px 8px', cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Active trade setups */}
+      {activeSetups.map(setup => (
+        <div key={setup.id} style={{
+          background: '#1a1f2e', borderRadius: 6, padding: '8px 10px',
+          fontSize: 11, color: '#e1e4e8',
+          borderLeft: `3px solid ${setup.side === 'buy' ? '#0ecb81' : '#f6465d'}`,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontWeight: 700, color: setup.side === 'buy' ? '#0ecb81' : '#f6465d' }}>
+              {setup.side === 'buy' ? 'LONG' : 'SHORT'} Setup
+            </span>
+            <span style={{ color: '#8a8f98' }}>R:R {setup.rr.toFixed(1)}</span>
+          </div>
+          <div>Entry: {setup.entryPrice.toFixed(2)} | Size: {setup.assetSize.toPrecision(4)}</div>
+          <div>
+            <span style={{ color: '#0ecb81' }}>TP: {setup.tpPrice.toFixed(2)} (+${setup.potentialPnl.toFixed(2)})</span>
+            {' · '}
+            <span style={{ color: '#f6465d' }}>SL: {setup.slPrice.toFixed(2)} (-${setup.potentialLoss.toFixed(2)})</span>
+          </div>
+          <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+            <button
+              onClick={() => handleExecuteSetup(setup.id)}
+              style={{
+                flex: 1, padding: '5px', border: 'none', borderRadius: 4,
+                background: '#0ecb81', color: '#0a0e17',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              Execute
+            </button>
+            <button
+              onClick={() => removeSetup(setup.id)}
+              style={{
+                padding: '5px 10px', border: 'none', borderRadius: 4,
+                background: '#f6465d', color: '#fff',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <div style={{ borderTop: '1px solid #1a1f2e', margin: '2px 0' }} />
 
       {/* Order type */}
       <div style={{ display: 'flex', gap: 4 }}>

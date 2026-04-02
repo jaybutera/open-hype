@@ -4,6 +4,8 @@ import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useChartStore, type DraftOrder } from '../../store/useChartStore.ts';
+import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
+import { TradeBoxPrimitive } from './TradeBoxPrimitive.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { CandleInterval } from '../../types/market.ts';
 
@@ -18,6 +20,7 @@ export function TradingChart({ engine }: Props) {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const tradeBoxPrimitivesRef = useRef<Map<string, TradeBoxPrimitive>>(new Map());
 
   const candles = useMarketStore(s => s.candles);
   const currentAsset = useMarketStore(s => s.currentAsset);
@@ -32,6 +35,12 @@ export function TradingChart({ engine }: Props) {
   const setDraftOrder = useChartStore(s => s.setDraftOrder);
   const setShowConfirm = useChartStore(s => s.setShowConfirm);
   const setDragging = useChartStore(s => s.setDragging);
+  const activeSetups = useTradeSetupStore(s => s.activeSetups);
+  const pendingSetup = useTradeSetupStore(s => s.pendingSetup);
+  const addClick = useTradeSetupStore(s => s.addClick);
+  const updateSetup = useTradeSetupStore(s => s.updateSetup);
+  const removeSetup = useTradeSetupStore(s => s.removeSetup);
+  const clearPending = useTradeSetupStore(s => s.clearPending);
 
   // Create chart — only once
   useEffect(() => {
@@ -84,6 +93,7 @@ export function TradingChart({ engine }: Props) {
       chartRef.current = null;
       seriesRef.current = null;
       priceLinesRef.current = [];
+      tradeBoxPrimitivesRef.current.clear();
     };
   }, []);
 
@@ -208,24 +218,54 @@ export function TradingChart({ engine }: Props) {
         }));
       } catch {}
     }
-  }, [mode, paperPositions, paperOrders, draftOrder, currentAsset]);
 
-  // Shift+Click: place order from chart.
-  // If position exists: above entry = TP, below entry = SL (for longs; reversed for shorts).
-  // If no position: below mid = limit buy, above mid = limit sell.
-  // If sizeUsdc is already set in the panel, place immediately (no modal).
+    // Draw pending setup click markers
+    if (pendingSetup) {
+      const color = pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d';
+      for (const clickPrice of pendingSetup.clicks) {
+        try {
+          priceLinesRef.current.push(series.createPriceLine({
+            price: clickPrice,
+            color,
+            lineWidth: 1,
+            lineStyle: LineStyle.SparseDotted,
+            axisLabelVisible: true,
+            title: `● ${clickPrice.toFixed(2)}`,
+          }));
+        } catch {}
+      }
+    }
+  }, [mode, paperPositions, paperOrders, draftOrder, pendingSetup, currentAsset]);
+
+  // Mouse down: handle trade box interactions first, then setup clicks, then shift+click orders
   const handleChartClick = useCallback((e: React.MouseEvent) => {
-    if (!e.shiftKey || !seriesRef.current) return;
+    if (!seriesRef.current) return;
 
     const rect = chartContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
+    const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const price = seriesRef.current.coordinateToPrice(y);
     if (price === null || price === undefined) return;
+    const priceNum = Number(price);
+
+    // 1. Check trade box button clicks and drag starts
+    for (const prim of tradeBoxPrimitivesRef.current.values()) {
+      if (prim.handleMouseDown(x, y)) return;
+    }
+
+    // 2. If a setup is pending, feed clicks to it (no shift required)
+    const pending = useTradeSetupStore.getState().pendingSetup;
+    if (pending) {
+      addClick(priceNum);
+      return;
+    }
+
+    // 3. Original shift+click logic
+    if (!e.shiftKey) return;
 
     const mid = parseFloat(allMids[currentAsset] ?? '0');
-    const priceNum = Number(price);
     const pos = paperPositions.find(p => p.coin === currentAsset);
 
     let draft: DraftOrder;
@@ -256,7 +296,7 @@ export function TradingChart({ engine }: Props) {
       setDraftOrder(draft);
       setShowConfirm(true);
     }
-  }, [allMids, currentAsset, paperPositions, setDraftOrder, setShowConfirm]);
+  }, [allMids, currentAsset, paperPositions, setDraftOrder, setShowConfirm, addClick]);
 
   const placeFromDraft = useCallback((draft: DraftOrder, sizeUsdc: string, priceNum: number) => {
     const isReduceOnly = draft.type === 'tp' || draft.type === 'stop';
@@ -294,26 +334,85 @@ export function TradingChart({ engine }: Props) {
     });
   }, [engine, currentAsset]);
 
+  // Manage trade box primitives (attach/detach/update)
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    const primMap = tradeBoxPrimitivesRef.current;
+    const activeIds = new Set(activeSetups.map(s => s.id));
+
+    // Remove primitives for setups that no longer exist
+    for (const [id, prim] of primMap) {
+      if (!activeIds.has(id)) {
+        series.detachPrimitive(prim);
+        primMap.delete(id);
+      }
+    }
+
+    // Add or update primitives
+    for (const setup of activeSetups) {
+      const existing = primMap.get(setup.id);
+      if (existing) {
+        existing.updateSetup(setup);
+        existing.updateCallbacks(removeSetup, updateSetup);
+      } else {
+        const noop = () => {};
+        const prim = new TradeBoxPrimitive(
+          setup,
+          noop,
+          removeSetup,
+          updateSetup,
+        );
+        series.attachPrimitive(prim);
+        primMap.set(setup.id, prim);
+      }
+    }
+  }, [activeSetups, removeSetup, updateSetup]);
+
   const handleChartMouseMove = useCallback((e: React.MouseEvent) => {
-    const { draftOrder: draft, isDragging } = useChartStore.getState();
-    if (!isDragging || !draft || !seriesRef.current) return;
+    if (!seriesRef.current) return;
 
     const rect = chartContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const y = e.clientY - rect.top;
     const price = seriesRef.current.coordinateToPrice(y);
-    if (price !== null && price !== undefined) {
-      setDraftOrder({ ...draft, price: Number(price) });
+    if (price === null || price === undefined) return;
+    const priceNum = Number(price);
+
+    // Check trade box drags first
+    for (const prim of tradeBoxPrimitivesRef.current.values()) {
+      if (prim.handleMouseMove(priceNum)) return;
     }
+
+    // Original draft order drag
+    const { draftOrder: draft, isDragging } = useChartStore.getState();
+    if (!isDragging || !draft) return;
+    setDraftOrder({ ...draft, price: priceNum });
   }, [setDraftOrder]);
 
   const handleChartMouseUp = useCallback(() => {
+    // Release trade box drags
+    for (const prim of tradeBoxPrimitivesRef.current.values()) {
+      if (prim.handleMouseUp()) return;
+    }
+
+    // Original draft order release
     const draft = useChartStore.getState().draftOrder;
     if (draft) {
       setDragging(false);
       setShowConfirm(true);
     }
   }, [setDragging, setShowConfirm]);
+
+  // ESC cancels pending trade setup
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') clearPending();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [clearPending]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -335,8 +434,10 @@ export function TradingChart({ engine }: Props) {
             {iv}
           </button>
         ))}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#555', alignSelf: 'center' }}>
-          Shift+Click: place order (or TP/SL if position open)
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: pendingSetup ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
+          {pendingSetup
+            ? `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup (${pendingSetup.clicks.length}/3) — ESC to cancel`
+            : 'Shift+Click: place order (or TP/SL if position open)'}
         </span>
       </div>
 
