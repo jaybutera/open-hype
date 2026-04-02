@@ -119,16 +119,10 @@ export class PaperEngine {
       }
     }
 
-    // Check margin for non-reduceOnly orders
-    if (!req.reduceOnly) {
-      const requiredMargin = size.mul(price).div(this.leverage);
-      if (requiredMargin.gt(this.availableBalance())) {
-        return { success: false, error: 'Insufficient margin' };
-      }
-    }
-
     const isLimit = 'limit' in req.orderType;
     const isTrigger = 'trigger' in req.orderType;
+
+    // Margin is checked at fill time, not placement (matches real HL behavior)
 
     const oid = `paper-ord-${++orderCounter}`;
     const order: PaperOrder = {
@@ -242,6 +236,15 @@ export class PaperEngine {
       }
     }
 
+    // Check margin at fill time for non-reduceOnly, non-TP/SL orders
+    if (!order.reduceOnly && !order.tpsl) {
+      const requiredMargin = fill.fillSize.mul(fillPrice).div(this.leverage);
+      if (requiredMargin.gt(this.availableBalance())) {
+        this.removeOrder(order.id);
+        return;
+      }
+    }
+
     const fee = calculateFee(fill.fillSize, fillPrice, isMaker, this.makerRate, this.takerRate);
     const existing = this.positions.get(order.coin) ?? null;
 
@@ -262,9 +265,9 @@ export class PaperEngine {
       this.positions.set(order.coin, result.position);
     } else {
       this.positions.delete(order.coin);
-      // Position fully closed — cancel all remaining reduceOnly orders for this coin
+      // Position fully closed — cancel all reduceOnly and TP/SL orders for this coin
       this.openOrders = this.openOrders.filter(
-        o => !(o.coin === order.coin && o.reduceOnly && o.id !== order.id)
+        o => !(o.coin === order.coin && (o.reduceOnly || o.tpsl) && o.id !== order.id)
       );
     }
 

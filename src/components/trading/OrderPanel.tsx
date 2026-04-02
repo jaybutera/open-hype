@@ -86,7 +86,10 @@ export function OrderPanel({ engine }: Props) {
       reduceOnly: false,
       orderType: { limit: { tif: 'Gtc' } },
     });
-    if (!r1.success) errors.push(`Entry: ${r1.error}`);
+    if (!r1.success) {
+      setError(`Entry failed: ${r1.error}`);
+      return;
+    }
 
     const r2 = engine.placeOrder({
       coin: currentAsset,
@@ -110,7 +113,6 @@ export function OrderPanel({ engine }: Props) {
 
     if (errors.length > 0) {
       setError(errors.join(' | '));
-      // Still remove setup even on partial failure
     }
 
     removeSetup(id);

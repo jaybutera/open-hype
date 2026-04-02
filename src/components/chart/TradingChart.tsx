@@ -1,11 +1,12 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type Time, type IPriceLine, type LineWidth, LineStyle } from 'lightweight-charts';
+import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type Time, type IPriceLine, LineStyle } from 'lightweight-charts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useChartStore, type DraftOrder } from '../../store/useChartStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { TradeBoxPrimitive } from './TradeBoxPrimitive.ts';
+import { OrderLinePrimitive } from './OrderLinePrimitive.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { CandleInterval } from '../../types/market.ts';
 
@@ -21,6 +22,7 @@ export function TradingChart({ engine }: Props) {
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const tradeBoxPrimitivesRef = useRef<Map<string, TradeBoxPrimitive>>(new Map());
+  const orderLinePrimitivesRef = useRef<Map<string, OrderLinePrimitive>>(new Map());
 
   const candles = useMarketStore(s => s.candles);
   const currentAsset = useMarketStore(s => s.currentAsset);
@@ -94,6 +96,7 @@ export function TradingChart({ engine }: Props) {
       seriesRef.current = null;
       priceLinesRef.current = [];
       tradeBoxPrimitivesRef.current.clear();
+      orderLinePrimitivesRef.current.clear();
     };
   }, []);
 
@@ -167,43 +170,7 @@ export function TradingChart({ engine }: Props) {
         } catch {}
       }
 
-      for (const ord of paperOrders) {
-        if (ord.coin !== currentAsset) continue;
-        // Style differently for TP, SL, and regular limit orders
-        let color: string;
-        let label: string;
-        let style: number;
-        let width: LineWidth;
-
-        if (ord.tpsl === 'tp') {
-          color = '#0ecb81';
-          label = `TP`;
-          style = LineStyle.Dashed;
-          width = 2;
-        } else if (ord.tpsl === 'sl') {
-          color = '#f6465d';
-          label = `SL`;
-          style = LineStyle.Dashed;
-          width = 2;
-        } else {
-          const isBuy = ord.side === 'buy';
-          color = isBuy ? '#3861fb' : '#e67e22';
-          label = `LIMIT ${ord.side.toUpperCase()}`;
-          style = LineStyle.Dotted;
-          width = 1;
-        }
-
-        try {
-          priceLinesRef.current.push(series.createPriceLine({
-            price: (ord.triggerPx ?? ord.price).toNumber(),
-            color,
-            lineWidth: width,
-            lineStyle: style,
-            axisLabelVisible: true,
-            title: `${label} ${ord.size.toString()} @ ${(ord.triggerPx ?? ord.price).toFixed(1)}`,
-          }));
-        } catch {}
-      }
+      // Paper orders are rendered as draggable OrderLinePrimitives (managed separately below)
     }
 
     if (draftOrder) {
@@ -235,7 +202,7 @@ export function TradingChart({ engine }: Props) {
         } catch {}
       }
     }
-  }, [mode, paperPositions, paperOrders, draftOrder, pendingSetup, currentAsset]);
+  }, [mode, paperPositions, draftOrder, pendingSetup, currentAsset]);
 
   // Mouse down: handle trade box interactions first, then setup clicks, then shift+click orders
   const handleChartClick = useCallback((e: React.MouseEvent) => {
@@ -252,6 +219,11 @@ export function TradingChart({ engine }: Props) {
 
     // 1. Check trade box button clicks and drag starts
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
+      if (prim.handleMouseDown(x, y)) return;
+    }
+
+    // 1b. Check order line drag starts
+    for (const prim of orderLinePrimitivesRef.current.values()) {
       if (prim.handleMouseDown(x, y)) return;
     }
 
@@ -370,6 +342,67 @@ export function TradingChart({ engine }: Props) {
     }
   }, [activeSetups, removeSetup, updateSetup]);
 
+  // Callback: when an order line drag finishes, cancel old order and re-place at new price
+  const handleOrderDragDone = useCallback((orderId: string, newPrice: number) => {
+    const ord = paperOrders.find(o => o.id === orderId);
+    if (!ord) return;
+
+    engine.cancelOrder(orderId);
+
+    const isLimit = ord.type === 'limit';
+    const orderType: import('../../types/order.ts').OrderType = isLimit
+      ? { limit: { tif: 'Gtc' as const } }
+      : {
+          trigger: {
+            isMarket: ord.isMarket ?? true,
+            triggerPx: newPrice.toFixed(2),
+            tpsl: ord.tpsl ?? ('sl' as const),
+          },
+        };
+
+    engine.placeOrder({
+      coin: ord.coin,
+      side: ord.side,
+      price: isLimit ? newPrice.toFixed(2) : ord.price.toString(),
+      size: ord.size.toString(),
+      reduceOnly: ord.reduceOnly,
+      orderType,
+    });
+  }, [engine, paperOrders]);
+
+  // Manage order line primitives (attach/detach/update)
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    const primMap = orderLinePrimitivesRef.current;
+    const currentOrderIds = new Set(
+      paperOrders.filter(o => o.coin === currentAsset).map(o => o.id)
+    );
+
+    // Remove primitives for orders that no longer exist or are wrong asset
+    for (const [id, prim] of primMap) {
+      if (!currentOrderIds.has(id)) {
+        series.detachPrimitive(prim);
+        primMap.delete(id);
+      }
+    }
+
+    // Add or update
+    for (const ord of paperOrders) {
+      if (ord.coin !== currentAsset) continue;
+      const existing = primMap.get(ord.id);
+      if (existing) {
+        existing.updateOrder(ord);
+        existing.updateCallback(handleOrderDragDone);
+      } else {
+        const prim = new OrderLinePrimitive(ord, handleOrderDragDone);
+        series.attachPrimitive(prim);
+        primMap.set(ord.id, prim);
+      }
+    }
+  }, [paperOrders, currentAsset, handleOrderDragDone]);
+
   const handleChartMouseMove = useCallback((e: React.MouseEvent) => {
     if (!seriesRef.current) return;
 
@@ -385,6 +418,11 @@ export function TradingChart({ engine }: Props) {
       if (prim.handleMouseMove(priceNum)) return;
     }
 
+    // Check order line drags
+    for (const prim of orderLinePrimitivesRef.current.values()) {
+      if (prim.handleMouseMove(priceNum)) return;
+    }
+
     // Original draft order drag
     const { draftOrder: draft, isDragging } = useChartStore.getState();
     if (!isDragging || !draft) return;
@@ -394,6 +432,11 @@ export function TradingChart({ engine }: Props) {
   const handleChartMouseUp = useCallback(() => {
     // Release trade box drags
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
+      if (prim.handleMouseUp()) return;
+    }
+
+    // Release order line drags (fires cancel+re-place via callback)
+    for (const prim of orderLinePrimitivesRef.current.values()) {
       if (prim.handleMouseUp()) return;
     }
 
