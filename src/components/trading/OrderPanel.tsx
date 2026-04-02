@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
+import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { OrderType, Side } from '../../types/order.ts';
@@ -43,6 +44,16 @@ export function OrderPanel({ engine }: Props) {
   const [slPrice, setSlPrice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const lastRejection = useAccountStore(s => s.lastRejection);
+  const setRejection = useAccountStore(s => s.setRejection);
+
+  // Surface async order rejections (e.g. margin check at fill time)
+  useEffect(() => {
+    if (lastRejection) {
+      setError(lastRejection);
+      setRejection(null);
+    }
+  }, [lastRejection, setRejection]);
 
   const riskUsdc = useSettingsStore(s => s.riskUsdc);
   const setRiskUsdc = useSettingsStore(s => s.setRiskUsdc);

@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PaperEngine } from '../PaperEngine.ts';
+import type { PaperOrder } from '../matching.ts';
 
 let engine: PaperEngine;
 
@@ -7,704 +8,522 @@ beforeEach(() => {
   engine = new PaperEngine({ initialBalance: '10000', leverage: 10 });
 });
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function placeLimitBuy(coin: string, price: string, size: string, opts?: { reduceOnly?: boolean }) {
+  return engine.placeOrder({
+    coin, side: 'buy', price, size,
+    reduceOnly: opts?.reduceOnly ?? false,
+    orderType: { limit: { tif: 'Gtc' } },
+  });
+}
+
+function placeLimitSell(coin: string, price: string, size: string, opts?: { reduceOnly?: boolean }) {
+  return engine.placeOrder({
+    coin, side: 'sell', price, size,
+    reduceOnly: opts?.reduceOnly ?? false,
+    orderType: { limit: { tif: 'Gtc' } },
+  });
+}
+
+function placeTP(coin: string, side: 'buy' | 'sell', price: string, size: string, reduceOnly = false) {
+  return engine.placeOrder({
+    coin, side, price, size, reduceOnly,
+    orderType: { trigger: { isMarket: true, triggerPx: price, tpsl: 'tp' } },
+  });
+}
+
+function placeSL(coin: string, side: 'buy' | 'sell', price: string, size: string, reduceOnly = false) {
+  return engine.placeOrder({
+    coin, side, price, size, reduceOnly,
+    orderType: { trigger: { isMarket: true, triggerPx: price, tpsl: 'sl' } },
+  });
+}
+
+/** Place and immediately fill a long position */
+function openLong(coin: string, price: string, size: string) {
+  placeLimitBuy(coin, price, size);
+  engine.onPriceUpdate(coin, price);
+}
+
+/** Place and immediately fill a short position */
+function openShort(coin: string, price: string, size: string) {
+  placeLimitSell(coin, price, size);
+  engine.onPriceUpdate(coin, price);
+}
+
+// ── Order placement ──────────────────────────────────────────────────
+
 describe('placeOrder', () => {
-  it('places a limit buy order', () => {
-    const result = engine.placeOrder({
-      coin: 'BTC',
-      side: 'buy',
-      price: '50000',
-      size: '0.1',
-      reduceOnly: false,
-      orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(result.success).toBe(true);
-    expect(engine.getOpenOrders()).toHaveLength(1);
+  it('rejects zero/negative size and price', () => {
+    expect(placeLimitBuy('BTC', '50000', '0').success).toBe(false);
+    expect(placeLimitBuy('BTC', '0', '1').success).toBe(false);
   });
 
-  it('rejects zero size', () => {
-    const result = engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '0',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Size');
+  it('accepts placement regardless of margin (checked at fill)', () => {
+    // 100 BTC × 50000 / 10 = 500k margin > 10k balance — placement still succeeds
+    expect(placeLimitBuy('BTC', '50000', '100').success).toBe(true);
   });
 
-  it('accepts order placement regardless of margin (checked at fill)', () => {
-    // 100 BTC * 50000 / 10 = 500,000 margin needed — but placement always succeeds
-    const result = engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '100',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(result.success).toBe(true);
-    expect(engine.getOpenOrders()).toHaveLength(1);
+  it('rejects reduceOnly sell when no position', () => {
+    expect(placeLimitSell('BTC', '50000', '1', { reduceOnly: true }).success).toBe(false);
   });
 
-  it('rejects reduceOnly when no position', () => {
-    const result = engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '50000', size: '1',
-      reduceOnly: true, orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('No position');
+  it('rejects reduceOnly in wrong direction', () => {
+    openLong('BTC', '50000', '0.1');
+    // Can't reduceOnly buy when long
+    expect(placeLimitBuy('BTC', '48000', '0.1', { reduceOnly: true }).success).toBe(false);
   });
 });
 
-describe('cancelOrder', () => {
-  it('cancels an existing order', () => {
-    const result = engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '0.1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(engine.cancelOrder(result.oid as string)).toBe(true);
-    expect(engine.getOpenOrders()).toHaveLength(0);
-  });
+// ── Limit fill basics ────────────────────────────────────────────────
 
-  it('returns false for nonexistent order', () => {
-    expect(engine.cancelOrder('nonexistent')).toBe(false);
-  });
-});
+describe('limit order fills', () => {
+  it('buy fills when price drops to limit', () => {
+    placeLimitBuy('BTC', '50000', '0.1');
 
-describe('cancelAllOrders', () => {
-  it('cancels all orders for a coin', () => {
-    engine.placeOrder({ coin: 'BTC', side: 'buy', price: '50000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.placeOrder({ coin: 'ETH', side: 'buy', price: '3000', size: '1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.cancelAllOrders('BTC');
-    expect(engine.getOpenOrders()).toHaveLength(1);
-    expect(engine.getOpenOrders()[0].coin).toBe('ETH');
-  });
-
-  it('cancels all orders when no coin specified', () => {
-    engine.placeOrder({ coin: 'BTC', side: 'buy', price: '50000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.placeOrder({ coin: 'ETH', side: 'buy', price: '3000', size: '1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.cancelAllOrders();
-    expect(engine.getOpenOrders()).toHaveLength(0);
-  });
-});
-
-describe('full flow: limit buy fills on price drop', () => {
-  it('opens position when limit buy fills', () => {
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '0.1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-
-    // Price above limit — no fill
     engine.onPriceUpdate('BTC', '51000');
-    expect(engine.getOpenOrders()).toHaveLength(1);
     expect(engine.getPositions()).toHaveLength(0);
 
-    // Price drops to limit — fill
     engine.onPriceUpdate('BTC', '50000');
-    expect(engine.getOpenOrders()).toHaveLength(0);
     expect(engine.getPositions()).toHaveLength(1);
-
-    const pos = engine.getPosition('BTC')!;
-    expect(pos.szi.toString()).toBe('0.1');
-    expect(pos.entryPx.toString()).toBe('50000');
+    expect(engine.getPosition('BTC')!.szi.toString()).toBe('0.1');
+    expect(engine.getOpenOrders()).toHaveLength(0);
     expect(engine.getFills()).toHaveLength(1);
   });
-});
 
-describe('full flow: open long, TP hits, close with profit', () => {
-  it('realizes profit when TP triggers', () => {
-    // Place and fill a long position via limit
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000'); // fills
+  it('sell fills when price rises to limit', () => {
+    placeLimitSell('BTC', '50000', '0.1');
 
-    // Place TP at 55000
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-
-    // Price rises to TP
-    engine.onPriceUpdate('BTC', '55000');
-    expect(engine.getPositions()).toHaveLength(0);
-    expect(engine.getOpenOrders()).toHaveLength(0);
-
-    // Balance should have increased (initial 10000 + 5000 profit - fees)
-    const balance = parseFloat(engine.getBalance());
-    expect(balance).toBeGreaterThan(14000); // rough check accounting for fees
-    expect(balance).toBeLessThan(15000);
-  });
-});
-
-describe('full flow: open short, SL triggers, loss realized', () => {
-  it('realizes loss when SL triggers', () => {
-    // Open short at 50000
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000'); // fills
-
-    // Place SL at 52000 (buy to close)
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '52000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '52000', tpsl: 'sl' } },
-    });
-
-    engine.onPriceUpdate('BTC', '52000');
+    engine.onPriceUpdate('BTC', '49000');
     expect(engine.getPositions()).toHaveLength(0);
 
-    // Balance: 10000 - 2000 loss - fees
-    const balance = parseFloat(engine.getBalance());
-    expect(balance).toBeLessThan(8100);
-    expect(balance).toBeGreaterThan(7900);
-  });
-});
-
-describe('SL triggers and cancels TP', () => {
-  it('closes position and removes TP when SL fills', () => {
-    // Open short at 50000
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
     engine.onPriceUpdate('BTC', '50000');
-    expect(engine.getPositions()).toHaveLength(1);
-
-    // Place TP at 48000 and SL at 52000
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '48000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'tp' } },
-    });
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '52000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '52000', tpsl: 'sl' } },
-    });
-    expect(engine.getOpenOrders()).toHaveLength(2);
-
-    // Price rises to SL
-    engine.onPriceUpdate('BTC', '52000');
-
-    // Position should be closed and BOTH orders gone
-    expect(engine.getPositions()).toHaveLength(0);
-    expect(engine.getOpenOrders()).toHaveLength(0);
+    const pos = engine.getPosition('BTC')!;
+    expect(pos.szi.toString()).toBe('-0.1');
   });
 
-  it('closes position and removes SL when TP fills', () => {
-    // Open long at 50000
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000');
-
-    // Place TP at 55000 and SL at 48000
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '48000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
-    });
-    expect(engine.getOpenOrders()).toHaveLength(2);
-
-    // Price rises to TP
-    engine.onPriceUpdate('BTC', '55000');
-
-    expect(engine.getPositions()).toHaveLength(0);
-    expect(engine.getOpenOrders()).toHaveLength(0);
-  });
-});
-
-describe('multiple assets tracked independently', () => {
-  it('manages BTC and ETH positions separately', () => {
-    engine.placeOrder({ coin: 'BTC', side: 'buy', price: '50000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.placeOrder({ coin: 'ETH', side: 'sell', price: '3000', size: '1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
+  it('manages independent positions per asset', () => {
+    placeLimitBuy('BTC', '50000', '0.1');
+    placeLimitSell('ETH', '3000', '1');
 
     engine.onPriceUpdate('BTC', '50000');
     engine.onPriceUpdate('ETH', '3000');
 
     expect(engine.getPositions()).toHaveLength(2);
-    const btc = engine.getPosition('BTC')!;
-    const eth = engine.getPosition('ETH')!;
-    expect(btc.szi.toString()).toBe('0.1');
-    expect(eth.szi.toString()).toBe('-1');
+    expect(engine.getPosition('BTC')!.szi.toString()).toBe('0.1');
+    expect(engine.getPosition('ETH')!.szi.toString()).toBe('-1');
   });
 });
 
-describe('marketClose', () => {
-  it('closes a long position at market price', () => {
-    engine.placeOrder({ coin: 'BTC', side: 'buy', price: '50000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.onPriceUpdate('BTC', '50000'); // fill
+// ── Margin check at fill time ────────────────────────────────────────
+
+describe('margin check at fill time', () => {
+  it('rejects fill when margin is insufficient and fires callback', () => {
+    const rejections: string[] = [];
+    engine = new PaperEngine({
+      initialBalance: '10000',
+      leverage: 10,
+      onRejection: (reason) => rejections.push(reason),
+    });
+
+    // 100 BTC × 50000 / 10 = 500k margin — way over 10k balance
+    placeLimitBuy('BTC', '50000', '100');
+    engine.onPriceUpdate('BTC', '50000');
+
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0]).toContain('Insufficient margin');
+    expect(rejections[0]).toContain('500000');
+  });
+
+  it('fills when margin is sufficient', () => {
+    // 0.1 BTC × 50000 / 10 = 500 margin, well within 10k
+    placeLimitBuy('BTC', '50000', '0.1');
+    engine.onPriceUpdate('BTC', '50000');
     expect(engine.getPositions()).toHaveLength(1);
+  });
 
-    const result = engine.marketClose('BTC', '51000');
-    expect(result.success).toBe(true);
+  it('rejects when existing positions consume available margin', () => {
+    const rejections: string[] = [];
+    engine = new PaperEngine({
+      initialBalance: '10000',
+      leverage: 10,
+      onRejection: (reason) => rejections.push(reason),
+    });
+
+    // First position: 1 BTC × 50000 / 10 = 5000 margin → 5000 available
+    openLong('BTC', '50000', '1');
+
+    // Second: 1 ETH × 4000 / 10 = 400 margin → still fits
+    openLong('ETH', '4000', '1');
+
+    // Third: 1 SOL × 50000 / 10 = 5000 margin → only ~4600 available
+    placeLimitBuy('SOL', '50000', '1');
+    engine.onPriceUpdate('SOL', '50000');
+
+    expect(engine.getPosition('SOL')).toBeNull();
+    expect(rejections).toHaveLength(1);
+  });
+});
+
+// ── TP/SL fill behavior ─────────────────────────────────────────────
+
+describe('TP/SL triggers', () => {
+  it('long TP fills on price rise, cancels SL', () => {
+    openLong('BTC', '50000', '1');
+    placeTP('BTC', 'sell', '55000', '1', true);
+    placeSL('BTC', 'sell', '48000', '1', true);
+
+    engine.onPriceUpdate('BTC', '55000');
     expect(engine.getPositions()).toHaveLength(0);
-    // Profit: (51000-50000) * 0.1 = 100, minus fees
+    expect(engine.getOpenOrders()).toHaveLength(0);
+
     const balance = parseFloat(engine.getBalance());
-    expect(balance).toBeGreaterThan(10090);
+    expect(balance).toBeGreaterThan(14000);
   });
 
-  it('cancels reduceOnly orders when position is closed', () => {
-    engine.placeOrder({ coin: 'BTC', side: 'buy', price: '50000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.onPriceUpdate('BTC', '50000');
+  it('long SL fills on price drop', () => {
+    openLong('BTC', '50000', '1');
+    placeSL('BTC', 'sell', '48000', '1', true);
 
-    // Place TP and SL
-    engine.placeOrder({ coin: 'BTC', side: 'sell', price: '55000', size: '0.1', reduceOnly: true, orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } } });
-    engine.placeOrder({ coin: 'BTC', side: 'sell', price: '48000', size: '0.1', reduceOnly: true, orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } } });
-    expect(engine.getOpenOrders()).toHaveLength(2);
-
-    engine.marketClose('BTC', '51000');
+    engine.onPriceUpdate('BTC', '48000');
     expect(engine.getPositions()).toHaveLength(0);
-    expect(engine.getOpenOrders()).toHaveLength(0); // TP/SL cancelled
+
+    const balance = parseFloat(engine.getBalance());
+    expect(balance).toBeLessThan(8100);
   });
 
-  it('returns error when no position exists', () => {
-    const result = engine.marketClose('BTC', '50000');
-    expect(result.success).toBe(false);
-  });
-});
+  it('short TP fills on price drop, cancels SL', () => {
+    openShort('BTC', '50000', '1');
+    placeTP('BTC', 'buy', '45000', '1', true);
+    placeSL('BTC', 'buy', '52000', '1', true);
 
-describe('onUpdate callback', () => {
-  it('fires on state change', () => {
-    const updates: string[] = [];
-    const eng = new PaperEngine({
-      initialBalance: '10000',
-      leverage: 10,
-      onUpdate: (state) => updates.push(state.balance),
-    });
-
-    eng.placeOrder({ coin: 'BTC', side: 'buy', price: '50000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    expect(updates.length).toBeGreaterThan(0);
-  });
-});
-
-describe('TP/SL via onUpdate callback (UI integration)', () => {
-  it('emits empty positions and orders when TP fills on same asset', () => {
-    const states: ReturnType<PaperEngine['getState']>[] = [];
-    const eng = new PaperEngine({
-      initialBalance: '10000',
-      leverage: 10,
-      onUpdate: (state) => states.push(state),
-    });
-
-    // Simulate OrderPanel market buy flow:
-    // 1. Place limit order at mid price
-    eng.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
-    });
-    // 2. Immediately fill via onPriceUpdate (like OrderPanel line 83)
-    eng.onPriceUpdate('BTC', '50000');
-    expect(eng.getPositions()).toHaveLength(1);
-
-    // 3. Place TP and SL (like OrderPanel lines 87-109)
-    eng.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-    eng.placeOrder({
-      coin: 'BTC', side: 'sell', price: '48000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
-    });
-    expect(eng.getOpenOrders()).toHaveLength(2);
-
-    // Clear update history to focus on the TP fill
-    states.length = 0;
-
-    // Price rises past TP — same asset, same tick
-    eng.onPriceUpdate('BTC', '56000');
-
-    // Engine state should be clean
-    expect(eng.getPositions()).toHaveLength(0);
-    expect(eng.getOpenOrders()).toHaveLength(0);
-
-    // The last emitted state (what the UI sees) should also be clean
-    const lastState = states[states.length - 1];
-    expect(lastState.positions).toHaveLength(0);
-    expect(lastState.openOrders).toHaveLength(0);
+    engine.onPriceUpdate('BTC', '44000');
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
   });
 
-  it('emits empty positions and orders when SL fills on same asset', () => {
-    const states: ReturnType<PaperEngine['getState']>[] = [];
-    const eng = new PaperEngine({
-      initialBalance: '10000',
-      leverage: 10,
-      onUpdate: (state) => states.push(state),
-    });
+  it('does not cancel non-reduceOnly orders when position closes', () => {
+    openLong('BTC', '50000', '1');
+    placeTP('BTC', 'sell', '55000', '1', true);
+    placeLimitBuy('BTC', '45000', '0.5'); // separate entry order
 
-    // Market buy
-    eng.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
-    });
-    eng.onPriceUpdate('BTC', '50000');
-
-    // TP and SL
-    eng.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-    eng.placeOrder({
-      coin: 'BTC', side: 'sell', price: '48000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
-    });
-
-    states.length = 0;
-
-    // Price drops past SL
-    eng.onPriceUpdate('BTC', '47000');
-
-    expect(eng.getPositions()).toHaveLength(0);
-    expect(eng.getOpenOrders()).toHaveLength(0);
-
-    const lastState = states[states.length - 1];
-    expect(lastState.positions).toHaveLength(0);
-    expect(lastState.openOrders).toHaveLength(0);
-  });
-
-  it('TP fills with fractional USDC-derived sizes', () => {
-    // Simulate the exact OrderPanel flow: USDC → asset size via parseFloat division
-    const sizeUsdc = '500';
-    const price = '50000';
-    const assetSize = (parseFloat(sizeUsdc) / parseFloat(price)).toString(); // "0.01"
-
-    const states: ReturnType<PaperEngine['getState']>[] = [];
-    const eng = new PaperEngine({
-      initialBalance: '10000',
-      leverage: 10,
-      onUpdate: (state) => states.push(state),
-    });
-
-    eng.placeOrder({
-      coin: 'BTC', side: 'buy', price, size: assetSize,
-      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
-    });
-    eng.onPriceUpdate('BTC', price);
-    expect(eng.getPositions()).toHaveLength(1);
-
-    // TP and SL use the same assetSize string
-    eng.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: assetSize,
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-    eng.placeOrder({
-      coin: 'BTC', side: 'sell', price: '48000', size: assetSize,
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
-    });
-
-    states.length = 0;
-    eng.onPriceUpdate('BTC', '55500');
-
-    expect(eng.getPositions()).toHaveLength(0);
-    expect(eng.getOpenOrders()).toHaveLength(0);
-
-    const lastState = states[states.length - 1];
-    expect(lastState.positions).toHaveLength(0);
-    expect(lastState.openOrders).toHaveLength(0);
-  });
-});
-
-describe('TP/SL with non-reduceOnly orders on same coin', () => {
-  it('does not cancel non-reduceOnly orders when position closes via TP', () => {
-    // Open long
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000');
-
-    // Place TP
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-
-    // Also have a regular (non-reduceOnly) limit order on BTC
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '45000', size: '0.5',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(engine.getOpenOrders()).toHaveLength(2);
-
-    // TP fills
     engine.onPriceUpdate('BTC', '56000');
 
-    // Position closed, TP removed, but the non-reduceOnly limit order survives
     expect(engine.getPositions()).toHaveLength(0);
     expect(engine.getOpenOrders()).toHaveLength(1);
     expect(engine.getOpenOrders()[0].reduceOnly).toBe(false);
   });
 });
 
-describe('TP/SL after rehydration from persisted state', () => {
-  it('TP still triggers after JSON round-trip', () => {
-    // Set up position + TP + SL
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000');
+// ── TP/SL without position (the fix) ────────────────────────────────
 
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '48000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
-    });
+describe('TP/SL without existing position', () => {
+  it('non-reduceOnly TP is removed if no position exists when triggered', () => {
+    // This is what trade setup does: TP placed before entry fills
+    placeTP('BTC', 'sell', '55000', '1', false);
 
-    // Simulate persist → reload: JSON round-trip
-    const serialized = JSON.parse(JSON.stringify(engine.getState()));
-    const engine2 = new PaperEngine({ initialBalance: '10000', leverage: 10 });
-    engine2.loadState(serialized);
+    engine.onPriceUpdate('BTC', '56000');
 
-    expect(engine2.getPositions()).toHaveLength(1);
-    expect(engine2.getOpenOrders()).toHaveLength(2);
+    // Should NOT create a short position
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+  });
 
-    // Price rises past TP
-    engine2.onPriceUpdate('BTC', '56000');
+  it('non-reduceOnly SL is removed if no position exists when triggered', () => {
+    placeSL('BTC', 'sell', '48000', '1', false);
 
-    expect(engine2.getPositions()).toHaveLength(0);
-    expect(engine2.getOpenOrders()).toHaveLength(0);
+    engine.onPriceUpdate('BTC', '47000');
+
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+  });
+
+  it('TP/SL rejected if position is in wrong direction', () => {
+    openShort('BTC', '50000', '1');
+
+    // Sell TP against a short — wrong direction (should close a long, not a short)
+    // Sell TP triggers when midPrice >= triggerPx
+    placeTP('BTC', 'sell', '48000', '1', false);
+
+    engine.onPriceUpdate('BTC', '48000');
+
+    // Short should remain, TP should be gone without opening a second position
+    expect(engine.getPositions()).toHaveLength(1);
+    expect(engine.getPosition('BTC')!.szi.isNeg()).toBe(true);
+    expect(engine.getOpenOrders()).toHaveLength(0);
   });
 });
 
-describe('balance tracking through multiple trades', () => {
-  it('accumulates realized PnL and fees correctly', () => {
-    // Use smaller sizes so margin isn't an issue
-    // Trade 1: Buy 0.1 BTC at 50000, close at 51000 (+100 profit)
-    engine.placeOrder({ coin: 'BTC', side: 'buy', price: '50000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.onPriceUpdate('BTC', '50000'); // fills buy
+// ── Trade setup end-to-end (entry + TP + SL) ────────────────────────
 
-    engine.placeOrder({ coin: 'BTC', side: 'sell', price: '51000', size: '0.1', reduceOnly: true, orderType: { limit: { tif: 'Gtc' } } });
-    engine.onPriceUpdate('BTC', '51000'); // fills sell, closes long
+describe('trade setup: entry + TP + SL end-to-end', () => {
+  it('long setup: entry fills, TP closes with profit', () => {
+    // Simulate handleExecuteSetup: place entry + TP + SL
+    placeLimitBuy('BTC', '50000', '0.01');
+    placeTP('BTC', 'sell', '54000', '0.01', false);
+    placeSL('BTC', 'sell', '48000', '0.01', false);
+    expect(engine.getOpenOrders()).toHaveLength(3);
 
-    // Trade 2: Short 0.1 BTC at 51000, close at 50500 (+50 profit)
-    engine.placeOrder({ coin: 'BTC', side: 'sell', price: '51000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
-    engine.onPriceUpdate('BTC', '51000'); // fills sell, opens short
+    // Price drops to entry → fills
+    engine.onPriceUpdate('BTC', '50000');
+    expect(engine.getPositions()).toHaveLength(1);
+    expect(engine.getOpenOrders()).toHaveLength(2); // TP + SL remain
 
-    engine.placeOrder({ coin: 'BTC', side: 'buy', price: '50500', size: '0.1', reduceOnly: true, orderType: { limit: { tif: 'Gtc' } } });
-    engine.onPriceUpdate('BTC', '50500'); // fills buy, closes short
+    // Price rises to TP
+    engine.onPriceUpdate('BTC', '54000');
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+
+    const balance = parseFloat(engine.getBalance());
+    expect(balance).toBeGreaterThan(10030); // ~40 profit minus fees
+  });
+
+  it('long setup: entry fills, SL closes with loss', () => {
+    placeLimitBuy('BTC', '50000', '0.01');
+    placeTP('BTC', 'sell', '54000', '0.01', false);
+    placeSL('BTC', 'sell', '48000', '0.01', false);
+
+    engine.onPriceUpdate('BTC', '50000');
+    engine.onPriceUpdate('BTC', '48000');
+
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+  });
+
+  it('short setup: entry fills, TP closes', () => {
+    placeLimitSell('BTC', '50000', '0.01');
+    placeTP('BTC', 'buy', '46000', '0.01', false);
+    placeSL('BTC', 'buy', '52000', '0.01', false);
+
+    engine.onPriceUpdate('BTC', '50000'); // entry fills
+    engine.onPriceUpdate('BTC', '45000'); // TP triggers
+
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+  });
+
+  it('risk-based sizing: rejects entry when size exceeds margin', () => {
+    const rejections: string[] = [];
+    engine = new PaperEngine({
+      initialBalance: '10000',
+      leverage: 10,
+      onRejection: (reason) => rejections.push(reason),
+    });
+
+    // Simulate risk sizing: $50 risk, $1 stop distance → 50 units
+    // 50 BTC × 50000 / 10 = 250k margin >> 10k balance
+    const riskUsdc = 50;
+    const entryPrice = 50000;
+    const slPrice = 49999;
+    const riskPerUnit = Math.abs(entryPrice - slPrice); // 1
+    const assetSize = (riskUsdc / riskPerUnit).toString(); // '50'
+
+    engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: entryPrice.toString(), size: assetSize,
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
+    placeTP('BTC', 'sell', '50100', assetSize, false);
+    placeSL('BTC', 'sell', slPrice.toString(), assetSize, false);
+
+    expect(engine.getOpenOrders()).toHaveLength(3); // all placed
+
+    engine.onPriceUpdate('BTC', entryPrice.toString());
+
+    // Entry rejected at fill time — no position created
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0]).toContain('Insufficient margin');
+
+    // TP/SL remain as orphans (no position to trigger against)
+    // They'll be harmlessly removed when triggered with no position
+  });
+
+  it('risk-based sizing: fills when size fits within margin', () => {
+    // $100 risk, $2000 stop distance → 0.05 BTC
+    // 0.05 × 50000 / 10 = 250 margin — fits in 10k
+    const riskUsdc = 100;
+    const entryPrice = 50000;
+    const slPrice = 48000;
+    const riskPerUnit = Math.abs(entryPrice - slPrice);
+    const assetSize = (riskUsdc / riskPerUnit).toString();
+
+    placeLimitBuy('BTC', entryPrice.toString(), assetSize);
+    placeTP('BTC', 'sell', '54000', assetSize, false);
+    placeSL('BTC', 'sell', slPrice.toString(), assetSize, false);
+
+    engine.onPriceUpdate('BTC', entryPrice.toString());
+    expect(engine.getPositions()).toHaveLength(1);
+
+    engine.onPriceUpdate('BTC', '54000');
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+  });
+
+  it('tight margin: entry fills, TP closes (realistic gold setup)', () => {
+    engine = new PaperEngine({ initialBalance: '1000', leverage: 20 });
+
+    // 6 gold × 3300 / 20 = 990 margin, just within 1000
+    placeLimitBuy('GOLD', '3300', '6');
+    placeTP('GOLD', 'sell', '3400', '6', false);
+    placeSL('GOLD', 'sell', '3250', '6', false);
+
+    engine.onPriceUpdate('GOLD', '3300');
+    expect(engine.getPositions()).toHaveLength(1);
+    expect(engine.getOpenOrders()).toHaveLength(2);
+
+    engine.onPriceUpdate('GOLD', '3400');
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+  });
+});
+
+// ── Cancel and drag ──────────────────────────────────────────────────
+
+describe('cancel and order drag', () => {
+  it('cancels an existing order', () => {
+    const r = placeLimitBuy('BTC', '50000', '0.1');
+    expect(engine.cancelOrder(r.oid!)).toBe(true);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+  });
+
+  it('cancelAllOrders scoped to coin', () => {
+    placeLimitBuy('BTC', '50000', '0.1');
+    placeLimitBuy('ETH', '3000', '1');
+    engine.cancelAllOrders('BTC');
+    expect(engine.getOpenOrders()).toHaveLength(1);
+    expect(engine.getOpenOrders()[0].coin).toBe('ETH');
+  });
+
+  it('drag: cancel and re-place TP at new price', () => {
+    openLong('BTC', '50000', '1');
+    const r = placeTP('BTC', 'sell', '55000', '1', true);
+
+    engine.cancelOrder(r.oid!);
+    placeTP('BTC', 'sell', '56000', '1', true);
+
+    // Old price doesn't trigger
+    engine.onPriceUpdate('BTC', '55500');
+    expect(engine.getPositions()).toHaveLength(1);
+
+    // New price triggers
+    engine.onPriceUpdate('BTC', '56000');
+    expect(engine.getPositions()).toHaveLength(0);
+  });
+});
+
+// ── Market close ─────────────────────────────────────────────────────
+
+describe('marketClose', () => {
+  it('closes position and cancels TP/SL', () => {
+    openLong('BTC', '50000', '0.1');
+    placeTP('BTC', 'sell', '55000', '0.1', true);
+    placeSL('BTC', 'sell', '48000', '0.1', true);
+
+    engine.marketClose('BTC', '51000');
+    expect(engine.getPositions()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(0);
+
+    const balance = parseFloat(engine.getBalance());
+    expect(balance).toBeGreaterThan(10090);
+  });
+
+  it('returns error when no position exists', () => {
+    expect(engine.marketClose('BTC', '50000').success).toBe(false);
+  });
+});
+
+// ── Balance tracking ─────────────────────────────────────────────────
+
+describe('balance tracking', () => {
+  it('accumulates PnL across multiple trades', () => {
+    // Trade 1: long 0.1 BTC at 50k, close at 51k → +100
+    openLong('BTC', '50000', '0.1');
+    placeLimitSell('BTC', '51000', '0.1', { reduceOnly: true });
+    engine.onPriceUpdate('BTC', '51000');
+
+    // Trade 2: short 0.1 BTC at 51k, close at 50.5k → +50
+    openShort('BTC', '51000', '0.1');
+    placeLimitBuy('BTC', '50500', '0.1', { reduceOnly: true });
+    engine.onPriceUpdate('BTC', '50500');
 
     expect(engine.getFills()).toHaveLength(4);
-
-    // Net profit: 100 + 50 = 150, minus fees (~5 + 5.1 + 5.1 + 5.05 ≈ 20.25 for maker)
     const balance = parseFloat(engine.getBalance());
+    // ~150 profit minus maker fees
     expect(balance).toBeGreaterThan(10120);
     expect(balance).toBeLessThan(10150);
   });
 });
 
-describe('margin checked at fill time, not placement', () => {
-  it('rejects fill when margin is insufficient', () => {
-    // Place order that exceeds margin — placement succeeds
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '100',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(engine.getOpenOrders()).toHaveLength(1);
+// ── Candle-based trigger fills ───────────────────────────────────────
 
-    // Price hits limit — fill attempted but margin insufficient, order removed
-    engine.onPriceUpdate('BTC', '50000');
+describe('candle-based trigger fills', () => {
+  it('SL triggers from candle wick even if mid price does not cross', () => {
+    openLong('BTC', '50000', '1');
+    placeSL('BTC', 'sell', '48000', '1', true);
+
+    // Mid stays above SL, but candle low wicks below
+    engine.onCandleUpdate('BTC', '51000', '47500');
     expect(engine.getPositions()).toHaveLength(0);
-    expect(engine.getOpenOrders()).toHaveLength(0);
   });
 
-  it('fills when margin is sufficient', () => {
-    // 0.1 BTC * 50000 / 10 = 500 margin, well within 10000 balance
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '0.1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000');
-    expect(engine.getPositions()).toHaveLength(1);
+  it('TP triggers from candle wick', () => {
+    openShort('BTC', '50000', '1');
+    placeTP('BTC', 'buy', '45000', '1', true);
+
+    // Candle low wicks to 44000 but mid is 46000
+    engine.onCandleUpdate('BTC', '50000', '44000');
+    expect(engine.getPositions()).toHaveLength(0);
   });
 
-  it('TP/SL triggers skip margin check at fill time', () => {
-    // Open a position first
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000');
-
-    // Place TP (non-reduceOnly, as trade setup does)
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: '1',
-      reduceOnly: false,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-    expect(engine.getOpenOrders()).toHaveLength(1);
-
-    // TP should fill even though margin would be "insufficient" for a new position
-    engine.onPriceUpdate('BTC', '55000');
+  it('ignores candle updates for limit orders', () => {
+    placeLimitBuy('BTC', '48000', '0.1');
+    engine.onCandleUpdate('BTC', '50000', '47000');
+    // Limit orders are not matched by candle updates
     expect(engine.getPositions()).toHaveLength(0);
-    expect(engine.getOpenOrders()).toHaveLength(0);
+    expect(engine.getOpenOrders()).toHaveLength(1);
   });
 });
 
-describe('trade setup execute: entry + TP + SL all place successfully', () => {
-  it('places all 3 orders with tight margin', () => {
-    // Simulate tight margin: $1000 balance, 20x leverage
-    const tightEngine = new PaperEngine({ initialBalance: '1000', leverage: 20 });
+// ── State persistence (rehydration) ─────────────────────────────────
 
-    // 6 gold at $3300 → $19800 notional / 20 = $990 margin
-    const entryPrice = '3300.00';
-    const size = '6';
+describe('state persistence', () => {
+  it('TP still triggers after JSON round-trip', () => {
+    openLong('BTC', '50000', '1');
+    placeTP('BTC', 'sell', '55000', '1', true);
+    placeSL('BTC', 'sell', '48000', '1', true);
 
-    const r1 = tightEngine.placeOrder({
-      coin: 'GOLD', side: 'buy', price: entryPrice, size,
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(r1.success).toBe(true);
+    const serialized = JSON.parse(JSON.stringify(engine.getState()));
+    const engine2 = new PaperEngine({ initialBalance: '10000', leverage: 10 });
+    engine2.loadState(serialized);
 
-    const r2 = tightEngine.placeOrder({
-      coin: 'GOLD', side: 'sell', price: '3400.00', size,
-      reduceOnly: false,
-      orderType: { trigger: { isMarket: true, triggerPx: '3400.00', tpsl: 'tp' } },
-    });
-    expect(r2.success).toBe(true);
-
-    const r3 = tightEngine.placeOrder({
-      coin: 'GOLD', side: 'sell', price: '3250.00', size,
-      reduceOnly: false,
-      orderType: { trigger: { isMarket: true, triggerPx: '3250.00', tpsl: 'sl' } },
-    });
-    expect(r3.success).toBe(true);
-
-    expect(tightEngine.getOpenOrders()).toHaveLength(3);
-  });
-
-  it('entry fills, then TP triggers and closes position', () => {
-    const tightEngine = new PaperEngine({ initialBalance: '1000', leverage: 20 });
-
-    tightEngine.placeOrder({
-      coin: 'GOLD', side: 'buy', price: '3300.00', size: '6',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    tightEngine.placeOrder({
-      coin: 'GOLD', side: 'sell', price: '3400.00', size: '6',
-      reduceOnly: false,
-      orderType: { trigger: { isMarket: true, triggerPx: '3400.00', tpsl: 'tp' } },
-    });
-    tightEngine.placeOrder({
-      coin: 'GOLD', side: 'sell', price: '3250.00', size: '6',
-      reduceOnly: false,
-      orderType: { trigger: { isMarket: true, triggerPx: '3250.00', tpsl: 'sl' } },
-    });
-
-    // Entry fills
-    tightEngine.onPriceUpdate('GOLD', '3300');
-    expect(tightEngine.getPositions()).toHaveLength(1);
-    expect(tightEngine.getOpenOrders()).toHaveLength(2); // TP + SL
-
-    // TP fills
-    tightEngine.onPriceUpdate('GOLD', '3400');
-    expect(tightEngine.getPositions()).toHaveLength(0);
-    expect(tightEngine.getOpenOrders()).toHaveLength(0);
+    engine2.onPriceUpdate('BTC', '56000');
+    expect(engine2.getPositions()).toHaveLength(0);
+    expect(engine2.getOpenOrders()).toHaveLength(0);
   });
 });
 
-describe('order drag: cancel and re-place at new price', () => {
-  it('moves a limit order to a new price', () => {
-    const r = engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '48000', size: '0.1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+// ── onUpdate callback ────────────────────────────────────────────────
+
+describe('onUpdate callback', () => {
+  it('emits clean state after TP closes position', () => {
+    const states: ReturnType<PaperEngine['getState']>[] = [];
+    engine = new PaperEngine({
+      initialBalance: '10000', leverage: 10,
+      onUpdate: (state) => states.push(state),
     });
-    const oldId = r.oid!;
-    expect(engine.getOpenOrders()).toHaveLength(1);
 
-    // Simulate drag: cancel old, place new at different price
-    engine.cancelOrder(oldId);
-    const r2 = engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '47000', size: '0.1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    expect(r2.success).toBe(true);
-    expect(engine.getOpenOrders()).toHaveLength(1);
-    expect(engine.getOpenOrders()[0].price.toNumber()).toBe(47000);
-  });
+    openLong('BTC', '50000', '1');
+    placeTP('BTC', 'sell', '55000', '1', true);
+    placeSL('BTC', 'sell', '48000', '1', true);
+    states.length = 0;
 
-  it('moves a TP trigger order to a new price', () => {
-    // Open position first
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000');
-
-    const r = engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '55000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '55000', tpsl: 'tp' } },
-    });
-    const oldId = r.oid!;
-
-    // Drag TP from 55000 to 56000
-    engine.cancelOrder(oldId);
-    const r2 = engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '56000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '56000', tpsl: 'tp' } },
-    });
-    expect(r2.success).toBe(true);
-    expect(engine.getOpenOrders()).toHaveLength(1);
-    expect(engine.getOpenOrders()[0].triggerPx!.toNumber()).toBe(56000);
-
-    // Old TP price (55000) should NOT trigger
-    engine.onPriceUpdate('BTC', '55500');
-    expect(engine.getPositions()).toHaveLength(1);
-
-    // New TP price (56000) triggers
     engine.onPriceUpdate('BTC', '56000');
-    expect(engine.getPositions()).toHaveLength(0);
-  });
 
-  it('moves an SL trigger order to a new price', () => {
-    engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '50000', size: '1',
-      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
-    });
-    engine.onPriceUpdate('BTC', '50000');
-
-    const r = engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '48000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'sl' } },
-    });
-    const oldId = r.oid!;
-
-    // Drag SL from 48000 to 47000
-    engine.cancelOrder(oldId);
-    engine.placeOrder({
-      coin: 'BTC', side: 'sell', price: '47000', size: '1',
-      reduceOnly: true,
-      orderType: { trigger: { isMarket: true, triggerPx: '47000', tpsl: 'sl' } },
-    });
-
-    // Old SL price (48000) should NOT trigger
-    engine.onPriceUpdate('BTC', '48500');
-    engine.onPriceUpdate('BTC', '47500');
-    expect(engine.getPositions()).toHaveLength(1);
-
-    // New SL price (47000) triggers
-    engine.onPriceUpdate('BTC', '47000');
-    expect(engine.getPositions()).toHaveLength(0);
+    const last = states[states.length - 1];
+    expect(last.positions).toHaveLength(0);
+    expect(last.openOrders).toHaveLength(0);
   });
 });

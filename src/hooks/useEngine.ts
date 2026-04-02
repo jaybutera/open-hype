@@ -12,6 +12,7 @@ function createEngineForAccount(
   makerRate: string,
   takerRate: string,
   onUpdate: (state: ReturnType<PaperEngine['getState']>) => void,
+  onRejection: (reason: string) => void,
 ): PaperEngine {
   const engine = new PaperEngine({
     initialBalance: acct.initialBalance,
@@ -19,6 +20,7 @@ function createEngineForAccount(
     makerRate,
     takerRate,
     onUpdate,
+    onRejection,
   });
   if (acct.fills.length > 0 || acct.positions.length > 0 || acct.openOrders.length > 0 || acct.balance !== acct.initialBalance) {
     engine.loadState(acct);
@@ -38,13 +40,19 @@ export function usePaperEngine(): PaperEngine {
   const resetFees = useFeeStore(s => s.resetToDefaults);
   const walletAddress = useWalletStore(s => s.address);
 
+  const setRejection = useAccountStore(s => s.setRejection);
+
   const onUpdate = useCallback((state: Parameters<typeof updatePaperState>[0]) => {
     updatePaperState(state);
     saveActiveAccountState(state);
   }, [updatePaperState, saveActiveAccountState]);
 
+  const onRejection = useCallback((reason: string) => {
+    setRejection(reason);
+  }, [setRejection]);
+
   const [engine, setEngine] = useState<PaperEngine>(() =>
-    createEngineForAccount(getActiveAccount(), leverage, makerRate, takerRate, onUpdate)
+    createEngineForAccount(getActiveAccount(), leverage, makerRate, takerRate, onUpdate, onRejection)
   );
 
   const prevAccountRef = useRef(activeAccountId);
@@ -66,7 +74,7 @@ export function usePaperEngine(): PaperEngine {
   useEffect(() => {
     if (prevAccountRef.current !== activeAccountId) {
       prevAccountRef.current = activeAccountId;
-      const newEngine = createEngineForAccount(getActiveAccount(), leverage, makerRate, takerRate, onUpdate);
+      const newEngine = createEngineForAccount(getActiveAccount(), leverage, makerRate, takerRate, onUpdate, onRejection);
       setEngine(newEngine);
       updatePaperState(newEngine.getState());
     }

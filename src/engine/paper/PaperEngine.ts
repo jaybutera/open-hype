@@ -19,6 +19,7 @@ export interface PaperEngineConfig {
   makerRate?: string;
   takerRate?: string;
   onUpdate?: (state: PaperState) => void;
+  onRejection?: (reason: string, order: PaperOrder) => void;
 }
 
 /** Rehydrate Decimal fields from JSON-serialized account data */
@@ -60,6 +61,7 @@ export class PaperEngine {
   private makerRate: string;
   private takerRate: string;
   private onUpdate: ((state: PaperState) => void) | null;
+  private onRejection: ((reason: string, order: PaperOrder) => void) | null = null;
 
   constructor(config: PaperEngineConfig = {}) {
     this.balance = new Decimal(config.initialBalance ?? '10000');
@@ -67,6 +69,7 @@ export class PaperEngine {
     this.makerRate = config.makerRate ?? MAKER_FEE_RATE;
     this.takerRate = config.takerRate ?? TAKER_FEE_RATE;
     this.onUpdate = config.onUpdate ?? null;
+    this.onRejection = config.onRejection ?? null;
     orderCounter = 0;
     resetLedgerIds();
   }
@@ -222,12 +225,17 @@ export class PaperEngine {
   private executeFill(fill: FillResult): void {
     const { order, fillPrice, fillSize, isMaker } = fill;
 
-    // Enforce reduceOnly
-    if (order.reduceOnly) {
+    // Enforce reduceOnly and TP/SL — both require an existing position to close
+    if (order.reduceOnly || order.tpsl) {
       const pos = this.positions.get(order.coin);
       if (!pos || pos.szi.isZero()) {
         this.removeOrder(order.id);
         return;
+      }
+      // Verify TP/SL is closing the right direction (sell closes long, buy closes short)
+      if (order.tpsl) {
+        if (order.side === 'sell' && pos.szi.lt(0)) { this.removeOrder(order.id); return; }
+        if (order.side === 'buy' && pos.szi.gt(0)) { this.removeOrder(order.id); return; }
       }
       // Clamp size to position size
       const maxClose = pos.szi.abs();
@@ -239,7 +247,11 @@ export class PaperEngine {
     // Check margin at fill time for non-reduceOnly, non-TP/SL orders
     if (!order.reduceOnly && !order.tpsl) {
       const requiredMargin = fill.fillSize.mul(fillPrice).div(this.leverage);
-      if (requiredMargin.gt(this.availableBalance())) {
+      const available = this.availableBalance();
+      if (requiredMargin.gt(available)) {
+        const reason = `Insufficient margin: need ${requiredMargin.toFixed(2)}, available ${available.toFixed(2)}`;
+        console.warn(`[PaperEngine] Order ${order.id} rejected: ${reason}`);
+        this.onRejection?.(reason, order);
         this.removeOrder(order.id);
         return;
       }

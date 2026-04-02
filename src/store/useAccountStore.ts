@@ -18,12 +18,14 @@ interface AccountStore {
   paperPositions: PaperPosition[];
   paperOrders: PaperOrder[];
   paperFills: LedgerEntry[];
+  lastRejection: string | null;
   updatePaperState: (state: {
     balance: string;
     positions: PaperPosition[];
     openOrders: PaperOrder[];
     fills: LedgerEntry[];
   }) => void;
+  setRejection: (msg: string | null) => void;
 }
 
 export const useAccountStore = create<AccountStore>((set) => ({
@@ -42,10 +44,12 @@ export const useAccountStore = create<AccountStore>((set) => ({
   paperPositions: [],
   paperOrders: [],
   paperFills: [],
+  lastRejection: null,
   updatePaperState: (state) => set({
     paperBalance: state.balance,
     paperPositions: state.positions,
     paperOrders: state.openOrders,
     paperFills: state.fills,
   }),
+  setRejection: (msg) => set({ lastRejection: msg }),
 }));
