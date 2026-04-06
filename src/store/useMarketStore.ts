@@ -32,6 +32,7 @@ interface MarketStore {
   setCandles: (candles: CandleData[]) => void;
   loadMeta: () => Promise<void>;
   loadCandles: () => Promise<void>;
+  loadMoreCandles: () => Promise<void>;
   loadAllMids: () => Promise<void>;
 }
 
@@ -113,6 +114,20 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
     // Only apply if we're still on the same asset (user may have switched during fetch)
     if (get().currentAsset === currentAsset) {
       set({ candles, loading: false });
+    }
+  },
+
+  loadMoreCandles: async () => {
+    const { currentAsset, interval, candles, loading } = get();
+    if (loading || candles.length === 0) return;
+    set({ loading: true });
+    const intervalMs = intervalToMs(interval);
+    const earliest = Math.min(...candles.map(c => c.t));
+    const endTime = earliest;
+    const startTime = earliest - intervalMs * 300;
+    const older = await fetchCandles(currentAsset, interval, startTime, endTime);
+    if (get().currentAsset === currentAsset) {
+      set({ candles: [...older, ...get().candles], loading: false });
     }
   },
 

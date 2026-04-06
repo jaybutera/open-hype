@@ -30,6 +30,7 @@ export function TradingChart({ engine }: Props) {
   const interval = useMarketStore(s => s.interval);
   const setInterval = useMarketStore(s => s.setInterval);
   const loadCandles = useMarketStore(s => s.loadCandles);
+  const loadMoreCandles = useMarketStore(s => s.loadMoreCandles);
   const mode = useSettingsStore(s => s.mode);
   const paperPositions = useAccountStore(s => s.paperPositions);
   const paperOrders = useAccountStore(s => s.paperOrders);
@@ -126,6 +127,24 @@ export function TradingChart({ engine }: Props) {
       console.warn('Chart setData error:', e);
     }
   }, [candles]);
+
+  // Load more candles when scrolling to the left edge
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const handler = () => {
+      const range = chart.timeScale().getVisibleLogicalRange();
+      if (!range) return;
+      // When the left edge of the visible range is near/past the first bar, load more
+      if (range.from < 5) {
+        loadMoreCandles();
+      }
+    };
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+    return () => chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+  }, [loadMoreCandles]);
 
   // Draw order / position / draft price lines
   useEffect(() => {
