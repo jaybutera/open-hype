@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type Time, type IPriceLine, LineStyle } from 'lightweight-charts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
@@ -7,6 +7,7 @@ import { useChartStore, type DraftOrder } from '../../store/useChartStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { TradeBoxPrimitive } from './TradeBoxPrimitive.ts';
 import { OrderLinePrimitive } from './OrderLinePrimitive.ts';
+import { SessionPrimitive } from './SessionPrimitive.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { CandleInterval } from '../../types/market.ts';
 
@@ -23,6 +24,8 @@ export function TradingChart({ engine }: Props) {
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const tradeBoxPrimitivesRef = useRef<Map<string, TradeBoxPrimitive>>(new Map());
   const orderLinePrimitivesRef = useRef<Map<string, OrderLinePrimitive>>(new Map());
+  const sessionPrimitiveRef = useRef<SessionPrimitive | null>(null);
+  const [sessionsOn, setSessionsOn] = useState(true);
 
   const candles = useMarketStore(s => s.candles);
   const currentAsset = useMarketStore(s => s.currentAsset);
@@ -81,6 +84,11 @@ export function TradingChart({ engine }: Props) {
     chartRef.current = chart;
     seriesRef.current = series;
 
+    // Attach session killzone overlay
+    const sessionPrim = new SessionPrimitive();
+    series.attachPrimitive(sessionPrim);
+    sessionPrimitiveRef.current = sessionPrim;
+
     const onResize = () => {
       chart.applyOptions({
         width: container.clientWidth,
@@ -98,6 +106,7 @@ export function TradingChart({ engine }: Props) {
       priceLinesRef.current = [];
       tradeBoxPrimitivesRef.current.clear();
       orderLinePrimitivesRef.current.clear();
+      sessionPrimitiveRef.current = null;
     };
   }, []);
 
@@ -126,6 +135,9 @@ export function TradingChart({ engine }: Props) {
     } catch (e) {
       console.warn('Chart setData error:', e);
     }
+
+    // Feed candle data to session overlay for high/low calculation
+    sessionPrimitiveRef.current?.setCandleData(data);
   }, [candles]);
 
   // Load more candles when scrolling to the left edge
@@ -467,6 +479,11 @@ export function TradingChart({ engine }: Props) {
     }
   }, [setDragging, setShowConfirm]);
 
+  // Toggle session overlay
+  useEffect(() => {
+    sessionPrimitiveRef.current?.setEnabled(sessionsOn);
+  }, [sessionsOn]);
+
   // ESC cancels pending trade setup
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -496,6 +513,21 @@ export function TradingChart({ engine }: Props) {
             {iv}
           </button>
         ))}
+        <button
+          onClick={() => setSessionsOn(v => !v)}
+          style={{
+            padding: '4px 10px',
+            fontSize: 12,
+            background: sessionsOn ? '#1a1f2e' : 'transparent',
+            border: sessionsOn ? '1px solid #2a2f3e' : '1px solid transparent',
+            borderRadius: 4,
+            color: sessionsOn ? '#e1e4e8' : '#8a8f98',
+            cursor: 'pointer',
+            marginLeft: 8,
+          }}
+        >
+          KZ
+        </button>
         <span style={{ marginLeft: 'auto', fontSize: 11, color: pendingSetup ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
           {pendingSetup
             ? `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup (${pendingSetup.clicks.length}/3) — ESC to cancel`
