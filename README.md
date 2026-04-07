@@ -1,4 +1,4 @@
-# HL Trade
+# Open Hype
 
 A fast, keyboard-driven trading frontend for [Hyperliquid](https://hyperliquid.xyz) with built-in paper trading and chart-based order entry.
 

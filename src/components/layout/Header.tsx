@@ -32,7 +32,7 @@ export function Header() {
       zIndex: 200,
     }}>
       <span style={{ fontWeight: 800, fontSize: 16, color: '#3861fb', flexShrink: 0 }}>
-        HL Trade
+        Open Hype
       </span>
 
       <AssetSelector />
