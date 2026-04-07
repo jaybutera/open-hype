@@ -11,24 +11,25 @@ import type {
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 
-// ICT Killzone sessions (EST / UTC-5 hours, stored as UTC)
-// Asian:   20:00–00:00 EST  =>  01:00–05:00 UTC
-// London:  02:00–05:00 EST  =>  07:00–10:00 UTC
-// NY AM:   08:30–11:00 EST  =>  13:30–16:00 UTC
-// NY PM:   13:30–16:00 EST  =>  18:30–21:00 UTC
+// ICT Killzone sessions in New York (ET) wall-clock hours.
+// Chart timestamps are shifted to display ET, so these are used directly.
+// Asian:   20:00–00:00 ET
+// London:  02:00–05:00 ET
+// NY AM:   09:30–12:00 ET
+// NY PM:   13:30–16:00 ET
 
 interface Session {
   name: string;
-  startH: number; startM: number; // UTC
-  endH: number;   endM: number;   // UTC
-  color: string; // background box color (low alpha)
+  startH: number; startM: number; // ET
+  endH: number;   endM: number;   // ET
+  color: string;
 }
 
 const SESSIONS: Session[] = [
-  { name: 'Asia',  startH: 1,  startM: 0,  endH: 5,  endM: 0,  color: 'rgba(255, 200, 50, 0.04)' },
-  { name: 'London', startH: 7,  startM: 0,  endH: 10, endM: 0,  color: 'rgba(50, 150, 255, 0.04)' },
-  { name: 'NY AM',  startH: 13, startM: 30, endH: 16, endM: 0,  color: 'rgba(100, 220, 100, 0.04)' },
-  { name: 'NY PM',  startH: 18, startM: 30, endH: 21, endM: 0,  color: 'rgba(200, 100, 255, 0.04)' },
+  { name: 'Asia',   startH: 20, startM: 0,  endH: 0,  endM: 0,  color: 'rgba(255, 200, 50, 0.04)' },
+  { name: 'London', startH: 2,  startM: 0,  endH: 5,  endM: 0,  color: 'rgba(50, 150, 255, 0.04)' },
+  { name: 'NY AM',  startH: 9,  startM: 30, endH: 12, endM: 0,  color: 'rgba(100, 220, 100, 0.04)' },
+  { name: 'NY PM',  startH: 13, startM: 30, endH: 16, endM: 0,  color: 'rgba(200, 100, 255, 0.04)' },
 ];
 
 const HIGH_LOW_COLOR = 'rgba(255, 255, 255, 0.45)';
@@ -39,6 +40,7 @@ interface SessionRange {
   session: Session;
   startTime: number; // unix seconds
   endTime: number;
+  lastCandleTime: number; // time of last candle in session
   high: number;
   low: number;
   candles: number; // how many candles fell in this range
@@ -109,7 +111,9 @@ function buildSessionRanges(
     const dayBase = day * 86400; // midnight UTC of this day
     for (const sess of SESSIONS) {
       const sessStart = dayBase + sess.startH * 3600 + sess.startM * 60;
-      const sessEnd = dayBase + sess.endH * 3600 + sess.endM * 60;
+      let sessEnd = dayBase + sess.endH * 3600 + sess.endM * 60;
+      // Handle sessions that wrap past midnight (e.g. Asia 20:00–00:00)
+      if (sessEnd <= sessStart) sessEnd += 86400;
 
       // Skip if entirely outside visible range
       if (sessEnd < visStartSec || sessStart > visEndSec) continue;
@@ -117,17 +121,19 @@ function buildSessionRanges(
       let high = -Infinity;
       let low = Infinity;
       let count = 0;
+      let lastT = sessStart;
       for (const c of candles) {
         const t = c.time as number;
         if (t >= sessStart && t < sessEnd) {
           high = Math.max(high, c.high);
           low = Math.min(low, c.low);
+          if (t > lastT) lastT = t;
           count++;
         }
       }
 
       if (count > 0) {
-        ranges.push({ session: sess, startTime: sessStart, endTime: sessEnd, high, low, candles: count });
+        ranges.push({ session: sess, startTime: sessStart, endTime: sessEnd, lastCandleTime: lastT, high, low, candles: count });
       }
     }
   }
@@ -176,10 +182,13 @@ class SessionRenderer implements ISeriesPrimitivePaneRenderer {
         // Convert session time boundaries to x coordinates
         const x1 = chart.timeScale().timeToCoordinate(r.startTime as Time);
         const x2 = chart.timeScale().timeToCoordinate(r.endTime as Time);
-        if (x1 === null || x2 === null) continue;
+        if (x1 === null && x2 === null) continue;
+        const resolvedX1 = x1 ?? 0;
+        // If session end is past the last candle, stop at the last candle
+        const resolvedX2 = x2 ?? chart.timeScale().timeToCoordinate(r.lastCandleTime as Time) ?? resolvedX1;
 
-        const left = Math.max(0, Math.min(x1, x2));
-        const right = Math.min(mediaSize.width, Math.max(x1, x2));
+        const left = Math.max(0, Math.min(resolvedX1, resolvedX2));
+        const right = Math.min(mediaSize.width, Math.max(resolvedX1, resolvedX2));
         if (right - left < 2) continue;
 
         // Background box

@@ -11,6 +11,43 @@ import { SessionPrimitive } from './SessionPrimitive.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { CandleInterval } from '../../types/market.ts';
 
+/**
+ * lightweight-charts displays timestamps via getUTCHours(), so the x-axis
+ * always shows UTC. We want to show New York (ET) time instead.
+ * Shift timestamps by the NY UTC offset so the chart "accidentally" displays ET.
+ */
+function nyOffsetSec(utcSec: number): number {
+  const d = new Date(utcSec * 1000);
+  const ny = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric', minute: 'numeric', hour12: false,
+  }).formatToParts(d);
+  const nyH = parseInt(ny.find(p => p.type === 'hour')!.value, 10) % 24;
+  const nyM = parseInt(ny.find(p => p.type === 'minute')!.value, 10);
+  const nySod = nyH * 3600 + nyM * 60;
+  const utcSod = d.getUTCHours() * 3600 + d.getUTCMinutes() * 60;
+  let off = nySod - utcSod;
+  if (off > 43200) off -= 86400;
+  if (off < -43200) off += 86400;
+  return off;
+}
+
+/** Cache the offset — it only changes twice a year */
+let _cachedOffset: number | null = null;
+let _cachedOffsetExpiry = 0;
+export function getNyOffset(utcSec: number): number {
+  if (_cachedOffset !== null && utcSec < _cachedOffsetExpiry) return _cachedOffset;
+  _cachedOffset = nyOffsetSec(utcSec);
+  // Re-check every hour in case of DST transition
+  _cachedOffsetExpiry = utcSec + 3600;
+  return _cachedOffset;
+}
+
+/** Shift a UTC unix timestamp so lightweight-charts displays it as NY time */
+export function utcToChartTime(utcSec: number): number {
+  return utcSec + getNyOffset(utcSec);
+}
+
 const INTERVALS: CandleInterval[] = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
 interface Props {
@@ -118,7 +155,8 @@ export function TradingChart({ engine }: Props) {
     const seen = new Set<number>();
     const data: CandlestickData[] = [];
     for (const c of candles) {
-      const t = Math.floor(c.t / 1000);
+      const tUtc = Math.floor(c.t / 1000);
+      const t = utcToChartTime(tUtc);
       if (seen.has(t)) continue;
       seen.add(t);
       const o = parseFloat(c.o);
