@@ -1,8 +1,19 @@
 import { useEffect, useState, Component, type ReactNode } from 'react';
 import { AppLayout } from './components/layout/AppLayout.tsx';
+import { PnlCalendar } from './components/pnl/PnlCalendar.tsx';
 import { useMarketStore } from './store/useMarketStore.ts';
 import { usePaperEngine } from './hooks/useEngine.ts';
 import { useWebSocket } from './hooks/useWebSocket.ts';
+
+function useHashRoute() {
+  const [hash, setHash] = useState(window.location.hash);
+  useEffect(() => {
+    const onHash = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  return hash;
+}
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null as string | null };
@@ -31,6 +42,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 function AppInner() {
   const engine = usePaperEngine();
   const [ready, setReady] = useState(false);
+  const hash = useHashRoute();
 
   useWebSocket(engine);
 
@@ -54,6 +66,10 @@ function AppInner() {
         Loading market data...
       </div>
     );
+  }
+
+  if (hash === '#/pnl') {
+    return <PnlCalendar />;
   }
 
   return <AppLayout engine={engine} />;

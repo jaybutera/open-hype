@@ -35,6 +35,18 @@ export function Header() {
         Open Hype
       </span>
 
+      <a
+        href="#/pnl"
+        style={{
+          fontSize: 12, fontWeight: 600, color: '#8a8f98',
+          textDecoration: 'none', padding: '4px 10px',
+          background: '#141820', border: '1px solid #1a1f2e',
+          borderRadius: 4, flexShrink: 0,
+        }}
+      >
+        PnL
+      </a>
+
       <AssetSelector />
 
       {/* Favorite chips */}
