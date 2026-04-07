@@ -13,6 +13,8 @@ export interface PaperOrder {
   tpsl?: TpSl;
   isMarket?: boolean;
   timestamp: number;
+  /** If set, this order only activates after the parent order has filled. */
+  parentOid?: string;
 }
 
 export interface FillResult {
@@ -80,11 +82,16 @@ export function matchTriggersByCandle(
   orders: PaperOrder[],
   high: Decimal,
   low: Decimal,
+  allOpenOrders?: PaperOrder[],
 ): FillResult[] {
   const fills: FillResult[] = [];
 
   for (const order of orders) {
     if (order.type !== 'trigger') continue;
+    // Skip orders whose parent entry hasn't filled yet
+    if (order.parentOid && allOpenOrders) {
+      if (allOpenOrders.some(o => o.id === order.parentOid)) continue;
+    }
     if (!shouldTriggerFromCandle(order, high, low)) continue;
 
     fills.push({
@@ -102,12 +109,21 @@ export function matchTriggersByCandle(
  * Attempt to fill orders against a new price tick.
  * Returns orders that should be filled this tick.
  */
-export function matchOrders(orders: PaperOrder[], midPrice: Decimal): FillResult[] {
+export function matchOrders(orders: PaperOrder[], midPrice: Decimal, allOpenOrders?: PaperOrder[]): FillResult[] {
   const fills: FillResult[] = [];
+  // Track parent orders filled in this batch so children can activate
+  const filledParentIds = new Set<string>();
 
   for (const order of orders) {
+    // Skip orders whose parent entry hasn't filled yet
+    if (order.parentOid && allOpenOrders) {
+      const parentStillOpen = allOpenOrders.some(o => o.id === order.parentOid);
+      if (parentStillOpen && !filledParentIds.has(order.parentOid)) continue;
+    }
+
     if (order.type === 'limit') {
       if (shouldFillLimit(order, midPrice)) {
+        filledParentIds.add(order.id);
         fills.push({
           order,
           fillPrice: order.price,  // fill at limit price (maker)

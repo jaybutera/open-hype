@@ -29,16 +29,20 @@ function executeSetup(engine: PaperEngine, setupId: string, coin: string) {
   });
   if (!r1.success) throw new Error(`Entry: ${r1.error}`);
 
+  const entryOid = r1.oid as string;
+
   engine.placeOrder({
     coin, side: closeSide, price: setup.tpPrice.toFixed(2), size: sizeStr,
     reduceOnly: false,
     orderType: { trigger: { isMarket: true, triggerPx: setup.tpPrice.toFixed(2), tpsl: 'tp' } },
+    parentOid: entryOid,
   });
 
   engine.placeOrder({
     coin, side: closeSide, price: setup.slPrice.toFixed(2), size: sizeStr,
     reduceOnly: false,
     orderType: { trigger: { isMarket: true, triggerPx: setup.slPrice.toFixed(2), tpsl: 'sl' } },
+    parentOid: entryOid,
   });
 
   useTradeSetupStore.getState().removeSetup(setupId);
@@ -170,7 +174,7 @@ describe('trade setup execute flow', () => {
     expect(rejections[0]).toContain('Insufficient margin');
   });
 
-  it('TP/SL do not open positions if entry never fills', () => {
+  it('TP/SL stay dormant until entry fills (parentOid linkage)', () => {
     useSettingsStore.setState({ riskUsdc: '100' });
     const store = useTradeSetupStore.getState();
     store.startSetup('buy');
@@ -182,23 +186,19 @@ describe('trade setup execute flow', () => {
     executeSetup(engine, setupId, 'BTC');
 
     // Price rises above TP without entry ever filling
-    // TP sell triggers (midPrice >= 54000) → removed with no position
-    // SL sell does NOT trigger (midPrice > 48000, needs <=)
+    // TP is linked to entry via parentOid — it stays dormant
     engine.onPriceUpdate('BTC', '55000');
 
     expect(engine.getPositions()).toHaveLength(0);
-    // Entry limit + SL still open (TP was removed, entry didn't fill)
-    expect(engine.getOpenOrders()).toHaveLength(2);
+    // All 3 orders still open — TP not removed because parent hasn't filled
+    expect(engine.getOpenOrders()).toHaveLength(3);
 
-    // Now price drops below SL — SL triggers, also removed with no position
+    // Price drops below SL — entry fills (gap through), SL also fires
     engine.onPriceUpdate('BTC', '47000');
 
-    // Entry limit fills at this price (47000 <= 50000)
-    // But the entry fill creates a position, and SL triggers on same tick...
-    // Actually: matchOrders runs first, both entry and SL match.
-    // Entry fills first (creates long), SL fills second (closes long).
-    // This is actually correct behavior — price gapped through entry and SL.
+    // Entry fills first, SL fires same tick (gap through entry and SL)
     expect(engine.getPositions()).toHaveLength(0);
+    // TP is also removed when position closes
     expect(engine.getOpenOrders()).toHaveLength(0);
   });
 
@@ -218,5 +218,33 @@ describe('trade setup execute flow', () => {
 
     // 200 / 2000 = 0.1 (not 0.05 from original setup)
     expect(assetSize).toBe(0.1);
+  });
+
+  it('candle wick does not remove TP/SL while entry is pending', () => {
+    useSettingsStore.setState({ riskUsdc: '100' });
+    const store = useTradeSetupStore.getState();
+    store.startSetup('buy');
+    store.addClick(48000);
+    store.addClick(50000);
+    store.addClick(54000);
+
+    const setupId = useTradeSetupStore.getState().activeSetups[0].id;
+    executeSetup(engine, setupId, 'BTC');
+
+    expect(engine.getOpenOrders()).toHaveLength(3);
+
+    // Candle wick spans SL level — should NOT remove SL
+    engine.onCandleUpdate('BTC', '51000', '47000');
+    expect(engine.getOpenOrders()).toHaveLength(3);
+    expect(engine.getPositions()).toHaveLength(0);
+
+    // Entry fills normally
+    engine.onPriceUpdate('BTC', '50000');
+    expect(engine.getPositions()).toHaveLength(1);
+    expect(engine.getOpenOrders()).toHaveLength(2);
+
+    // SL now triggers correctly
+    engine.onPriceUpdate('BTC', '48000');
+    expect(engine.getPositions()).toHaveLength(0);
   });
 });

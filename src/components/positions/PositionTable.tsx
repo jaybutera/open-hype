@@ -331,10 +331,10 @@ export function PositionTable({ engine }: Props) {
               </tr>
             </thead>
             <tbody>
-              {[...paperFills].reverse().slice(0, 10).map(fill => {
+              {[...paperFills].reverse().slice(0, 10).map((fill, idx) => {
                 const pnl = parseFloat(fill.realizedPnl);
                 return (
-                  <tr key={fill.id} style={{ borderBottom: '1px solid #1a1f2e' }}>
+                  <tr key={fill.id} style={{ borderBottom: '1px solid #1a1f2e', backgroundColor: idx % 2 === 1 ? '#131723' : 'transparent' }}>
                     <td style={{ padding: '6px 16px' }}>{fill.coin}</td>
                     <td style={{
                       padding: '6px 8px',

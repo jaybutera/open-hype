@@ -102,6 +102,8 @@ export function OrderPanel({ engine }: Props) {
       return;
     }
 
+    const entryOid = r1.oid as string;
+
     const r2 = engine.placeOrder({
       coin: currentAsset,
       side: closeSide,
@@ -109,6 +111,7 @@ export function OrderPanel({ engine }: Props) {
       size: sizeStr,
       reduceOnly: false,
       orderType: { trigger: { isMarket: true, triggerPx: setup.tpPrice.toFixed(2), tpsl: 'tp' } },
+      parentOid: entryOid,
     });
     if (!r2.success) errors.push(`TP: ${r2.error}`);
 
@@ -119,6 +122,7 @@ export function OrderPanel({ engine }: Props) {
       size: sizeStr,
       reduceOnly: false,
       orderType: { trigger: { isMarket: true, triggerPx: setup.slPrice.toFixed(2), tpsl: 'sl' } },
+      parentOid: entryOid,
     });
     if (!r3.success) errors.push(`SL: ${r3.error}`);
 

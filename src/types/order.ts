@@ -34,6 +34,8 @@ export interface OrderRequest {
   reduceOnly: boolean;
   orderType: OrderType;
   cloid?: string;
+  /** Link TP/SL to an entry order — they won't activate until the parent fills. */
+  parentOid?: string;
 }
 
 export interface OpenOrder {

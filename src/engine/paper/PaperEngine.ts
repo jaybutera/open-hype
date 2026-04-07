@@ -47,6 +47,7 @@ function rehydrateOrders(raw: any[]): PaperOrder[] {
     ...(o.triggerPx != null ? { triggerPx: new Decimal(o.triggerPx) } : {}),
     ...(o.tpsl != null ? { tpsl: o.tpsl } : {}),
     ...(o.isMarket != null ? { isMarket: o.isMarket } : {}),
+    ...(o.parentOid != null ? { parentOid: o.parentOid } : {}),
   }));
 }
 
@@ -146,6 +147,10 @@ export class PaperEngine {
       order.isMarket = trig.isMarket;
     }
 
+    if (req.parentOid) {
+      order.parentOid = req.parentOid;
+    }
+
     this.openOrders.push(order);
     this.emitUpdate();
 
@@ -188,7 +193,7 @@ export class PaperEngine {
       return;
     }
 
-    const fillResults = matchOrders(coinOrders, mid);
+    const fillResults = matchOrders(coinOrders, mid, this.openOrders);
     if (fillResults.length === 0) {
       if (pos) this.emitUpdate();
       return;
@@ -213,7 +218,7 @@ export class PaperEngine {
 
     const h = new Decimal(high);
     const l = new Decimal(low);
-    const fillResults = matchTriggersByCandle(coinOrders, h, l);
+    const fillResults = matchTriggersByCandle(coinOrders, h, l, this.openOrders);
     if (fillResults.length === 0) return;
 
     for (const fill of fillResults) {
