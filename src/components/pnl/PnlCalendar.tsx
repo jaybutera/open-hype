@@ -259,9 +259,8 @@ export function PnlCalendar() {
                 {selectedData.trades.map((fill, idx) => {
                   const pnl = parseFloat(fill.realizedPnl);
                   return (
-                    <tr key={fill.id} style={{
+                    <tr key={fill.id} className="fill-row" style={{
                       borderBottom: '1px solid #1a1f2e',
-                      backgroundColor: idx % 2 === 1 ? '#0d1117' : 'transparent',
                     }}>
                       <td style={{ padding: '6px 16px', fontSize: 12, color: '#8a8f98' }}>
                         {new Date(fill.timestamp).toLocaleTimeString()}

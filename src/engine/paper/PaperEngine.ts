@@ -126,7 +126,14 @@ export class PaperEngine {
     const isLimit = 'limit' in req.orderType;
     const isTrigger = 'trigger' in req.orderType;
 
-    // Margin is checked at fill time, not placement (matches real HL behavior)
+    // Check margin at placement for non-reduceOnly orders
+    if (!req.reduceOnly && !('trigger' in req.orderType && (req.orderType as any).trigger.tpsl)) {
+      const requiredMargin = size.mul(price).div(this.leverage);
+      const available = this.availableBalance();
+      if (requiredMargin.gt(available)) {
+        return { success: false, error: `Insufficient margin: need ${requiredMargin.toFixed(2)}, available ${available.toFixed(2)}` };
+      }
+    }
 
     const oid = `paper-ord-${++orderCounter}`;
     const order: PaperOrder = {
@@ -228,7 +235,32 @@ export class PaperEngine {
   }
 
   private executeFill(fill: FillResult): void {
-    const { order, fillPrice, fillSize, isMaker } = fill;
+    const { order, fillPrice, isMaker } = fill;
+
+    // Margin check at fill time for new positions (not reduceOnly, not TP/SL)
+    if (!order.reduceOnly && !order.tpsl) {
+      const requiredMargin = fill.fillSize.mul(fillPrice).div(this.leverage);
+      // Available balance excluding THIS order's reserved margin (it's about to be removed)
+      let usedMargin = new Decimal(0);
+      for (const pos of this.positions.values()) {
+        usedMargin = usedMargin.add(pos.marginUsed);
+      }
+      for (const o of this.openOrders) {
+        if (!o.reduceOnly && !o.tpsl && o.id !== order.id) {
+          usedMargin = usedMargin.add(o.size.mul(o.price).div(this.leverage));
+        }
+      }
+      const available = this.balance.sub(usedMargin);
+      if (requiredMargin.gt(available)) {
+        this.removeOrder(order.id);
+        // Also cancel linked TP/SL orders
+        this.openOrders = this.openOrders.filter(o => o.parentOid !== order.id);
+        if (this.onRejection) {
+          this.onRejection(`Insufficient margin: need ${requiredMargin.toFixed(2)}, available ${available.toFixed(2)}`, order);
+        }
+        return;
+      }
+    }
 
     // Enforce reduceOnly and TP/SL — both require an existing position to close
     if (order.reduceOnly || order.tpsl) {
@@ -244,21 +276,8 @@ export class PaperEngine {
       }
       // Clamp size to position size
       const maxClose = pos.szi.abs();
-      if (fillSize.gt(maxClose)) {
+      if (fill.fillSize.gt(maxClose)) {
         fill.fillSize = maxClose;
-      }
-    }
-
-    // Check margin at fill time for non-reduceOnly, non-TP/SL orders
-    if (!order.reduceOnly && !order.tpsl) {
-      const requiredMargin = fill.fillSize.mul(fillPrice).div(this.leverage);
-      const available = this.availableBalance();
-      if (requiredMargin.gt(available)) {
-        const reason = `Insufficient margin: need ${requiredMargin.toFixed(2)}, available ${available.toFixed(2)}`;
-        console.warn(`[PaperEngine] Order ${order.id} rejected: ${reason}`);
-        this.onRejection?.(reason, order);
-        this.removeOrder(order.id);
-        return;
       }
     }
 
@@ -311,6 +330,12 @@ export class PaperEngine {
     let totalMargin = new Decimal(0);
     for (const pos of this.positions.values()) {
       totalMargin = totalMargin.add(pos.marginUsed);
+    }
+    // Reserve margin for pending entry orders (non-reduceOnly, non-TP/SL)
+    for (const o of this.openOrders) {
+      if (!o.reduceOnly && !o.tpsl) {
+        totalMargin = totalMargin.add(o.size.mul(o.price).div(this.leverage));
+      }
     }
     return this.balance.sub(totalMargin);
   }

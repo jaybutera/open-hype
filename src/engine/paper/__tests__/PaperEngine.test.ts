@@ -60,9 +60,11 @@ describe('placeOrder', () => {
     expect(placeLimitBuy('BTC', '0', '1').success).toBe(false);
   });
 
-  it('accepts placement regardless of margin (checked at fill)', () => {
-    // 100 BTC × 50000 / 10 = 500k margin > 10k balance — placement still succeeds
-    expect(placeLimitBuy('BTC', '50000', '100').success).toBe(true);
+  it('rejects placement when margin is insufficient', () => {
+    // 100 BTC × 50000 / 10 = 500k margin > 10k balance — rejected at placement
+    const result = placeLimitBuy('BTC', '50000', '100');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Insufficient margin');
   });
 
   it('rejects reduceOnly sell when no position', () => {
@@ -116,29 +118,28 @@ describe('limit order fills', () => {
   });
 });
 
-// ── Margin check at fill time ────────────────────────────────────────
+// ── Margin check at placement time ───────────────────────────────────
 
-describe('margin check at fill time', () => {
-  it('rejects fill when margin is insufficient and fires callback', () => {
-    const rejections: string[] = [];
+describe('margin check at placement time', () => {
+  it('rejects order when margin is insufficient', () => {
     engine = new PaperEngine({
       initialBalance: '10000',
       leverage: 10,
-      onRejection: (reason) => rejections.push(reason),
     });
 
     // 100 BTC × 50000 / 10 = 500k margin — way over 10k balance
-    placeLimitBuy('BTC', '50000', '100');
-    engine.onPriceUpdate('BTC', '50000');
+    const result = engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: '50000', size: '100',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
 
-    expect(engine.getPositions()).toHaveLength(0);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Insufficient margin');
+    expect(result.error).toContain('500000');
     expect(engine.getOpenOrders()).toHaveLength(0);
-    expect(rejections).toHaveLength(1);
-    expect(rejections[0]).toContain('Insufficient margin');
-    expect(rejections[0]).toContain('500000');
   });
 
-  it('fills when margin is sufficient', () => {
+  it('accepts order when margin is sufficient', () => {
     // 0.1 BTC × 50000 / 10 = 500 margin, well within 10k
     placeLimitBuy('BTC', '50000', '0.1');
     engine.onPriceUpdate('BTC', '50000');
@@ -146,11 +147,9 @@ describe('margin check at fill time', () => {
   });
 
   it('rejects when existing positions consume available margin', () => {
-    const rejections: string[] = [];
     engine = new PaperEngine({
       initialBalance: '10000',
       leverage: 10,
-      onRejection: (reason) => rejections.push(reason),
     });
 
     // First position: 1 BTC × 50000 / 10 = 5000 margin → 5000 available
@@ -160,11 +159,66 @@ describe('margin check at fill time', () => {
     openLong('ETH', '4000', '1');
 
     // Third: 1 SOL × 50000 / 10 = 5000 margin → only ~4600 available
-    placeLimitBuy('SOL', '50000', '1');
-    engine.onPriceUpdate('SOL', '50000');
+    const result = engine.placeOrder({
+      coin: 'SOL', side: 'buy', price: '50000', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
 
-    expect(engine.getPosition('SOL')).toBeNull();
-    expect(rejections).toHaveLength(1);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Insufficient margin');
+  });
+
+  it('reserves margin for pending limit orders', () => {
+    engine = new PaperEngine({
+      initialBalance: '10000',
+      leverage: 10,
+    });
+
+    // First limit order: 1 BTC × 50000 / 10 = 5000 margin reserved
+    placeLimitBuy('BTC', '50000', '1');
+
+    // Second: 1 ETH × 50000 / 10 = 5000 margin — only 5000 available
+    const result = engine.placeOrder({
+      coin: 'ETH', side: 'buy', price: '50000', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
+    expect(result.success).toBe(true); // exactly 5000 + 5000 = 10000, fits
+
+    // Third: should fail, no margin left
+    const result2 = engine.placeOrder({
+      coin: 'SOL', side: 'buy', price: '50000', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
+    expect(result2.success).toBe(false);
+    expect(result2.error).toContain('Insufficient margin');
+  });
+
+  it('rejects fill at execution time when margin is insufficient', () => {
+    const rejection = vi.fn();
+    engine = new PaperEngine({
+      initialBalance: '1000',
+      leverage: 10,
+      onRejection: rejection,
+    });
+
+    // Place two limit orders that each fit individually at placement
+    // 0.1 BTC × 50000 / 10 = 500 margin each, total 1000 = fits
+    placeLimitBuy('BTC', '50000', '0.1');
+    placeLimitBuy('ETH', '50000', '0.1');
+
+    // First fills — margin used by position = 500
+    engine.onPriceUpdate('BTC', '50000');
+    expect(engine.getPositions()).toHaveLength(1);
+
+    // Cancel the pending ETH order (frees reserved margin), place a bigger one
+    engine.cancelAllOrders('ETH');
+    const big = engine.placeOrder({
+      coin: 'ETH', side: 'buy', price: '50000', size: '0.2',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
+    // 0.2 × 50000 / 10 = 1000 margin, but 500 used by BTC pos → only 500 available
+    expect(big.success).toBe(false);
+    expect(big.error).toContain('Insufficient margin');
   });
 });
 
@@ -305,12 +359,10 @@ describe('trade setup: entry + TP + SL end-to-end', () => {
     expect(engine.getOpenOrders()).toHaveLength(0);
   });
 
-  it('risk-based sizing: rejects entry when size exceeds margin', () => {
-    const rejections: string[] = [];
+  it('risk-based sizing: rejects entry at placement when size exceeds margin', () => {
     engine = new PaperEngine({
       initialBalance: '10000',
       leverage: 10,
-      onRejection: (reason) => rejections.push(reason),
     });
 
     // Simulate risk sizing: $50 risk, $1 stop distance → 50 units
@@ -321,24 +373,15 @@ describe('trade setup: entry + TP + SL end-to-end', () => {
     const riskPerUnit = Math.abs(entryPrice - slPrice); // 1
     const assetSize = (riskUsdc / riskPerUnit).toString(); // '50'
 
-    engine.placeOrder({
+    const result = engine.placeOrder({
       coin: 'BTC', side: 'buy', price: entryPrice.toString(), size: assetSize,
       reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
     });
-    placeTP('BTC', 'sell', '50100', assetSize, false);
-    placeSL('BTC', 'sell', slPrice.toString(), assetSize, false);
 
-    expect(engine.getOpenOrders()).toHaveLength(3); // all placed
-
-    engine.onPriceUpdate('BTC', entryPrice.toString());
-
-    // Entry rejected at fill time — no position created
-    expect(engine.getPositions()).toHaveLength(0);
-    expect(rejections).toHaveLength(1);
-    expect(rejections[0]).toContain('Insufficient margin');
-
-    // TP/SL remain as orphans (no position to trigger against)
-    // They'll be harmlessly removed when triggered with no position
+    // Rejected immediately at placement — never sits in the book
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Insufficient margin');
+    expect(engine.getOpenOrders()).toHaveLength(0);
   });
 
   it('risk-based sizing: fills when size fits within margin', () => {

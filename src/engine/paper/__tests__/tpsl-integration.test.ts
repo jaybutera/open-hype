@@ -101,16 +101,15 @@ describe('store integration', () => {
     }
   });
 
-  it('margin rejection surfaces through store', () => {
+  it('margin rejection at placement time', () => {
     // 100 BTC × 50000 / 10 = 500k margin
-    engine.placeOrder({
+    const result = engine.placeOrder({
       coin: 'BTC', side: 'buy', price: '50000', size: '100',
       reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
     });
 
-    engine.onPriceUpdate('BTC', '50000');
-
-    expect(storeState().positions).toHaveLength(0);
-    expect(storeState().lastRejection).toContain('Insufficient margin');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Insufficient margin');
+    expect(engine.getOpenOrders()).toHaveLength(0);
   });
 });

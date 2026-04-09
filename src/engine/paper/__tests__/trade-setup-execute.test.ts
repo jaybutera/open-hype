@@ -148,12 +148,10 @@ describe('trade setup execute flow', () => {
     expect(engine.getPositions()).toHaveLength(0);
   });
 
-  it('tight stop: margin rejection when risk sizing produces oversized position', () => {
-    const rejections: string[] = [];
+  it('tight stop: margin rejection at placement when risk sizing produces oversized position', () => {
     engine = new PaperEngine({
       initialBalance: '10000',
       leverage: 10,
-      onRejection: (reason) => rejections.push(reason),
     });
 
     // $50 risk, $1 stop → 50 BTC = $2.5M notional = $250k margin
@@ -165,13 +163,10 @@ describe('trade setup execute flow', () => {
     store.addClick(50100);  // TP
 
     const setupId = useTradeSetupStore.getState().activeSetups[0].id;
-    executeSetup(engine, setupId, 'BTC');
 
-    engine.onPriceUpdate('BTC', '50000');
-
-    expect(engine.getPositions()).toHaveLength(0);
-    expect(rejections).toHaveLength(1);
-    expect(rejections[0]).toContain('Insufficient margin');
+    // Entry order is rejected at placement — executeSetup throws
+    expect(() => executeSetup(engine, setupId, 'BTC')).toThrow('Insufficient margin');
+    expect(engine.getOpenOrders()).toHaveLength(0);
   });
 
   it('TP/SL stay dormant until entry fills (parentOid linkage)', () => {

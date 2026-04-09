@@ -288,12 +288,18 @@ export function TradingChart({ engine }: Props) {
 
     // 1. Check trade box button clicks and drag starts
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
-      if (prim.handleMouseDown(x, y)) return;
+      if (prim.handleMouseDown(x, y)) {
+        chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
+        return;
+      }
     }
 
     // 1b. Check order line drag starts
     for (const prim of orderLinePrimitivesRef.current.values()) {
-      if (prim.handleMouseDown(x, y)) return;
+      if (prim.handleMouseDown(x, y)) {
+        chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
+        return;
+      }
     }
 
     // 2. If a setup is pending, feed clicks to it (no shift required)
@@ -501,12 +507,18 @@ export function TradingChart({ engine }: Props) {
   const handleChartMouseUp = useCallback(() => {
     // Release trade box drags
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
-      if (prim.handleMouseUp()) return;
+      if (prim.handleMouseUp()) {
+        chartRef.current?.applyOptions({ handleScroll: true, handleScale: true });
+        return;
+      }
     }
 
     // Release order line drags (fires cancel+re-place via callback)
     for (const prim of orderLinePrimitivesRef.current.values()) {
-      if (prim.handleMouseUp()) return;
+      if (prim.handleMouseUp()) {
+        chartRef.current?.applyOptions({ handleScroll: true, handleScale: true });
+        return;
+      }
     }
 
     // Original draft order release
