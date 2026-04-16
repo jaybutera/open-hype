@@ -83,7 +83,7 @@ export function OrderConfirmModal({ engine }: Props) {
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          background: '#141820', border: '1px solid #2a2f3e', borderRadius: 12,
+          background: '#141820', border: '1px solid #2a2f3e', borderRadius: 0,
           padding: 24, width: 340,
         }}
       >
@@ -96,7 +96,7 @@ export function OrderConfirmModal({ engine }: Props) {
             Price
           </label>
           <div style={{
-            padding: '8px 12px', background: '#1a1f2e', borderRadius: 6,
+            padding: '8px 12px', background: '#1a1f2e', borderRadius: 0,
             color: sideColor, fontWeight: 600, fontSize: 14,
           }}>
             ${draftOrder.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -113,7 +113,7 @@ export function OrderConfirmModal({ engine }: Props) {
             onChange={e => setSizeUsdc(e.target.value)}
             style={{
               width: '100%', padding: '8px 12px', background: '#1a1f2e',
-              border: '1px solid #2a2f3e', borderRadius: 6, color: '#e1e4e8',
+              border: '1px solid #2a2f3e', borderRadius: 0, color: '#e1e4e8',
               fontSize: 14, outline: 'none',
             }}
             onKeyDown={e => e.key === 'Enter' && handleConfirm()}
@@ -133,21 +133,16 @@ export function OrderConfirmModal({ engine }: Props) {
 
         <div style={{ display: 'flex', gap: 8 }}>
           <button
+            className="btn-secondary"
             onClick={clearDraft}
-            style={{
-              flex: 1, padding: '10px', background: '#2a2f3e', border: 'none',
-              borderRadius: 6, color: '#8a8f98', cursor: 'pointer', fontSize: 14,
-            }}
+            style={{ flex: 1, padding: '10px', fontSize: 14 }}
           >
             Cancel
           </button>
           <button
+            className={draftOrder.side === 'buy' ? 'btn-long' : 'btn-short'}
             onClick={handleConfirm}
-            style={{
-              flex: 1, padding: '10px', background: sideColor, border: 'none',
-              borderRadius: 6, color: draftOrder.side === 'buy' ? '#0a0e17' : '#fff',
-              cursor: 'pointer', fontSize: 14, fontWeight: 600,
-            }}
+            style={{ flex: 1, padding: '10px', fontSize: 14 }}
           >
             {draftOrder.side === 'buy' ? 'Buy/Long' : 'Sell/Short'}
           </button>

@@ -52,12 +52,9 @@ function TpSlInput({ position, engine, allMids }: {
   if (!show) {
     return (
       <button
+        className="btn-chip"
         onClick={() => setShow(true)}
-        style={{
-          fontSize: 11, background: '#1a1f2e', border: '1px solid #2a2f3e',
-          borderRadius: 4, padding: '3px 8px', color: '#8a8f98',
-          cursor: 'pointer', whiteSpace: 'nowrap',
-        }}
+        style={{ padding: '3px 8px', whiteSpace: 'nowrap' }}
       >
         + TP/SL
       </button>
@@ -72,28 +69,22 @@ function TpSlInput({ position, engine, allMids }: {
         placeholder="TP"
         style={{
           width: 70, padding: '3px 6px', fontSize: 11, background: '#1a1f2e',
-          border: '1px solid #2a2f3e', borderRadius: 4, color: '#0ecb81', outline: 'none',
+          border: '1px solid #2a2f3e', borderRadius: 0, color: '#0ecb81', outline: 'none',
         }}
         onKeyDown={e => e.key === 'Enter' && handleSetTp()}
       />
-      <button onClick={handleSetTp} style={{
-        fontSize: 10, background: '#0ecb8130', border: 'none', borderRadius: 3,
-        padding: '3px 6px', color: '#0ecb81', cursor: 'pointer',
-      }}>Set</button>
+      <button className="btn-tp-set" onClick={handleSetTp} style={{ padding: '3px 6px' }}>Set</button>
       <input
         value={sl}
         onChange={e => setSl(e.target.value)}
         placeholder="SL"
         style={{
           width: 70, padding: '3px 6px', fontSize: 11, background: '#1a1f2e',
-          border: '1px solid #2a2f3e', borderRadius: 4, color: '#f6465d', outline: 'none',
+          border: '1px solid #2a2f3e', borderRadius: 0, color: '#f6465d', outline: 'none',
         }}
         onKeyDown={e => e.key === 'Enter' && handleSetSl()}
       />
-      <button onClick={handleSetSl} style={{
-        fontSize: 10, background: '#f6465d30', border: 'none', borderRadius: 3,
-        padding: '3px 6px', color: '#f6465d', cursor: 'pointer',
-      }}>Set</button>
+      <button className="btn-sl-set" onClick={handleSetSl} style={{ padding: '3px 6px' }}>Set</button>
     </div>
   );
 }
@@ -204,8 +195,9 @@ export function PositionTable({ engine }: Props) {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
                               <span style={{ color: '#0ecb81' }}>TP ${(tpOrder.triggerPx ?? tpOrder.price).toFixed(1)}</span>
                               <button
+                                className="btn-inline"
                                 onClick={() => engine.cancelOrder(tpOrder.id)}
-                                style={{ fontSize: 9, background: 'none', border: 'none', color: '#555', cursor: 'pointer' }}
+                                style={{ fontSize: 9, color: '#555' }}
                               >x</button>
                             </div>
                           )}
@@ -213,8 +205,9 @@ export function PositionTable({ engine }: Props) {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
                               <span style={{ color: '#f6465d' }}>SL ${(slOrder.triggerPx ?? slOrder.price).toFixed(1)}</span>
                               <button
+                                className="btn-inline"
                                 onClick={() => engine.cancelOrder(slOrder.id)}
-                                style={{ fontSize: 9, background: 'none', border: 'none', color: '#555', cursor: 'pointer' }}
+                                style={{ fontSize: 9, color: '#555' }}
                               >x</button>
                             </div>
                           )}
@@ -225,12 +218,9 @@ export function PositionTable({ engine }: Props) {
                       </td>
                       <td style={{ textAlign: 'right', padding: '8px 16px' }}>
                         <button
+                          className="btn-danger"
                           onClick={() => handleMarketClose(pos.coin)}
-                          style={{
-                            fontSize: 12, background: '#f6465d20', border: '1px solid #f6465d40',
-                            borderRadius: 4, padding: '5px 12px', color: '#f6465d',
-                            cursor: 'pointer', fontWeight: 600,
-                          }}
+                          style={{ fontSize: 12, padding: '5px 12px', fontWeight: 600 }}
                         >
                           Close
                         </button>
@@ -253,11 +243,9 @@ export function PositionTable({ engine }: Props) {
             <span>Open Orders</span>
             {orders.length > 0 && (
               <button
+                className="btn-ghost"
                 onClick={() => engine.cancelAllOrders()}
-                style={{
-                  fontSize: 11, background: 'none', border: 'none',
-                  color: '#f6465d', cursor: 'pointer',
-                }}
+                style={{ fontSize: 11, color: '#f6465d' }}
               >
                 Cancel All
               </button>
@@ -295,12 +283,9 @@ export function PositionTable({ engine }: Props) {
                     <td style={{ textAlign: 'right', padding: '8px' }}>{ord.size.toString()}</td>
                     <td style={{ textAlign: 'right', padding: '8px 16px' }}>
                       <button
+                        className="btn-danger"
                         onClick={() => engine.cancelOrder(ord.id)}
-                        style={{
-                          fontSize: 11, background: '#2a2f3e', border: 'none',
-                          borderRadius: 4, padding: '3px 8px', color: '#f6465d',
-                          cursor: 'pointer',
-                        }}
+                        style={{ fontSize: 11, padding: '3px 8px' }}
                       >
                         Cancel
                       </button>

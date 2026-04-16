@@ -64,34 +64,18 @@ export function AssetSelector() {
   const isXyz = currentAsset.startsWith('xyz:');
   const displayName = isXyz ? currentAsset : `${currentAsset}-PERP`;
 
-  const tabStyle = (active: boolean) => ({
+  const tabStyle = {
     padding: '6px 14px',
     fontSize: 12,
-    fontWeight: 600 as const,
-    background: active ? '#2a2f3e' : 'transparent',
-    border: 'none',
-    borderBottom: active ? '2px solid #3861fb' : '2px solid transparent',
-    color: active ? '#e1e4e8' : '#8a8f98',
-    cursor: 'pointer' as const,
-  });
+  };
 
   return (
     <div style={{ position: 'relative', zIndex: 200 }}>
       <button
         ref={buttonRef}
+        className="btn-secondary"
         onClick={() => setOpen(v => !v)}
-        style={{
-          background: '#1a1f2e',
-          border: '1px solid #2a2f3e',
-          borderRadius: 6,
-          padding: '8px 16px',
-          color: '#e1e4e8',
-          cursor: 'pointer',
-          fontSize: 15,
-          fontWeight: 700,
-          minWidth: 160,
-          textAlign: 'left',
-        }}
+        style={{ padding: '8px 16px', fontSize: 15, fontWeight: 700, minWidth: 160, textAlign: 'left' }}
       >
         {displayName}
         {mid && (
@@ -111,7 +95,7 @@ export function AssetSelector() {
             marginTop: 4,
             background: '#141820',
             border: '1px solid #2a2f3e',
-            borderRadius: 8,
+            borderRadius: 0,
             width: 340,
             maxHeight: 460,
             overflow: 'hidden',
@@ -124,13 +108,13 @@ export function AssetSelector() {
             borderBottom: '1px solid #2a2f3e',
             background: '#0d1117',
           }}>
-            <button style={tabStyle(tab === 'favorites')} onClick={() => { setTab('favorites'); setSearch(''); }}>
+            <button className={`btn-toggle${tab === 'favorites' ? ' active' : ''}`} style={tabStyle} onClick={() => { setTab('favorites'); setSearch(''); }}>
               Favorites
             </button>
-            <button style={tabStyle(tab === 'perps')} onClick={() => { setTab('perps'); setSearch(''); }}>
+            <button className={`btn-toggle${tab === 'perps' ? ' active' : ''}`} style={tabStyle} onClick={() => { setTab('perps'); setSearch(''); }}>
               Perps
             </button>
-            <button style={tabStyle(tab === 'xyz')} onClick={() => { setTab('xyz'); setSearch(''); }}>
+            <button className={`btn-toggle${tab === 'xyz' ? ' active' : ''}`} style={tabStyle} onClick={() => { setTab('xyz'); setSearch(''); }}>
               XYZ
             </button>
           </div>

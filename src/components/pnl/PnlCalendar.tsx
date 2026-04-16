@@ -135,11 +135,11 @@ export function PnlCalendar() {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         gap: 16, padding: '16px 0',
       }}>
-        <button onClick={prevMonth} style={navBtnStyle}>&larr;</button>
+        <button className="btn-secondary" onClick={prevMonth} style={navBtnStyle}>&larr;</button>
         <span style={{ fontSize: 18, fontWeight: 700, minWidth: 200, textAlign: 'center' }}>
           {monthLabel}
         </span>
-        <button onClick={nextMonth} style={navBtnStyle}>&rarr;</button>
+        <button className="btn-secondary" onClick={nextMonth} style={navBtnStyle}>&rarr;</button>
       </div>
 
       {/* Calendar grid */}
@@ -187,7 +187,7 @@ export function PnlCalendar() {
                   minHeight: 70,
                   background: bgColor,
                   border: `1px solid ${borderColor}`,
-                  borderRadius: 6,
+                  borderRadius: 0,
                   opacity: inMonth ? 1 : 0.3,
                   cursor: hasTrades ? 'pointer' : 'default',
                   transition: 'all 0.15s',
@@ -225,7 +225,7 @@ export function PnlCalendar() {
         }}>
           <div style={{
             background: '#141820', border: '1px solid #1a1f2e',
-            borderRadius: 8, overflow: 'hidden',
+            borderRadius: 0, overflow: 'hidden',
           }}>
             <div style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -302,12 +302,7 @@ export function PnlCalendar() {
 }
 
 const navBtnStyle: React.CSSProperties = {
-  background: '#1a1f2e',
-  border: '1px solid #2a2f3e',
-  borderRadius: 6,
   padding: '6px 14px',
-  color: '#e1e4e8',
-  cursor: 'pointer',
   fontSize: 16,
   fontWeight: 700,
 };

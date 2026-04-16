@@ -12,7 +12,7 @@ interface Props {
 
 const inputStyle = {
   width: '100%', padding: '8px 10px', background: '#1a1f2e',
-  border: '1px solid #2a2f3e', borderRadius: 6, color: '#e1e4e8',
+  border: '1px solid #2a2f3e', borderRadius: 0, color: '#e1e4e8',
   fontSize: 14, outline: 'none',
 } as const;
 
@@ -225,24 +225,16 @@ export function OrderPanel({ engine }: Props) {
       {/* Side toggle */}
       <div style={{ display: 'flex', gap: 4 }}>
         <button
+          className={`btn-long${isBuy ? ' filled' : ''}`}
           onClick={() => setSide('buy')}
-          style={{
-            flex: 1, padding: '10px', border: 'none', borderRadius: 6,
-            cursor: 'pointer', fontWeight: 600, fontSize: 14,
-            background: isBuy ? '#0ecb81' : '#1a1f2e',
-            color: isBuy ? '#0a0e17' : '#8a8f98',
-          }}
+          style={{ flex: 1, padding: '10px', fontSize: 14 }}
         >
           Long
         </button>
         <button
+          className={`btn-short${!isBuy ? ' filled' : ''}`}
           onClick={() => setSide('sell')}
-          style={{
-            flex: 1, padding: '10px', border: 'none', borderRadius: 6,
-            cursor: 'pointer', fontWeight: 600, fontSize: 14,
-            background: !isBuy ? '#f6465d' : '#1a1f2e',
-            color: !isBuy ? '#fff' : '#8a8f98',
-          }}
+          style={{ flex: 1, padding: '10px', fontSize: 14 }}
         >
           Short
         </button>
@@ -260,24 +252,18 @@ export function OrderPanel({ engine }: Props) {
       </div>
       <div style={{ display: 'flex', gap: 4 }}>
         <button
+          className="btn-long"
           onClick={() => startSetup('buy')}
           disabled={!!pendingSetup}
-          style={{
-            flex: 1, padding: '8px', border: 'none', borderRadius: 6,
-            cursor: pendingSetup ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: 12,
-            background: '#0ecb81', color: '#0a0e17', opacity: pendingSetup ? 0.4 : 1,
-          }}
+          style={{ flex: 1, padding: '8px', fontSize: 12 }}
         >
           Set Up Long
         </button>
         <button
+          className="btn-short"
           onClick={() => startSetup('sell')}
           disabled={!!pendingSetup}
-          style={{
-            flex: 1, padding: '8px', border: 'none', borderRadius: 6,
-            cursor: pendingSetup ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: 12,
-            background: '#f6465d', color: '#fff', opacity: pendingSetup ? 0.4 : 1,
-          }}
+          style={{ flex: 1, padding: '8px', fontSize: 12 }}
         >
           Set Up Short
         </button>
@@ -288,11 +274,9 @@ export function OrderPanel({ engine }: Props) {
             Click chart: {pendingSetup.clicks.length}/3 levels
           </span>
           <button
+            className="btn-ghost"
             onClick={clearPending}
-            style={{
-              background: 'none', border: '1px solid #2a2f3e', borderRadius: 4,
-              color: '#8a8f98', fontSize: 11, padding: '2px 8px', cursor: 'pointer',
-            }}
+            style={{ fontSize: 11, padding: '2px 8px' }}
           >
             Cancel
           </button>
@@ -302,9 +286,9 @@ export function OrderPanel({ engine }: Props) {
       {/* Active trade setups */}
       {activeSetups.map(setup => (
         <div key={setup.id} style={{
-          background: '#1a1f2e', borderRadius: 6, padding: '8px 10px',
+          background: '#1a1f2e', borderRadius: 0, padding: '8px 10px',
           fontSize: 11, color: '#e1e4e8',
-          borderLeft: `3px solid ${setup.side === 'buy' ? '#0ecb81' : '#f6465d'}`,
+          borderLeft: `2px solid ${setup.side === 'buy' ? '#0ecb81' : '#f6465d'}`,
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ fontWeight: 700, color: setup.side === 'buy' ? '#0ecb81' : '#f6465d' }}>
@@ -320,22 +304,16 @@ export function OrderPanel({ engine }: Props) {
           </div>
           <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
             <button
+              className="btn-long"
               onClick={() => handleExecuteSetup(setup.id)}
-              style={{
-                flex: 1, padding: '5px', border: 'none', borderRadius: 4,
-                background: '#0ecb81', color: '#0a0e17',
-                fontSize: 11, fontWeight: 700, cursor: 'pointer',
-              }}
+              style={{ flex: 1, padding: '5px', fontSize: 11, fontWeight: 700 }}
             >
               Execute
             </button>
             <button
+              className="btn-short"
               onClick={() => removeSetup(setup.id)}
-              style={{
-                padding: '5px 10px', border: 'none', borderRadius: 4,
-                background: '#f6465d', color: '#fff',
-                fontSize: 11, fontWeight: 700, cursor: 'pointer',
-              }}
+              style={{ padding: '5px 10px', fontSize: 11, fontWeight: 700 }}
             >
               ✕
             </button>
@@ -350,13 +328,9 @@ export function OrderPanel({ engine }: Props) {
         {(['limit', 'market'] as const).map(t => (
           <button
             key={t}
+            className={`btn-toggle${orderType === t ? ' active' : ''}`}
             onClick={() => setOrderType(t)}
-            style={{
-              flex: 1, padding: '6px', fontSize: 12, border: 'none', borderRadius: 4,
-              cursor: 'pointer',
-              background: orderType === t ? '#2a2f3e' : 'transparent',
-              color: orderType === t ? '#e1e4e8' : '#8a8f98',
-            }}
+            style={{ flex: 1, padding: '6px', fontSize: 12 }}
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
@@ -442,13 +416,9 @@ export function OrderPanel({ engine }: Props) {
 
       {/* Submit */}
       <button
+        className={isBuy ? 'btn-long' : 'btn-short'}
         onClick={handleSubmit}
-        style={{
-          padding: '12px', border: 'none', borderRadius: 8,
-          cursor: 'pointer', fontWeight: 700, fontSize: 15,
-          background: isBuy ? '#0ecb81' : '#f6465d',
-          color: isBuy ? '#0a0e17' : '#fff',
-        }}
+        style={{ padding: '12px', fontWeight: 700, fontSize: 15 }}
       >
         {isBuy ? 'Buy/Long' : 'Sell/Short'} {currentAsset}
       </button>

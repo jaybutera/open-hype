@@ -65,20 +65,9 @@ export function PaperAccountSelector() {
   return (
     <div ref={dropdownRef} style={{ position: 'relative', flexShrink: 0 }}>
       <button
+        className="btn-secondary"
         onClick={() => setOpen(!open)}
-        style={{
-          padding: '5px 12px',
-          fontSize: 12,
-          fontWeight: 600,
-          background: '#1a1f2e',
-          border: '1px solid #2a2f3e',
-          borderRadius: 4,
-          color: '#e1e4e8',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-        }}
+        style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}
       >
         {activeAccount.name}
         <span style={{ fontSize: 10, color: '#8a8f98' }}>▼</span>
@@ -92,7 +81,7 @@ export function PaperAccountSelector() {
           marginTop: 4,
           background: '#141820',
           border: '1px solid #2a2f3e',
-          borderRadius: 6,
+          borderRadius: 0,
           minWidth: 240,
           zIndex: 300,
           boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
@@ -107,7 +96,7 @@ export function PaperAccountSelector() {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '8px 10px',
-                  borderRadius: 4,
+                  borderRadius: 0,
                   background: acct.id === activeAccountId ? '#1a1f2e' : 'transparent',
                   cursor: 'pointer',
                 }}
@@ -125,18 +114,9 @@ export function PaperAccountSelector() {
                 </div>
                 {accounts.length > 1 && (
                   <button
+                    className={confirmDelete === acct.id ? 'btn-danger' : 'btn-chip'}
                     onClick={(e) => { e.stopPropagation(); handleDelete(acct.id); }}
-                    style={{
-                      padding: '2px 8px',
-                      fontSize: 11,
-                      background: confirmDelete === acct.id ? '#e74c3c' : 'transparent',
-                      border: confirmDelete === acct.id ? 'none' : '1px solid #333',
-                      borderRadius: 3,
-                      color: confirmDelete === acct.id ? '#fff' : '#8a8f98',
-                      cursor: 'pointer',
-                      marginLeft: 8,
-                      flexShrink: 0,
-                    }}
+                    style={{ padding: '2px 8px', fontSize: 11, marginLeft: 8, flexShrink: 0 }}
                   >
                     {confirmDelete === acct.id ? 'Confirm' : 'Del'}
                   </button>
@@ -148,18 +128,9 @@ export function PaperAccountSelector() {
           <div style={{ borderTop: '1px solid #1a1f2e', padding: 4 }}>
             {/* Export button */}
             <button
+              className="btn-ghost"
               onClick={handleExport}
-              style={{
-                width: '100%',
-                padding: '8px 10px',
-                fontSize: 12,
-                background: 'transparent',
-                border: 'none',
-                borderRadius: 4,
-                color: '#8a8f98',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
+              style={{ width: '100%', padding: '8px 10px', fontSize: 12, textAlign: 'left' }}
             >
               Export trades (JSON)
             </button>
@@ -168,19 +139,9 @@ export function PaperAccountSelector() {
           <div style={{ borderTop: '1px solid #1a1f2e', padding: 4 }}>
             {!showNew ? (
               <button
+                className="btn-ghost"
                 onClick={() => setShowNew(true)}
-                style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  background: 'transparent',
-                  border: 'none',
-                  borderRadius: 4,
-                  color: '#3861fb',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                }}
+                style={{ width: '100%', padding: '8px 10px', fontSize: 12, fontWeight: 600, color: '#3861fb', textAlign: 'left' }}
               >
                 + New Account
               </button>
@@ -196,7 +157,7 @@ export function PaperAccountSelector() {
                     fontSize: 12,
                     background: '#0d1117',
                     border: '1px solid #2a2f3e',
-                    borderRadius: 4,
+                    borderRadius: 0,
                     color: '#e1e4e8',
                     outline: 'none',
                   }}
@@ -211,39 +172,23 @@ export function PaperAccountSelector() {
                     fontSize: 12,
                     background: '#0d1117',
                     border: '1px solid #2a2f3e',
-                    borderRadius: 4,
+                    borderRadius: 0,
                     color: '#e1e4e8',
                     outline: 'none',
                   }}
                 />
                 <div style={{ display: 'flex', gap: 4 }}>
                   <button
+                    className="btn-primary"
                     onClick={handleCreate}
-                    style={{
-                      flex: 1,
-                      padding: '6px 0',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      background: '#3861fb',
-                      border: 'none',
-                      borderRadius: 4,
-                      color: '#fff',
-                      cursor: 'pointer',
-                    }}
+                    style={{ flex: 1, padding: '6px 0', fontSize: 12 }}
                   >
                     Create
                   </button>
                   <button
+                    className="btn-ghost"
                     onClick={() => { setShowNew(false); setNewName(''); setNewBalance('10000'); }}
-                    style={{
-                      padding: '6px 10px',
-                      fontSize: 12,
-                      background: '#1a1f2e',
-                      border: 'none',
-                      borderRadius: 4,
-                      color: '#8a8f98',
-                      cursor: 'pointer',
-                    }}
+                    style={{ padding: '6px 10px', fontSize: 12 }}
                   >
                     Cancel
                   </button>

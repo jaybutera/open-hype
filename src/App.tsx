@@ -27,8 +27,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
           <h2>Runtime Error</h2>
           <pre style={{ marginTop: 16, color: '#e1e4e8' }}>{this.state.error}</pre>
           <button
+            className="btn-secondary"
             onClick={() => this.setState({ error: null })}
-            style={{ marginTop: 16, padding: '8px 16px', background: '#2a2f3e', border: 'none', borderRadius: 6, color: '#e1e4e8', cursor: 'pointer' }}
+            style={{ marginTop: 16, padding: '8px 16px' }}
           >
             Retry
           </button>

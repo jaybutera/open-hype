@@ -13,11 +13,9 @@ export function WalletInput() {
           {address.slice(0, 6)}...{address.slice(-4)}
         </span>
         <button
+          className="btn-secondary"
           onClick={disconnect}
-          style={{
-            padding: '4px 10px', fontSize: 11, background: '#2a2f3e',
-            border: 'none', borderRadius: 4, color: '#e1e4e8', cursor: 'pointer',
-          }}
+          style={{ padding: '4px 10px', fontSize: 11 }}
         >
           Disconnect
         </button>
@@ -34,26 +32,21 @@ export function WalletInput() {
         placeholder="Private key (0x...)"
         style={{
           padding: '6px 10px', fontSize: 12, background: '#1a1f2e',
-          border: '1px solid #2a2f3e', borderRadius: 4, color: '#e1e4e8',
+          border: '1px solid #2a2f3e', borderRadius: 0, color: '#e1e4e8',
           width: 200, outline: 'none',
         }}
       />
       <button
+        className="btn-secondary"
         onClick={() => setShow(!show)}
-        style={{
-          padding: '4px 8px', fontSize: 11, background: '#2a2f3e',
-          border: 'none', borderRadius: 4, color: '#8a8f98', cursor: 'pointer',
-        }}
+        style={{ padding: '4px 8px', fontSize: 11 }}
       >
         {show ? 'Hide' : 'Show'}
       </button>
       <button
+        className="btn-primary"
         onClick={() => { connect(key); setKey(''); }}
-        style={{
-          padding: '6px 14px', fontSize: 12, background: '#3861fb',
-          border: 'none', borderRadius: 4, color: '#fff', cursor: 'pointer',
-          fontWeight: 600,
-        }}
+        style={{ padding: '6px 14px', fontSize: 12 }}
       >
         Connect
       </button>

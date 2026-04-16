@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Open Hype</title>
+<title>Open Hype</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body, #root { height: 100%; width: 100%; }
@@ -14,6 +14,114 @@
       }
       .fill-row { background-color: transparent; }
       .fill-row:hover { background-color: #131723; }
+
+      /* ── Minimalist button system ──────────────────────────── */
+      /* All buttons: square edges, outline-only, no fills       */
+      button { transition: all 0.12s ease; border-radius: 0 !important; }
+
+      /* Long (green outline) */
+      .btn-long {
+        background: transparent; color: #0ecb81;
+        border: 1px solid #0ecb81; font-weight: 600; cursor: pointer;
+      }
+      .btn-long:hover { background: rgba(14,203,129,0.1); }
+      .btn-long:active { background: rgba(14,203,129,0.18); }
+      .btn-long.filled { background: #0ecb81; color: #0a0e17; }
+      .btn-long.filled:hover { background: #0bb874; }
+
+      /* Short (red outline) */
+      .btn-short {
+        background: transparent; color: #f6465d;
+        border: 1px solid #f6465d; font-weight: 600; cursor: pointer;
+      }
+      .btn-short:hover { background: rgba(246,70,93,0.1); }
+      .btn-short:active { background: rgba(246,70,93,0.18); }
+      .btn-short.filled { background: #f6465d; color: #fff; }
+      .btn-short.filled:hover { background: #e03e53; }
+
+      /* Primary (blue outline) */
+      .btn-primary {
+        background: transparent; color: #3861fb;
+        border: 1px solid #3861fb; font-weight: 600; cursor: pointer;
+      }
+      .btn-primary:hover { background: rgba(56,97,251,0.1); }
+      .btn-primary:active { background: rgba(56,97,251,0.18); }
+
+      /* Secondary (dim border) */
+      .btn-secondary {
+        background: transparent; color: #e1e4e8;
+        border: 1px solid #2a2f3e; cursor: pointer;
+      }
+      .btn-secondary:hover { border-color: #3a4050; background: rgba(42,47,62,0.2); }
+      .btn-secondary:active { background: rgba(42,47,62,0.35); }
+
+      /* Ghost (no border until hover) */
+      .btn-ghost {
+        background: transparent; color: #8a8f98;
+        border: 1px solid transparent; cursor: pointer;
+      }
+      .btn-ghost:hover { border-color: #2a2f3e; color: #e1e4e8; }
+      .btn-ghost:active { background: rgba(42,47,62,0.3); }
+
+      /* Danger (red outline) */
+      .btn-danger {
+        background: transparent; color: #f6465d;
+        border: 1px solid rgba(246,70,93,0.3); cursor: pointer;
+      }
+      .btn-danger:hover { border-color: #f6465d; background: rgba(246,70,93,0.08); }
+      .btn-danger:active { background: rgba(246,70,93,0.15); }
+
+      /* Chip (small, subtle border) */
+      .btn-chip {
+        background: transparent; color: #8a8f98;
+        border: 1px solid #2a2f3e; cursor: pointer; font-size: 11px;
+      }
+      .btn-chip:hover { border-color: #3a4050; color: #e1e4e8; }
+      .btn-chip.active { color: #e1e4e8; border-color: #3861fb; }
+
+      /* Toggle (segmented controls) */
+      .btn-toggle {
+        background: transparent; color: #8a8f98;
+        border: 1px solid transparent; cursor: pointer; font-weight: 600;
+      }
+      .btn-toggle:hover { color: #e1e4e8; }
+      .btn-toggle.active { color: #e1e4e8; border-color: #2a2f3e; background: rgba(42,47,62,0.25); }
+
+      /* Tiny inline (x, dismiss) */
+      .btn-inline {
+        background: none; border: none; cursor: pointer;
+        padding: 2px 4px;
+      }
+      .btn-inline:hover { color: #e1e4e8; }
+
+      /* Disabled */
+      button:disabled {
+        opacity: 0.3; cursor: not-allowed !important;
+      }
+      button:disabled:hover { background: transparent; }
+
+      /* Mode toggle */
+      .btn-mode-paper {
+        background: transparent; color: #f0b90b; border: 1px solid #f0b90b;
+      }
+      .btn-mode-paper:hover { background: rgba(240,185,11,0.1); }
+      .btn-mode-live {
+        background: transparent; color: #e74c3c; border: 1px solid #e74c3c;
+      }
+      .btn-mode-live:hover { background: rgba(231,76,60,0.1); }
+
+      /* TP/SL set buttons */
+      .btn-tp-set {
+        background: transparent; color: #0ecb81;
+        border: 1px solid rgba(14,203,129,0.3); cursor: pointer; font-size: 10px;
+      }
+      .btn-tp-set:hover { border-color: #0ecb81; background: rgba(14,203,129,0.08); }
+
+      .btn-sl-set {
+        background: transparent; color: #f6465d;
+        border: 1px solid rgba(246,70,93,0.3); cursor: pointer; font-size: 10px;
+      }
+      .btn-sl-set:hover { border-color: #f6465d; background: rgba(246,70,93,0.08); }
     </style>
   </head>
   <body>

@@ -8,6 +8,7 @@ import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { TradeBoxPrimitive } from './TradeBoxPrimitive.ts';
 import { OrderLinePrimitive } from './OrderLinePrimitive.ts';
 import { SessionPrimitive } from './SessionPrimitive.ts';
+import { FibPrimitive, type FibRetracement } from './FibPrimitive.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { CandleInterval } from '../../types/market.ts';
 
@@ -62,7 +63,11 @@ export function TradingChart({ engine }: Props) {
   const tradeBoxPrimitivesRef = useRef<Map<string, TradeBoxPrimitive>>(new Map());
   const orderLinePrimitivesRef = useRef<Map<string, OrderLinePrimitive>>(new Map());
   const sessionPrimitiveRef = useRef<SessionPrimitive | null>(null);
+  const fibPrimitiveRef = useRef<FibPrimitive | null>(null);
   const [sessionsOn, setSessionsOn] = useState(true);
+  const [fibMode, setFibMode] = useState(false);
+  const [fibFirstClick, setFibFirstClick] = useState<{ price: number; time: number } | null>(null);
+  const [fibs, setFibs] = useState<FibRetracement[]>([]);
 
   const candles = useMarketStore(s => s.candles);
   const currentAsset = useMarketStore(s => s.currentAsset);
@@ -126,6 +131,11 @@ export function TradingChart({ engine }: Props) {
     series.attachPrimitive(sessionPrim);
     sessionPrimitiveRef.current = sessionPrim;
 
+    // Attach fib retracement overlay
+    const fibPrim = new FibPrimitive();
+    series.attachPrimitive(fibPrim);
+    fibPrimitiveRef.current = fibPrim;
+
     const onResize = () => {
       chart.applyOptions({
         width: container.clientWidth,
@@ -144,6 +154,7 @@ export function TradingChart({ engine }: Props) {
       tradeBoxPrimitivesRef.current.clear();
       orderLinePrimitivesRef.current.clear();
       sessionPrimitiveRef.current = null;
+      fibPrimitiveRef.current = null;
     };
   }, []);
 
@@ -255,6 +266,20 @@ export function TradingChart({ engine }: Props) {
       } catch {}
     }
 
+    // Draw fib first-click marker
+    if (fibFirstClick !== null) {
+      try {
+        priceLinesRef.current.push(series.createPriceLine({
+          price: fibFirstClick.price,
+          color: 'rgba(255, 255, 255, 0.4)',
+          lineWidth: 1,
+          lineStyle: LineStyle.SparseDotted,
+          axisLabelVisible: true,
+          title: 'Fib ●',
+        }));
+      } catch {}
+    }
+
     // Draw pending setup click markers
     if (pendingSetup) {
       const color = pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d';
@@ -271,7 +296,7 @@ export function TradingChart({ engine }: Props) {
         } catch {}
       }
     }
-  }, [mode, paperPositions, draftOrder, pendingSetup, currentAsset]);
+  }, [mode, paperPositions, draftOrder, pendingSetup, currentAsset, fibFirstClick]);
 
   // Mouse down: handle trade box interactions first, then setup clicks, then shift+click orders
   const handleChartClick = useCallback((e: React.MouseEvent) => {
@@ -300,6 +325,31 @@ export function TradingChart({ engine }: Props) {
         chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
         return;
       }
+    }
+
+    // 1c. Fib retracement drawing mode
+    if (fibMode && chartRef.current) {
+      const clickTime = chartRef.current.timeScale().coordinateToTime(x);
+      if (clickTime === null) return;
+      const timeNum = clickTime as number;
+
+      if (fibFirstClick === null) {
+        setFibFirstClick({ price: priceNum, time: timeNum });
+      } else {
+        const newFib: FibRetracement = {
+          id: `fib-${Date.now()}`,
+          p1: fibFirstClick.price,
+          p2: priceNum,
+          t1: fibFirstClick.time,
+          t2: timeNum,
+        };
+        const updated = [...fibs, newFib];
+        setFibs(updated);
+        fibPrimitiveRef.current?.setFibs(updated);
+        setFibFirstClick(null);
+        setFibMode(false);
+      }
+      return;
     }
 
     // 2. If a setup is pending, feed clicks to it (no shift required)
@@ -343,7 +393,7 @@ export function TradingChart({ engine }: Props) {
       setDraftOrder(draft);
       setShowConfirm(true);
     }
-  }, [allMids, currentAsset, paperPositions, setDraftOrder, setShowConfirm, addClick]);
+  }, [allMids, currentAsset, paperPositions, setDraftOrder, setShowConfirm, addClick, fibMode, fibFirstClick, fibs]);
 
   const placeFromDraft = useCallback((draft: DraftOrder, sizeUsdc: string, priceNum: number) => {
     const isReduceOnly = draft.type === 'tp' || draft.type === 'stop';
@@ -537,7 +587,11 @@ export function TradingChart({ engine }: Props) {
   // ESC cancels pending trade setup
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') clearPending();
+      if (e.key === 'Escape') {
+        clearPending();
+        setFibMode(false);
+        setFibFirstClick(null);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -578,8 +632,40 @@ export function TradingChart({ engine }: Props) {
         >
           KZ
         </button>
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: pendingSetup ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
-          {pendingSetup
+        <button
+          onClick={() => { setFibMode(v => !v); setFibFirstClick(null); }}
+          style={{
+            padding: '4px 10px',
+            fontSize: 12,
+            background: fibMode ? '#1a1f2e' : 'transparent',
+            border: fibMode ? '1px solid #2a2f3e' : '1px solid transparent',
+            borderRadius: 4,
+            color: fibMode ? '#e1e4e8' : '#8a8f98',
+            cursor: 'pointer',
+          }}
+        >
+          Fib
+        </button>
+        {fibs.length > 0 && (
+          <button
+            onClick={() => { setFibs([]); fibPrimitiveRef.current?.clearFibs(); }}
+            style={{
+              padding: '4px 10px',
+              fontSize: 12,
+              background: 'transparent',
+              border: '1px solid transparent',
+              borderRadius: 4,
+              color: '#8a8f98',
+              cursor: 'pointer',
+            }}
+          >
+            Clear Fibs
+          </button>
+        )}
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: fibMode ? '#e1e4e8' : pendingSetup ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
+          {fibMode
+            ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')
+            : pendingSetup
             ? `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup (${pendingSetup.clicks.length}/3) — ESC to cancel`
             : 'Shift+Click: place order (or TP/SL if position open)'}
         </span>

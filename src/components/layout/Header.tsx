@@ -40,8 +40,8 @@ export function Header() {
         style={{
           fontSize: 12, fontWeight: 600, color: '#8a8f98',
           textDecoration: 'none', padding: '4px 10px',
-          background: '#141820', border: '1px solid #1a1f2e',
-          borderRadius: 4, flexShrink: 0,
+          background: 'transparent', border: '1px solid #2a2f3e',
+          borderRadius: 0, flexShrink: 0,
         }}
       >
         PnL
@@ -59,18 +59,9 @@ export function Header() {
             return (
               <button
                 key={coin}
+                className={`btn-chip${isActive ? ' active' : ''}`}
                 onClick={() => handleFavClick(coin)}
-                style={{
-                  padding: '4px 10px',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  background: isActive ? '#2a2f3e' : '#141820',
-                  border: isActive ? '1px solid #3861fb' : '1px solid #1a1f2e',
-                  borderRadius: 4,
-                  color: isActive ? '#e1e4e8' : '#8a8f98',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                }}
+                style={{ padding: '4px 10px', fontWeight: 600, whiteSpace: 'nowrap' }}
               >
                 {shortName}
                 {mid && (
