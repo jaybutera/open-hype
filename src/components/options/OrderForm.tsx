@@ -5,6 +5,7 @@ import {
   netPerShare,
 } from '../../services/options/netSummary.ts';
 import { MAX_LEGS } from '../../services/options/legs.ts';
+import { classifyLegs } from '../../services/options/strategy.ts';
 import { LegRow } from './LegRow.tsx';
 import { NetSummary } from './NetSummary.tsx';
 import { PayoffDiagram } from './PayoffDiagram.tsx';
@@ -28,12 +29,7 @@ interface Props {
 
 function strategyLabel(legs: Leg[]): string {
   if (legs.length === 0) return '';
-  if (legs.length === 1) {
-    const [l] = legs;
-    const verb = l.side === 'buy' ? 'Long' : 'Short';
-    return `${verb} ${l.contract.type === 'call' ? 'Call' : 'Put'}`;
-  }
-  return `${legs.length}-leg spread`;
+  return classifyLegs(legs);
 }
 
 export function OrderForm({
@@ -52,6 +48,7 @@ export function OrderForm({
   const perShare = useMemo(() => netPerShare(legs), [legs]);
   const suggestedLimit = perShare;
   const limitPrice = limitOverride ?? suggestedLimit;
+  const strategy = useMemo(() => strategyLabel(legs), [legs]);
 
   // Reset any limit override when legs change materially (e.g. user adds/removes
   // a leg) — keep it sticky only while legs are stable.
@@ -105,7 +102,7 @@ export function OrderForm({
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: '#e1e4e8' }}>
-            Order {legs.length > 0 && <span style={{ color: '#8a8f98', fontWeight: 500 }}>· {strategyLabel(legs)}</span>}
+            Order {legs.length > 0 && <span style={{ color: '#8a8f98', fontWeight: 500 }}>· {strategy}</span>}
           </span>
           <span style={{ fontSize: 11, color: '#8a8f98' }}>
             {legs.length} / {MAX_LEGS} legs

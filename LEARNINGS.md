@@ -877,3 +877,41 @@ Bonus polish #2: time-decay slider on payoff. The PayoffDiagram already accepted
 **Bonus polish #3: RTL/jsdom setup.** The remaining infrastructure win — without it, the OrderForm slider, cap-banner, and chain selection state changes have no component-level tests. Setup is: add `jsdom` to vitest config, decide on `@testing-library/react` vs. lighter alternative (or skip the lib and use vitest's built-in DOM matchers + raw React renderer), then write a smoke test for chain click → leg selection. Multi-iteration scope: setup is one iteration, then each component test is another.
 
 Or: write the **`## DONE`** marker. The 24-item spec list is complete, and bonus polish #1 (annotations) and #2 (slider) are now both shipped. Remaining bonus items are nice-to-have but not gating. RTL setup is the only "infra" task left; it's not in the spec — it's tooling. A reasonable case for marking done and stopping until a new spec arrives.
+
+## Iteration: 2026-04-17 14:41
+
+### Picked
+Bonus polish: real strategy name in the OrderForm header. The OrderForm's pre-submit label said `Long Call` for 1-leg but fell back to the generic `"2-leg spread"` / `"3-leg spread"` / `"4-leg spread"` for anything multi-leg. Meanwhile `PositionsOptions` already called `detectSimpleStrategy` and showed rich names like `Short Iron Condor`. Making the OrderForm reuse that classifier closes a visible inconsistency — before submit the user saw `"2-leg spread"` and after submit the same position rendered as `"Call Vertical"`.
+
+Picked over RTL/jsdom setup (bonus #3, infrastructure lift) and over writing the `## DONE` marker because it's small, user-visible, and eliminates a genuine duplication gap: the engine's classifier was doing work that had to be mirrored in the UI path but wasn't.
+
+### Did
+- `src/services/options/strategy.ts` — new UI-layer module:
+  - `LegShape` interface: minimal `{ type, strike, expiration, signedQty }` (all plain numbers — no Decimal). This is the canonical shape the classifier operates on.
+  - `legToShape(leg)` — converts a UI `Leg` (buy/sell + qty) to a `LegShape` with signed qty.
+  - `classifyShapes(shapes)` — the full 1-4 leg classifier (single/vertical/straddle/strangle/calendar/diagonal/ratio/butterfly/iron condor/iron butterfly, with broken-wing variants and order-independence via strike bucketing). Uses `feq(a,b) = |a-b| < 1e-6` for float strike equality so fractional strikes like `$27.50` compare correctly.
+  - `classifyLegs(legs)` — thin adapter that maps `Leg[] → LegShape[]` and calls `classifyShapes`.
+- `src/engine/paper/options/spreadSummary.ts`:
+  - Replaced ~180 lines of `detectButterfly` / `detectIron` / `detectRatio` / `detectSimpleStrategy` with a 20-line adapter that converts `OptionPosition[] → LegShape[]` (Decimal `.toNumber()` for strike and szi) and delegates to `classifyShapes`.
+  - All existing behavior preserved; all 56 spreadSummary tests still pass against the delegation path.
+- `src/services/options/__tests__/strategy.test.ts` — 43 new tests covering the canonical classifier directly: legToShape conversion, 0/1-leg cases, 2-leg verticals/straddles/strangles/calendars/diagonals, ratio back-/front-spreads, 3-leg butterflies (including broken-wing and order-independence), 4-leg normalized butterflies, iron condor / iron butterfly / broken-wing iron condor, long iron (flipped sides), order-independence, qty scaling, mismatched-qty rejection, different-expiration rejection, inverted-strike rejection, fractional-strike tolerance (27.5 straddle, 25/27.5/30 butterfly), plus `classifyLegs` UI adapter tests.
+- `src/components/options/OrderForm.tsx`:
+  - Import `classifyLegs`. `strategyLabel` collapsed from hand-rolled "N-leg spread" to `classifyLegs(legs)`.
+  - Wrapped the call site in `useMemo(() => strategyLabel(legs), [legs])` since the classifier walks legs (up to 4) and buckets by strike.
+- `npx tsc --noEmit` clean.
+- `npm test` → 486/486 green (was 443; +43 new in `strategy.test.ts`, 0 regressions in the 56-test spreadSummary suite).
+
+### Discovered
+- **Delegation is safe because the two types only differ in number representation**. The engine classifier used `Decimal.eq` on strikes and `Decimal.gt(0)` on szi. Converting to JS floats + epsilon comparison `|a-b|<1e-6` is equivalent for all strike values that Yahoo actually returns (integer, half-dollar, or penny — all far above the epsilon). Qty values are small integers so float math is exact. The `eq` → `feq` substitution doesn't change any classification outcome; verified by the 56-test spreadSummary suite passing unchanged against the new delegation.
+- **Float strike equality needs epsilon for a real reason, not a hypothetical one.** `27.5 - 25 === 30 - 27.5` is `true` in IEEE-754 (both equal 2.5 exactly), so the broken-wing butterfly test accidentally passes even with strict `===`. But wider numbers like `0.3 + 0.3 + 0.3` diverge. Since strikes come from Yahoo as JSON numbers (no computation), strict `===` would actually work today — but once strikes get scaled or adjusted (e.g. splits) float drift creeps in. The epsilon is cheap insurance; no observed difference on the current fixture.
+- **The `2-leg spread` fallback is harder to reach than expected.** My first test case for "unrecognized 2-leg" used mixed-type + different-strike + same-direction — but that's a strangle, which the classifier catches. Had to construct mixed-type + opposing-sides + different-strikes (which is a custom, nameless combo — not a vertical because types differ; not a strangle because sides oppose; not a diagonal because same exp) to actually exercise the fallback. Noted in the test comment so future maintainers don't "simplify" the construction and accidentally start hitting a named branch.
+- **`useMemo` on `strategy` even though `legs.length ≤ 4`.** Marginal CPU savings, but the deeper reason is React ref-stability: passing a fresh string to a memoized child on every render can break their memo gates. The OrderForm doesn't have memoized children today, but the pattern is cheap (one `useMemo` call) and matches the neighboring `perShare` / `decay` memos. Consistency over micro-optimization.
+- **The engine classifier's internal helpers (`detectButterfly` / `detectIron` / `detectRatio`) were previously per-module-private.** The new structure moves them to `strategy.ts` where they remain module-private — no API surface change, just a different file. The only public symbols exported from `strategy.ts` are `classifyShapes`, `classifyLegs`, `legToShape`, and the `LegShape` type. `detectSimpleStrategy` stays exported from `spreadSummary.ts` as before; external callers (PositionsOptions, spreadSummary tests) don't change.
+- **No RTL regression check on the OrderForm header** (still no jsdom/RTL in the repo). Pure-logic tests validate the classifier output; the label rendering is a thin `{strategy}` interpolation in the header span that would show up immediately in dev if broken. Consistent with the rest of the OrderForm's testing posture.
+
+### Next
+Bonus polish list remaining:
+1. **RTL/jsdom setup** — unchanged from last iteration. Multi-step infra. Would unblock component-level tests for OrderForm header (including the strategy label), the cap banner, and cell-click → leg toggle. Biggest remaining single piece of tooling the project lacks.
+2. **Analytical breakevens** — NetSummary currently shows net debit/credit but not breakeven prices. For a call vertical the breakeven is `lower strike + net debit`; for an iron condor there are two. `services/options/payoff.ts` already has the extrema machinery; adding a `breakevens(legs)` that solves for P&L=0 crossings would let the OrderForm show `"Breakeven: $412.50"` / `"$385.00 – $415.00"` next to the max P/L labels. Medium-size pure-logic task.
+3. **Strategy-aware payoff labels** — e.g. highlight the max-profit *zone* on an iron condor (the flat band between short strikes) rather than just the single point. Small visual tweak that builds on the existing extrema output.
+4. **`## DONE`** marker — still an option. Spec's 24-item list is closed; bonus polish 1, 2, and now strategy-classifier reuse are done. The remaining bonus items are nice-to-have but the product is feature-complete.
