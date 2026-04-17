@@ -1143,3 +1143,35 @@ Bonus polish list remaining:
    - PayoffDiagram SVG element presence (BE lines, zone rects, extrema annotations). ~Full iteration because the svg-path assertions are fiddly and snapshot tests would be brittle.
    - PnlCalendar spread-group header + expand/collapse. ~Half iteration.
 2. **`## DONE`** — still the reasonable alternative. The spec's 24 items and nine bonus polish items are all shipped at this point; further RTL coverage is maintenance hygiene, not new user-visible capability. If the push continues, the 4 surfaces above are a natural 2-3 iteration block; if it stops, this is a fair place to call it done.
+
+
+## Iteration: 2026-04-17 15:10
+
+### Picked
+Second surface on the "Continue RTL coverage broadening" list from iteration 15:07: **ChainGrid cell-click → leg-toggle interaction tests**. Iteration 15:07 put ChainGrid at the top of the remaining list — it's the core user action of the whole feature (click bid = sell, click ask = buy) and was still manual-only. Picked over PositionsOptions expand/collapse, PayoffDiagram SVG presence, and PnlCalendar spread-group expansion because the click-to-toggle interaction is the single most user-visible path and the most likely to regress silently if someone tweaks `ChainRow`'s `tradeCellStyle` / `interactive` logic.
+
+### Did
+- `src/components/options/__tests__/ChainGrid.test.tsx` — 9 jsdom tests (coexisting with the existing `.test.ts` pure-logic file for `buildStrikeRows`):
+  - Click-to-toggle: call bid → `(contract, 'sell')`, call ask → `(contract, 'buy')`, put bid → `sell`, put ask → `buy`. Each clicks the cell via `getByTitle(/Sell call @ bid 2\.50/)` and asserts the `onCellClick` spy payload.
+  - Non-interactive when bid=0: no tooltip, clicking the `—` cell doesn't invoke the callback. Pins the "75/183 TSLA calls have bid=0" gotcha from iteration 3 as a regression test.
+  - 4-leg cap banner: not rendered at 0 legs, rendered at 4. Uses `rerender` across the same component tree rather than two mounts (faster, shares the localStorage-cleared state).
+  - At-cap cell-click behavior: already-selected cells stay interactive (flip/remove path), and an *uninvolved-strike* (not referenced by any leg) gets the cap tooltip and is inert. First draft only had in-cap-spread strikes which, as the helper logic handles, stay interactive via flip-side — had to add a deliberately "outside" strike to exercise the capped-inert path.
+  - Empty-chain placeholder, ascending strike sort, metric picker toggle (Volume chip → active color swap).
+- `beforeEach(() => window.localStorage.clear())` at the suite level so the `loadChainMetrics()` call at mount-time always picks the `['iv','oi']` defaults regardless of run order.
+- `noopHandlers()` / factory helpers copied from `NetSummary.test.tsx` / `OrderForm.test.tsx` style — same contract shape, same `leg(side, c, qty)` helper.
+- `npx tsc --noEmit` clean.
+- `npm test` → 558/558 green (was 549; +9 new, 0 regressions).
+
+### Discovered
+- **Flip-side interactivity hides the capped-cell path unless you deliberately include a non-leg strike.** My first draft of the "at-cap cell behavior" test populated `legs` with four contracts (sell call100 + buy calls 101/102/103) and expected the remaining cells on those same strikes to be capped-out. But `ChainRow.tsx:84` computes `callBidInteractive = bid > 0 && (!atCapacity || callBidSelected || callAskSelected)` — so the *unselected side* of an in-leg strike stays interactive for flip. The test needed a strike like `call120` with no legs touching it to see the `cursor: 'default'` + `At 4-leg cap` tooltip path. Regression-catching value: ~high. The "flip-side stays interactive" design is subtle enough that a future refactor could trivially break it and nothing else in the suite would catch it.
+- **`style.color` comparison via `getAttribute('style')` is brittle** because jsdom normalizes whitespace inside `rgba(...)` — `rgba(56,97,251,0.18)` in the source becomes `rgba(56, 97, 251, 0.18)` in the serialized style. Switched to `volChip.style.color` (accesses CSSStyleDeclaration, which normalizes to `rgb(r, g, b)` without the extra string-matching fragility). General pattern for these tests: parse style props through `el.style.X`, not string-match the serialized `style` attribute.
+- **`getAllByTitle` vs. `getByTitle` when the tooltip is a cap-message**: at-cap, all cells on uninvolved strikes share the identical tooltip "At 4-leg cap — remove a leg first". `getByTitle` throws on multiple matches; `getAllByTitle` is the right choice. Clicking `[0]` is enough to assert the inert behavior because the interactivity gate is per-cell-style, not per-cell-identity.
+- **Test count audit**: was 549 → now 558 (+9). Suite runtime went from ~1.91s to ~2.40s (jsdom share is now 27/558 ≈ 4.8%, and the ChainGrid RTL tests mount the full table with 4-5 strike rows each, so each `render()` is heavier than NetSummary). Still well under 3s.
+- **The `// @vitest-environment jsdom` pragma** pattern from iteration 15:03 continues to work cleanly — three `.test.tsx` files now and vitest's per-file environment selection is stable. No temptation yet to promote jsdom to the global default.
+- **Rerender reuse pattern**: the cap-banner-absent/present pair uses `rerender(<ChainGrid ...>)` rather than two separate `render()` calls. Keeps the same root DOM across the pair, tests the prop-driven render path specifically (rather than mount-order accidents), and halves setup time.
+- **What's still not tested at the component level**: PositionsOptions spread-row expand + close-button wiring, PayoffDiagram's SVG elements (BE lines, zone rects, max-profit/max-loss annotations), PnlCalendar's spread-group expand/collapse, SymbolSearch debounced dropdown + recents. Each is a half-to-full iteration. Priority order unchanged from iteration 15:07; next natural pick is PositionsOptions since close-button dispatch is a high-risk surface (money-moving action).
+
+### Next
+1. **PositionsOptions RTL tests** — next on the list from iteration 15:03. Should cover (a) empty-state when no option positions, (b) spread row renders with strategy label + entry + live mark/PnL when chain matches, (c) expand/collapse click, (d) close-button enabled/disabled states + onClick dispatch with the right contracts. Needs a fake `paperOptionPositions` slice in a zustand stub; the helpers are already in `spreadSummary.test.ts` to build fixtures.
+2. **PayoffDiagram SVG presence tests** — verify the component renders breakeven vertical lines, max-profit/max-loss horizontal lines, and zone rects for an iron-condor fixture. SVG-path assertions are fiddly; plan to assert by element count (`container.querySelectorAll('rect').length >= 3`) + per-element attribute checks rather than full-DOM snapshots.
+3. **`## DONE`** — still the open alternative. One more RTL surface after PositionsOptions would round out the core interactive components; PnlCalendar and SymbolSearch are lower-priority because their logic is simpler and well-covered by pure-logic tests at the grouping/search layer.
