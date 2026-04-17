@@ -15,6 +15,7 @@ import {
 import { computeOpenLegsCost, legCashDelta, legMarginRequired } from './options/margin.ts';
 import { legFillPrice, type FillModel } from './options/pricing.ts';
 import { CONTRACT_MULTIPLIER } from './options/OptionPosition.ts';
+import { buildSettlementDraft, selectSettleableLegs } from './options/settlement.ts';
 
 export interface PaperState {
   balance: string;
@@ -703,6 +704,56 @@ export class PaperEngine {
 
     this.emitUpdate();
     return { success: true, realizedPnl: realized };
+  }
+
+  /**
+   * Auto-exercise expired option positions. For every leg whose expiration
+   * has passed and whose underlying has a known price in `prices`, settle it
+   * at intrinsic value: ITM long → credit intrinsic; ITM short → debit
+   * intrinsic; OTM → expires worthless (cash delta zero). The position is
+   * deleted, margin releases implicitly, and one `option-expire` ledger
+   * entry is written per leg.
+   *
+   * Legs for underlyings missing from `prices` stay open — caller can pass
+   * an updated map on the next chain refresh.
+   *
+   * Idempotent: called with no settleable legs, mutates nothing and emits
+   * no update.
+   */
+  settleExpired(
+    prices: Map<string, Decimal>,
+    nowSec: number = Math.floor(Date.now() / 1000),
+  ): { settled: number; realizedPnl: Decimal; settledSpreadIds: string[] } {
+    const settleable = selectSettleableLegs(this.getOptionPositions(), prices, nowSec);
+    if (settleable.length === 0) {
+      return { settled: 0, realizedPnl: new Decimal(0), settledSpreadIds: [] };
+    }
+    let totalRealized = new Decimal(0);
+    const spreadIds = new Set<string>();
+    for (const { leg, underlyingPrice } of settleable) {
+      const draft = buildSettlementDraft(leg, underlyingPrice);
+      this.balance = this.balance.add(draft.cashDelta);
+      this.optionPositions.delete(leg.id);
+      totalRealized = totalRealized.add(draft.realizedPnl);
+      spreadIds.add(leg.spreadId);
+      this.fills.push(createOptionLedgerEntry({
+        kind: 'option-expire',
+        contractSymbol: leg.contractSymbol,
+        side: draft.closeSide,
+        qty: leg.szi.abs(),
+        premiumPerShare: draft.intrinsic,
+        cashDelta: draft.cashDelta,
+        realizedPnl: draft.realizedPnl,
+        balanceAfter: this.balance,
+        spreadId: leg.spreadId,
+      }));
+    }
+    this.emitUpdate();
+    return {
+      settled: settleable.length,
+      realizedPnl: totalRealized,
+      settledSpreadIds: Array.from(spreadIds),
+    };
   }
 
   private emitUpdate(): void {

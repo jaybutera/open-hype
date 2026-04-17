@@ -1129,3 +1129,223 @@ describe('onUpdate callback', () => {
     expect(last.openOrders).toHaveLength(0);
   });
 });
+
+// ── settleExpired ────────────────────────────────────────────────────
+
+describe('settleExpired', () => {
+  const pastExp = 1000; // far-past unix seconds
+  const futureExp = 3_000_000_000; // well past 2050
+  const nowSec = 2000;
+
+  it('no expired legs → returns zero and emits no update', () => {
+    let updates = 0;
+    const eng = new PaperEngine({
+      initialBalance: '10000',
+      onUpdate: () => { updates++; },
+    });
+    const openResult = eng.openOptionLegs([mkLeg({
+      contract: mkContract({ expiration: futureExp }),
+    })]);
+    expect(openResult.success).toBe(true);
+    const updatesAfterOpen = updates;
+
+    const r = eng.settleExpired(new Map([['TSLA', new Decimal(400)]]), nowSec);
+    expect(r.settled).toBe(0);
+    expect(r.realizedPnl.toString()).toBe('0');
+    expect(updates).toBe(updatesAfterOpen); // no extra update
+    expect(eng.getOptionPositions()).toHaveLength(1);
+  });
+
+  it('expired long call ITM: credits intrinsic × 100 × qty, records realized PnL, deletes position', () => {
+    // Open long call at $5 entry (mid of 4/6), 1 contract. Expiration in the past.
+    const contract = mkContract({ expiration: pastExp, strike: 400 });
+    const open = engine.openOptionLegs([mkLeg({ contract })]);
+    expect(open.success).toBe(true);
+    const balanceAfterOpen = engine.getBalance();
+    expect(balanceAfterOpen).toBe('9500'); // 10000 - 500 debit
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(430)]]), nowSec);
+    expect(r.settled).toBe(1);
+    // intrinsic = 30, pnl = (30 - 5) × 100 = 2500
+    expect(r.realizedPnl.toString()).toBe('2500');
+    // balance = 9500 + (30 × 100) = 12500
+    expect(engine.getBalance()).toBe('12500');
+    expect(engine.getOptionPositions()).toHaveLength(0);
+
+    const expireFills = engine.getFills().filter(f => f.kind === 'option-expire');
+    expect(expireFills).toHaveLength(1);
+    expect(expireFills[0].side).toBe('sell');
+    expect(expireFills[0].price).toBe('30');
+    expect(expireFills[0].realizedPnl).toBe('2500');
+    expect(expireFills[0].balanceAfter).toBe('12500');
+  });
+
+  it('expired long call OTM: credit zero, full premium lost, ledger records the loss', () => {
+    const contract = mkContract({ expiration: pastExp, strike: 400 });
+    const open = engine.openOptionLegs([mkLeg({ contract })]);
+    expect(open.success).toBe(true);
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(380)]]), nowSec);
+    expect(r.settled).toBe(1);
+    expect(r.realizedPnl.toString()).toBe('-500');
+    expect(engine.getBalance()).toBe('9500'); // unchanged from open debit
+    expect(engine.getOptionPositions()).toHaveLength(0);
+
+    const expireFill = engine.getFills().find(f => f.kind === 'option-expire')!;
+    expect(expireFill.price).toBe('0');
+    expect(expireFill.realizedPnl).toBe('-500');
+  });
+
+  it('expired short put OTM: keeps full premium, margin releases', () => {
+    // Short put: credit premium, reserve margin.
+    const contract = mkContract({
+      type: 'put', strike: 400, bid: 2, ask: 3, expiration: pastExp,
+    });
+    const open = engine.openOptionLegs([mkLeg({ side: 'sell', contract })]);
+    expect(open.success).toBe(true);
+    // mid = 2.5, credit = 250, margin = 2.5 × 100 × 5 = 1250
+    expect(engine.getBalance()).toBe('10250');
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(430)]]), nowSec);
+    expect(r.settled).toBe(1);
+    // OTM put → intrinsic 0 → pnl = (0 - 2.5) × -1 × 100 = 250
+    expect(r.realizedPnl.toString()).toBe('250');
+    expect(engine.getBalance()).toBe('10250'); // cashDelta zero
+    expect(engine.getOptionPositions()).toHaveLength(0);
+    // Margin released: a full-balance perp entry now fits.
+    const afterSettle = engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: '102490', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
+    expect(afterSettle.success).toBe(true);
+  });
+
+  it('expired short call ITM: debits intrinsic, realizes loss, margin releases', () => {
+    const contract = mkContract({
+      strike: 400, bid: 4, ask: 6, expiration: pastExp,
+    });
+    const open = engine.openOptionLegs([mkLeg({ side: 'sell', contract })]);
+    expect(open.success).toBe(true);
+    // mid 5, credit 500, margin 5 × 100 × 5 = 2500. Balance 10500.
+    expect(engine.getBalance()).toBe('10500');
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(420)]]), nowSec);
+    expect(r.settled).toBe(1);
+    // intrinsic = 20, pnl = (20 - 5) × -1 × 100 = -1500
+    expect(r.realizedPnl.toString()).toBe('-1500');
+    // balance 10500 + (-1 × 20 × 100) = 8500
+    expect(engine.getBalance()).toBe('8500');
+    expect(engine.getOptionPositions()).toHaveLength(0);
+
+    const fill = engine.getFills().find(f => f.kind === 'option-expire')!;
+    expect(fill.side).toBe('buy');
+  });
+
+  it('leaves expired legs open when underlying is missing from prices map', () => {
+    const contract = mkContract({ expiration: pastExp });
+    const open = engine.openOptionLegs([mkLeg({ contract })]);
+    expect(open.success).toBe(true);
+
+    const r = engine.settleExpired(new Map([['NVDA', new Decimal(500)]]), nowSec);
+    expect(r.settled).toBe(0);
+    expect(engine.getOptionPositions()).toHaveLength(1);
+  });
+
+  it('leaves non-expired legs open even if priced', () => {
+    const contract = mkContract({ expiration: futureExp });
+    const open = engine.openOptionLegs([mkLeg({ contract })]);
+    expect(open.success).toBe(true);
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(500)]]), nowSec);
+    expect(r.settled).toBe(0);
+    expect(engine.getOptionPositions()).toHaveLength(1);
+  });
+
+  it('settles a multi-leg vertical atomically — both legs removed, combined PnL, shared spreadId in ledger', () => {
+    // Long 400 call at mid $5, short 410 call at mid $3. Both expired.
+    const longC = mkLeg({
+      contract: mkContract({ symbol: 'L', strike: 400, bid: 4, ask: 6, expiration: pastExp }),
+    });
+    const shortC = mkLeg({
+      side: 'sell',
+      contract: mkContract({ symbol: 'S', strike: 410, bid: 2, ask: 4, expiration: pastExp }),
+    });
+    const open = engine.openOptionLegs([longC, shortC]);
+    expect(open.success).toBe(true);
+    if (!open.success) return;
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(420)]]), nowSec);
+    expect(r.settled).toBe(2);
+    expect(r.settledSpreadIds).toEqual([open.spreadId]);
+    expect(engine.getOptionPositions()).toHaveLength(0);
+
+    // Long 400 intrinsic 20 → +2000 cash, pnl (20-5)×100 = +1500
+    // Short 410 intrinsic 10 → -1000 cash, pnl (10-3)×-100 = -700
+    // Total pnl = 800
+    expect(r.realizedPnl.toString()).toBe('800');
+
+    const fills = engine.getFills().filter(f => f.kind === 'option-expire');
+    expect(fills).toHaveLength(2);
+    expect(fills.every(f => f.spreadId === open.spreadId)).toBe(true);
+  });
+
+  it('settles some legs while leaving others open (mixed expirations)', () => {
+    const expiredLeg = mkLeg({
+      contract: mkContract({ symbol: 'A', strike: 400, expiration: pastExp }),
+    });
+    const liveLeg = mkLeg({
+      contract: mkContract({ symbol: 'B', strike: 410, expiration: futureExp }),
+    });
+    const openA = engine.openOptionLegs([expiredLeg]);
+    const openB = engine.openOptionLegs([liveLeg]);
+    expect(openA.success && openB.success).toBe(true);
+    if (!openA.success || !openB.success) return;
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(425)]]), nowSec);
+    expect(r.settled).toBe(1);
+    const surviving = engine.getOptionPositions();
+    expect(surviving).toHaveLength(1);
+    expect(surviving[0].spreadId).toBe(openB.spreadId);
+  });
+
+  it('emits exactly one update per settlement batch (not per leg)', () => {
+    const updates: unknown[] = [];
+    const eng = new PaperEngine({
+      initialBalance: '10000',
+      onUpdate: (s) => { updates.push(s); },
+    });
+    const longC = mkLeg({
+      contract: mkContract({ symbol: 'L', strike: 400, bid: 4, ask: 6, expiration: pastExp }),
+    });
+    const shortC = mkLeg({
+      side: 'sell',
+      contract: mkContract({ symbol: 'S', strike: 410, bid: 2, ask: 4, expiration: pastExp }),
+    });
+    eng.openOptionLegs([longC, shortC]);
+    const beforeSettle = updates.length;
+
+    eng.settleExpired(new Map([['TSLA', new Decimal(420)]]), nowSec);
+    expect(updates.length - beforeSettle).toBe(1);
+  });
+
+  it('is idempotent: calling twice does nothing the second time', () => {
+    const contract = mkContract({ expiration: pastExp });
+    engine.openOptionLegs([mkLeg({ contract })]);
+    engine.settleExpired(new Map([['TSLA', new Decimal(425)]]), nowSec);
+    const balanceAfterFirst = engine.getBalance();
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(425)]]), nowSec);
+    expect(r.settled).toBe(0);
+    expect(engine.getBalance()).toBe(balanceAfterFirst);
+  });
+
+  it('defaults nowSec to current time when omitted', () => {
+    // Expiration set to 1 second ago; should be settled without passing nowSec.
+    const past = Math.floor(Date.now() / 1000) - 1;
+    const contract = mkContract({ expiration: past });
+    engine.openOptionLegs([mkLeg({ contract })]);
+
+    const r = engine.settleExpired(new Map([['TSLA', new Decimal(425)]]));
+    expect(r.settled).toBe(1);
+  });
+});

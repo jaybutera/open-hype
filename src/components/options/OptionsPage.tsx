@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Decimal from 'decimal.js';
 import { isMarketOpen, nextOpen } from '../../services/options/marketHours.ts';
 import { YahooOptionsAdapter } from '../../services/options/yahooAdapter.ts';
 import type { Leg, LegSide, OptionChain, OptionContract } from '../../services/options/types.ts';
@@ -90,6 +91,11 @@ export function OptionsPage({ engine }: Props) {
       .then((c) => {
         if (cancelled) return;
         setChain(c);
+        // Auto-settle any expired legs whose underlying matches this chain.
+        // Uses the chain's underlyingPrice as the settlement price. Legs for
+        // other underlyings stay open until their chain is loaded.
+        const prices = new Map<string, Decimal>([[c.underlying, new Decimal(c.underlyingPrice)]]);
+        engine.settleExpired(prices);
         // On symbol change (selectedExp === null), pin selection to what Yahoo returned.
         if (selectedExp === null) setSelectedExp(c.loadedExpiration);
       })
@@ -105,7 +111,7 @@ export function OptionsPage({ engine }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [symbol, selectedExp, open]);
+  }, [symbol, selectedExp, open, engine]);
 
   // Reset chain + exp + legs when the user switches symbol. Legs reference
   // contracts from the previous chain, so they can't survive the swap.

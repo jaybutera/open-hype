@@ -626,3 +626,39 @@ Iteration 18: market-hours gating (polish pass). Higher-priority than iteration 
 Pure function + test fixtures for each pattern. Landing this unblocks the P&L-payoff diagram (iteration 22) from showing meaningful strategy-aware defaults (break-even / max-profit lines differ per strategy). Alternative: iteration 20 (expiration auto-exercise) is arguably a bigger correctness story — positions currently live forever in the paper book even past expiration, because nothing settles them. The OptionPosition's expiration field exists; what's missing is a ticker/hook that runs `legIntrinsicAtExpiration(contract)` and credits/debits on the first chain refresh after expiration.
 
 Iteration 20 (settlement) probably beats 19 (strategy name) for correctness priority — a position that silently stays open after its expiration date is a real bug, while "custom 2-leg" vs "iron condor" is cosmetic. Lean toward 20 next.
+
+## Iteration: 2026-04-17 12:00
+
+### Picked
+Iteration 20: expiration auto-exercise. Biggest correctness gap per the iteration-18 note — option positions currently lived forever past expiration with no settlement, accumulating phantom margin and stale Greeks. Strategy auto-detection (iteration 19) is polish; settlement is "the paper book is wrong without it." Picked the correctness fix.
+
+### Did
+- `src/engine/paper/options/settlement.ts` — new pure module:
+  - `legIntrinsicAtExpiration(leg, S) → Decimal` — call: max(0, S-K); put: max(0, K-S). Uses `.gt(0)` rather than `.isPositive()` because decimal.js's `isPositive` returns true for 0.
+  - `buildSettlementDraft(leg, S) → { intrinsic, cashDelta, realizedPnl, closeSide, inTheMoney }`. cashDelta = szi × intrinsic × 100 (signed); realizedPnl = (intrinsic - entryPx) × szi × 100. closeSide = long→sell, short→buy (mirrors `closeOptionSpread`).
+  - `selectSettleableLegs(positions, prices, nowSec)` — returns only legs where `expiration <= nowSec` AND `prices.has(underlying)`. Legs for unknown underlyings stay open.
+- `PaperEngine.settleExpired(prices, nowSec?)`:
+  - Defaults `nowSec` to `Math.floor(Date.now()/1000)`.
+  - Pure-first: `selectSettleableLegs` → short-circuit no-op (no mutation, no emitUpdate) when empty.
+  - Per leg: add cashDelta to balance, delete from `optionPositions` (margin releases implicitly via availableBalance), push one `option-expire` ledger entry tagged with `spreadId`. Emits one update at the end regardless of leg count.
+  - Returns `{ settled, realizedPnl, settledSpreadIds }` for the UI.
+- `src/components/options/OptionsPage.tsx` — on every successful chain fetch, builds `prices = Map([chain.underlying → chain.underlyingPrice])` and calls `engine.settleExpired(prices)`. Settlement only fires for legs whose underlying matches the loaded chain — legs on other underlyings stay open until their chain is loaded.
+- Tests:
+  - `options/__tests__/settlement.test.ts` — 16 tests: intrinsic math for call/put ITM/ATM/OTM; draft math for long/short × ITM/OTM × call/put (cashDelta sign, realizedPnl sign, closeSide); selector excludes future-expiration / unknown-underlying legs, includes exactly-at-expiration legs, handles mixed batches.
+  - `__tests__/PaperEngine.test.ts` +12 `settleExpired` tests: no-expired-legs → no-op + no emitUpdate; long ITM call credits intrinsic + records pnl + ledger entry tagged `option-expire`; long OTM call → full premium loss, zero cashDelta, ledger `price = '0'`; short OTM put → keeps premium, margin releases (verified by placing a perp that wouldn't have fit before); short ITM call debits intrinsic; missing-underlying legs stay open; non-expired legs stay open; multi-leg vertical settles atomically with shared spreadId on both ledger entries; mixed-expiration batch settles only the expired leg; single emitUpdate per batch; idempotent (second call is no-op); default `nowSec` works.
+- `npx tsc --noEmit` clean. `npm test` → 336/336 green (was 308; +28 across two files).
+
+### Discovered
+- **decimal.js `isPositive()` returns true for 0.** Cost me two failing tests on first run. `new Decimal(0).isPositive() === true`, `new Decimal(0).gt(0) === false`. Use `.gt(0)` for strict-positive checks. Flagged because this is the third place in the options modules where a `.isPositive()` check determines sign semantics (`OptionPosition` arithmetic, `settlement.closeSide`, `buildSettlementDraft.inTheMoney`). If any of those ever need to distinguish "zero goes which way", revisit.
+- **No engine-side need for an "is-this-underlying-settleable-without-a-chain" fallback.** Considered stamping `lastKnownUnderlyingPrice` on every chain fetch into localStorage so legs for a dormant symbol could settle at their last-seen price. Decided against: the user has to load a chain to see a spread's PnL anyway (iteration 16 hides mark/pnl until chain matches), so they'll naturally load the chain that triggers settlement on the first post-expiration visit. Simpler, fewer moving parts, no "which stale price did we use" footgun.
+- **Settlement on every chain fetch vs. a timer.** Spec allowed either; picked "on every chain refresh" because (a) the engine is already being notified via `onUpdate` for other reasons, (b) a timer would settle legs whose underlying isn't currently loaded (can't, no price), (c) the user's next natural interaction with a symbol is loading its chain, so settlement lands at the moment they'd actually look. No interval fetcher exists; I chose not to add one (spec: "simplest").
+- **Rollback not required.** Unlike `openOptionLegs` / `closeOptionSpread`, settlement has no failure paths in its mutation pass — `selectSettleableLegs` is a pure filter and every surviving leg has a price. The function either finds legs to settle (and settles all of them) or doesn't.
+- **Idempotency is a property, not an effort.** Because `settleExpired` deletes positions before the second call runs, the second call's `selectSettleableLegs` returns `[]` → no-op. Free property from the data model. Tested explicitly in case a future change to the filter breaks it.
+- **`option-expire` ledger entries mirror `option-close` shape.** `side` is the direction of the implicit close fill; `price` is the intrinsic (not the last mid — important: a stale mid could be very different from intrinsic). `realizedPnl` and `balanceAfter` fields are populated so the existing PnL calendar picks settlements up without new code.
+- **`settledSpreadIds` returned is a Set-to-Array** — deduped because a multi-leg spread that settles together should only count as one spread ID in the return value. The UI can use this to say "Spread X settled: +$800" if we add a toast later.
+- **The `idempotent` test runs settleExpired twice**; the second's no-op branch also doesn't emit an update. That behavior is important so accounts don't get spurious "balance changed" notifications after a page navigate+return that re-triggers the settlement path for the same chain.
+
+### Next
+**Iteration 19: strategy auto-detection** is the remaining high-value pure-logic piece. `detectSimpleStrategy` still misses Iron Condor / Iron Butterfly / Butterfly / Broken-Wing Butterfly / Ratio spreads. Pure function, ~100 lines of classifier + unit tests, no UI risk, unblocks the payoff-diagram labels (iteration 22). Alternatively, **iteration 22 (payoff diagram)** is the last significant user-facing feature left — a P&L-vs-underlying chart for the current legs would be visible and satisfying. Either is reasonable; strategy detection is lower-risk and sets iteration 22 up with better labeling. Pick strategy detection next unless I want visible UI motion, in which case payoff diagram.
+
+After that: iteration 23 (chain-metrics column customization) and iteration 24 (polish — loading/error/empty states, 4-leg limit enforcement) close out the spec.
