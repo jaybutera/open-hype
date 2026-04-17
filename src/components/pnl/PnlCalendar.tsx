@@ -1,6 +1,23 @@
 import { useState, useMemo } from 'react';
 import { usePaperAccountsStore } from '../../store/usePaperAccountsStore.ts';
-import type { LedgerEntry } from '../../engine/paper/ledger.ts';
+import type { LedgerEntry, LedgerKind } from '../../engine/paper/ledger.ts';
+import { formatContractLabel } from '../../services/options/occSymbol.ts';
+
+function isOptionKind(kind: LedgerKind | undefined): boolean {
+  return kind === 'option-open' || kind === 'option-close' || kind === 'option-expire';
+}
+
+function optionSideLabel(kind: LedgerKind | undefined, side: 'buy' | 'sell'): string {
+  if (kind === 'option-open') return side === 'buy' ? 'BTO' : 'STO';
+  if (kind === 'option-close') return side === 'buy' ? 'BTC' : 'STC';
+  if (kind === 'option-expire') return 'EXP';
+  return side.toUpperCase();
+}
+
+function optionSideColor(kind: LedgerKind | undefined, side: 'buy' | 'sell'): string {
+  if (kind === 'option-expire') return '#8a8f98';
+  return side === 'buy' ? '#0ecb81' : '#f6465d';
+}
 
 interface DayData {
   date: string; // YYYY-MM-DD
@@ -256,8 +273,20 @@ export function PnlCalendar() {
                 </tr>
               </thead>
               <tbody>
-                {selectedData.trades.map((fill, idx) => {
+                {selectedData.trades.map((fill) => {
                   const pnl = parseFloat(fill.realizedPnl);
+                  const isOption = isOptionKind(fill.kind);
+                  const assetLabel = isOption ? formatContractLabel(fill.coin) : fill.coin;
+                  const sideLabel = isOption
+                    ? optionSideLabel(fill.kind, fill.side)
+                    : fill.side.toUpperCase();
+                  const sideColor = isOption
+                    ? optionSideColor(fill.kind, fill.side)
+                    : fill.side === 'buy' ? '#0ecb81' : '#f6465d';
+                  const feeDisplay = isOption ? '-' : `$${parseFloat(fill.fee).toFixed(4)}`;
+                  const sizeTitle = isOption
+                    ? `${fill.size} contract${fill.size === '1' ? '' : 's'} × 100 shares`
+                    : undefined;
                   return (
                     <tr key={fill.id} className="fill-row" style={{
                       borderBottom: '1px solid #1a1f2e',
@@ -265,22 +294,27 @@ export function PnlCalendar() {
                       <td style={{ padding: '6px 16px', fontSize: 12, color: '#8a8f98' }}>
                         {new Date(fill.timestamp).toLocaleTimeString()}
                       </td>
-                      <td style={{ padding: '6px 8px', fontWeight: 600 }}>{fill.coin}</td>
+                      <td
+                        style={{ padding: '6px 8px', fontWeight: 600 }}
+                        title={isOption ? fill.coin : undefined}
+                      >
+                        {assetLabel}
+                      </td>
                       <td style={{
                         padding: '6px 8px',
-                        color: fill.side === 'buy' ? '#0ecb81' : '#f6465d',
+                        color: sideColor,
                         fontWeight: 600,
                       }}>
-                        {fill.side.toUpperCase()}
+                        {sideLabel}
                       </td>
                       <td style={{ textAlign: 'right', padding: '6px 8px' }}>
                         ${parseFloat(fill.price).toFixed(2)}
                       </td>
-                      <td style={{ textAlign: 'right', padding: '6px 8px' }}>
-                        {fill.size}
+                      <td style={{ textAlign: 'right', padding: '6px 8px' }} title={sizeTitle}>
+                        {fill.size}{isOption ? ' ×100' : ''}
                       </td>
                       <td style={{ textAlign: 'right', padding: '6px 8px', color: '#8a8f98' }}>
-                        ${parseFloat(fill.fee).toFixed(4)}
+                        {feeDisplay}
                       </td>
                       <td style={{
                         textAlign: 'right', padding: '6px 16px',
