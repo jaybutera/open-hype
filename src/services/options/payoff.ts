@@ -163,6 +163,46 @@ export function buildPayoffCurve(
   return { samples, xMin, xMax, yMin, yMax, breakevens };
 }
 
+/**
+ * Analytical break-even underlying prices for a basket of legs at expiration.
+ *
+ * Unlike `findBreakevens` (which samples 121 points and linearly interpolates),
+ * this exploits the fact that the expiration P&L is piecewise-linear with kinks
+ * only at the strike prices. Between adjacent strikes the function is strictly
+ * linear, so the zero-crossing within a segment can be located exactly with a
+ * single linear interpolation — no sampling resolution compromise.
+ *
+ * Returns break-evens sorted ascending. A payoff that sits exactly on zero
+ * over a whole segment (all four legs cancel on that range) is ignored: only
+ * sign-changes are reported. The S=0 and far-right anchors cover the tails.
+ */
+export function analyticalBreakevens(legs: Leg[], qtyScalar: number = 1): number[] {
+  if (legs.length === 0) return [];
+
+  const strikes = legs.map((l) => l.contract.strike);
+  const maxStrike = Math.max(...strikes, 0);
+  const probe = maxStrike * 2 + 1;
+
+  const pivots = new Set<number>();
+  pivots.add(0);
+  for (const k of strikes) pivots.add(k);
+  pivots.add(probe);
+
+  const sorted = Array.from(pivots).sort((a, b) => a - b);
+  const result: number[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const x0 = sorted[i - 1];
+    const x1 = sorted[i];
+    const y0 = expirationPnl(legs, x0, qtyScalar);
+    const y1 = expirationPnl(legs, x1, qtyScalar);
+    const b = crossing(x0, y0, x1, y1);
+    if (b === null) continue;
+    if (result.length > 0 && Math.abs(result[result.length - 1] - b) < 1e-9) continue;
+    result.push(b);
+  }
+  return result;
+}
+
 export interface PayoffExtrema {
   /**
    * Max profit in dollars at expiration. `bounded` indicates whether the

@@ -5,6 +5,7 @@ import {
   netGreeks,
   netPerShare,
 } from '../../services/options/netSummary.ts';
+import { analyticalBreakevens } from '../../services/options/payoff.ts';
 
 interface Props {
   legs: Leg[];
@@ -36,6 +37,8 @@ export function NetSummary({ legs, underlyingPrice, qtyScalar }: Props) {
     () => netGreeks(legs, underlyingPrice),
     [legs, underlyingPrice],
   );
+
+  const breakevens = useMemo(() => analyticalBreakevens(legs), [legs]);
 
   if (legs.length === 0) {
     return (
@@ -76,6 +79,27 @@ export function NetSummary({ legs, underlyingPrice, qtyScalar }: Props) {
         <span>Per share</span>
         <span style={{ color: directionColor, textAlign: 'right' }}>
           {fmtDollar(Math.abs(perShare))}
+        </span>
+        <span>Breakeven</span>
+        <span
+          style={{
+            color: breakevens.length > 0 ? '#e1e4e8' : '#5a5f68',
+            textAlign: 'right',
+            fontVariantNumeric: 'tabular-nums',
+          }}
+          title={
+            breakevens.length > 2
+              ? breakevens.map((b) => `$${b.toFixed(2)}`).join(', ')
+              : undefined
+          }
+        >
+          {breakevens.length === 0
+            ? 'none'
+            : breakevens.length === 1
+              ? `$${breakevens[0].toFixed(2)}`
+              : breakevens.length === 2
+                ? `$${breakevens[0].toFixed(2)} – $${breakevens[1].toFixed(2)}`
+                : `${breakevens.length} points`}
         </span>
       </div>
 

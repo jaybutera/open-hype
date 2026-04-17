@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Leg, OptionContract } from '../types.ts';
 import {
+  analyticalBreakevens,
   buildPayoffCurve,
   contractIntrinsic,
   expirationExtrema,
@@ -366,5 +367,134 @@ describe('expirationExtrema', () => {
     expect(e.maxLoss.bounded).toBe(false);
     // The reported atPrice should be the far-right probe (2*K+1 = 801)
     expect(e.maxLoss.atPrice).toBeGreaterThan(400);
+  });
+});
+
+describe('analyticalBreakevens', () => {
+  it('empty legs → no breakevens', () => {
+    expect(analyticalBreakevens([])).toEqual([]);
+  });
+
+  it('long call: single breakeven at strike + premium', () => {
+    // K=400, mid 10.5 → BE 410.5
+    const xs = analyticalBreakevens([leg()]);
+    expect(xs).toHaveLength(1);
+    expect(xs[0]).toBeCloseTo(410.5, 9);
+  });
+
+  it('short call: single breakeven at strike + premium (mirror of long)', () => {
+    const xs = analyticalBreakevens([leg({ side: 'sell' })]);
+    expect(xs).toHaveLength(1);
+    expect(xs[0]).toBeCloseTo(410.5, 9);
+  });
+
+  it('long put: single breakeven at strike − premium', () => {
+    // K=400, mid 10.5 → BE 389.5
+    const xs = analyticalBreakevens([leg({}, { type: 'put', bid: 10, ask: 11 })]);
+    expect(xs).toHaveLength(1);
+    expect(xs[0]).toBeCloseTo(389.5, 9);
+  });
+
+  it('long straddle: two symmetric breakevens at strike ± total premium', () => {
+    const call = leg({}, { strike: 400, bid: 10, ask: 11 }); // mid 10.5
+    const put = leg({}, { type: 'put', strike: 400, bid: 10, ask: 11, symbol: 'TSLA260517P00400000' }); // mid 10.5
+    const xs = analyticalBreakevens([call, put]);
+    expect(xs).toHaveLength(2);
+    expect(xs[0]).toBeCloseTo(400 - 21, 9);
+    expect(xs[1]).toBeCloseTo(400 + 21, 9);
+  });
+
+  it('call vertical debit spread: single breakeven = lower strike + net debit', () => {
+    // Long 400 call @ mid 10.5, short 410 call @ mid 5.5 → net debit 5 → BE = 405
+    const longCall = leg({}, { strike: 400, bid: 10, ask: 11 });
+    const shortCall = leg(
+      { side: 'sell' },
+      { strike: 410, bid: 5, ask: 6, symbol: 'TSLA260517C00410000' },
+    );
+    const xs = analyticalBreakevens([longCall, shortCall]);
+    expect(xs).toHaveLength(1);
+    expect(xs[0]).toBeCloseTo(405, 9);
+  });
+
+  it('iron condor: two breakevens = short put − credit and short call + credit', () => {
+    // Short 395 put / long 385 put / short 405 call / long 415 call
+    // Premiums: 395P mid 6, 385P mid 2, 405C mid 6, 385P mid 2
+    // Net credit per share = (6 - 2) + (6 - 2) = 8 → BEs at 395-8=387 and 405+8=413
+    const shortPut = leg(
+      { side: 'sell' },
+      { type: 'put', strike: 395, bid: 5.9, ask: 6.1, symbol: 'TSLA260517P00395000' },
+    );
+    const longPut = leg(
+      {},
+      { type: 'put', strike: 385, bid: 1.9, ask: 2.1, symbol: 'TSLA260517P00385000' },
+    );
+    const shortCall = leg(
+      { side: 'sell' },
+      { strike: 405, bid: 5.9, ask: 6.1, symbol: 'TSLA260517C00405000' },
+    );
+    const longCall = leg(
+      {},
+      { strike: 415, bid: 1.9, ask: 2.1, symbol: 'TSLA260517C00415000' },
+    );
+    const xs = analyticalBreakevens([shortPut, longPut, shortCall, longCall]);
+    expect(xs).toHaveLength(2);
+    expect(xs[0]).toBeCloseTo(387, 9);
+    expect(xs[1]).toBeCloseTo(413, 9);
+  });
+
+  it('is order-independent with respect to leg ordering', () => {
+    const a = leg({}, { strike: 400, bid: 10, ask: 11 });
+    const b = leg({}, { type: 'put', strike: 400, bid: 10, ask: 11, symbol: 'TSLA260517P00400000' });
+    const xs1 = analyticalBreakevens([a, b]);
+    const xs2 = analyticalBreakevens([b, a]);
+    expect(xs1).toEqual(xs2);
+  });
+
+  it('returns empty when payoff never crosses zero (naked long, far OTM and dirt cheap)', () => {
+    // Short call collected 10.5 premium: payoff positive near S=0, always positive until S = K + premium
+    // Shift K far right so the breakeven falls outside probe range? No — probe is 2*K+1 which always exceeds K+premium.
+    // Instead: a flat net-zero payoff (e.g. long+short same contract) → no crossings
+    // Use two identical contracts with opposing sides at same strike
+    const long = leg({}, { strike: 400, bid: 10, ask: 11 });
+    const short = leg(
+      { side: 'sell' },
+      { strike: 400, bid: 10, ask: 11 },
+    );
+    const xs = analyticalBreakevens([long, short]);
+    // Payoff identically zero — no sign crossings.
+    expect(xs).toEqual([]);
+  });
+
+  it('more precise than 121-sample interpolation', () => {
+    // Vertical with non-round breakeven
+    const longCall = leg({}, { strike: 400, bid: 10.17, ask: 10.17 });
+    const shortCall = leg(
+      { side: 'sell' },
+      { strike: 410, bid: 3.83, ask: 3.83, symbol: 'TSLA260517C00410000' },
+    );
+    // Net debit = 10.17 - 3.83 = 6.34 → BE = 406.34
+    const analytical = analyticalBreakevens([longCall, shortCall]);
+    expect(analytical).toHaveLength(1);
+    expect(analytical[0]).toBeCloseTo(406.34, 9);
+
+    const sampled = buildPayoffCurve([longCall, shortCall], 405, {
+      samples: 121,
+      nowSec: NOW,
+    }).breakevens;
+    expect(sampled).toHaveLength(1);
+    // Sampled should be within ~$1 of true; analytical is within 1e-9
+    expect(Math.abs(analytical[0] - 406.34)).toBeLessThan(1e-6);
+    expect(Math.abs(sampled[0] - 406.34)).toBeLessThan(2);
+  });
+
+  it('qty scaling does not move breakeven prices', () => {
+    const longCall = leg({ qty: 3 }, { strike: 400, bid: 10, ask: 11 });
+    const shortCall = leg(
+      { side: 'sell', qty: 3 },
+      { strike: 410, bid: 5, ask: 6, symbol: 'TSLA260517C00410000' },
+    );
+    const xs = analyticalBreakevens([longCall, shortCall]);
+    expect(xs).toHaveLength(1);
+    expect(xs[0]).toBeCloseTo(405, 9);
   });
 });
