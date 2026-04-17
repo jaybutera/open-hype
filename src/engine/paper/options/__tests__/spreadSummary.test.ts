@@ -326,17 +326,226 @@ describe('detectSimpleStrategy', () => {
     expect(detectSimpleStrategy(legs)).toBe('Diagonal');
   });
 
-  it('4-leg returns "4-leg spread"', () => {
+  it('unrecognized 4-leg shape returns "4-leg spread"', () => {
+    // Four long calls at four different strikes — not an iron, not a butterfly.
     const legs = [
-      pos({ id: 'a' }),
-      pos({ id: 'b' }),
-      pos({ id: 'c' }),
-      pos({ id: 'd' }),
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(1) }),
+      pos({ id: 'c', strike: new Decimal(420), szi: new Decimal(1) }),
+      pos({ id: 'd', strike: new Decimal(430), szi: new Decimal(1) }),
     ];
     expect(detectSimpleStrategy(legs)).toBe('4-leg spread');
   });
 
   it('empty: "Empty"', () => {
     expect(detectSimpleStrategy([])).toBe('Empty');
+  });
+
+  // ===== Butterflies =====
+
+  it('long call butterfly: +1 @ 400, -2 @ 410, +1 @ 420', () => {
+    const legs = [
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(-2) }),
+      pos({ id: 'c', strike: new Decimal(420), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Long Call Butterfly');
+  });
+
+  it('short put butterfly: -1 @ 390, +2 @ 400, -1 @ 410', () => {
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(390), szi: new Decimal(-1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(400), szi: new Decimal(2) }),
+      pos({ id: 'c', type: 'put', strike: new Decimal(410), szi: new Decimal(-1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Short Put Butterfly');
+  });
+
+  it('broken-wing call butterfly: unequal wing widths', () => {
+    // Wings at 400/410/430 — lower width 10, upper width 20
+    const legs = [
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(-2) }),
+      pos({ id: 'c', strike: new Decimal(430), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Long Broken-Wing Call Butterfly');
+  });
+
+  it('butterfly order-independent (legs passed out of order)', () => {
+    const legs = [
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(-2) }),
+      pos({ id: 'c', strike: new Decimal(420), szi: new Decimal(1) }),
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Long Call Butterfly');
+  });
+
+  it('butterfly with 4 legs normalized (1 long + 2 × 1-short + 1 long at same body strike)', () => {
+    // +1 @ 400, -1 @ 410, -1 @ 410, +1 @ 420 → bucketed: +1, -2, +1
+    const legs = [
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', contractSymbol: 'B1', strike: new Decimal(410), szi: new Decimal(-1) }),
+      pos({ id: 'c', contractSymbol: 'B2', strike: new Decimal(410), szi: new Decimal(-1) }),
+      pos({ id: 'd', strike: new Decimal(420), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Long Call Butterfly');
+  });
+
+  it('3-leg mixed types: NOT a butterfly', () => {
+    const legs = [
+      pos({ id: 'a', type: 'call', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(410), szi: new Decimal(-2) }),
+      pos({ id: 'c', type: 'call', strike: new Decimal(420), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('3-leg spread');
+  });
+
+  it('3-leg wrong qty ratio (1/1/1): NOT a butterfly', () => {
+    const legs = [
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(-1) }),
+      pos({ id: 'c', strike: new Decimal(420), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('3-leg spread');
+  });
+
+  it('butterfly qty=2 scales correctly: +2/-4/+2', () => {
+    const legs = [
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(2) }),
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(-4) }),
+      pos({ id: 'c', strike: new Decimal(420), szi: new Decimal(2) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Long Call Butterfly');
+  });
+
+  // ===== Iron Condor / Iron Butterfly =====
+
+  it('short iron condor: -1 put @ 380, +1 put @ 370, -1 call @ 420, +1 call @ 430', () => {
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(370), szi: new Decimal(1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(380), szi: new Decimal(-1) }),
+      pos({ id: 'c', type: 'call', strike: new Decimal(420), szi: new Decimal(-1) }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(430), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Short Iron Condor');
+  });
+
+  it('short iron butterfly: same short strike on call and put side', () => {
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(390), szi: new Decimal(1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(400), szi: new Decimal(-1) }),
+      pos({ id: 'c', type: 'call', strike: new Decimal(400), szi: new Decimal(-1) }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(410), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Short Iron Butterfly');
+  });
+
+  it('broken-wing iron condor: unequal wing widths (5 put side, 10 call side)', () => {
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(375), szi: new Decimal(1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(380), szi: new Decimal(-1) }),
+      pos({ id: 'c', type: 'call', strike: new Decimal(420), szi: new Decimal(-1) }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(430), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Short Broken-Wing Iron Condor');
+  });
+
+  it('long iron condor (flipped sides): +short-wings / -long-body', () => {
+    // Long iron condor: buy the body, sell the wings (rare, but valid)
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(370), szi: new Decimal(-1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(380), szi: new Decimal(1) }),
+      pos({ id: 'c', type: 'call', strike: new Decimal(420), szi: new Decimal(1) }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(430), szi: new Decimal(-1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Long Iron Condor');
+  });
+
+  it('iron condor order-independent (legs in arbitrary order)', () => {
+    const legs = [
+      pos({ id: 'c', type: 'call', strike: new Decimal(420), szi: new Decimal(-1) }),
+      pos({ id: 'a', type: 'put', strike: new Decimal(370), szi: new Decimal(1) }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(430), szi: new Decimal(1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(380), szi: new Decimal(-1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Short Iron Condor');
+  });
+
+  it('iron condor with qty>1 scales correctly (2-lot)', () => {
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(370), szi: new Decimal(2) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(380), szi: new Decimal(-2) }),
+      pos({ id: 'c', type: 'call', strike: new Decimal(420), szi: new Decimal(-2) }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(430), szi: new Decimal(2) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Short Iron Condor');
+  });
+
+  it('4-leg mismatched qty: NOT an iron condor', () => {
+    // Imbalanced qty on put vs call side
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(370), szi: new Decimal(1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(380), szi: new Decimal(-1) }),
+      pos({ id: 'c', type: 'call', strike: new Decimal(420), szi: new Decimal(-2) }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(430), szi: new Decimal(2) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('4-leg spread');
+  });
+
+  it('4-leg all calls (double vertical shape): NOT an iron condor', () => {
+    const legs = [
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(-1) }),
+      pos({ id: 'c', strike: new Decimal(420), szi: new Decimal(-1) }),
+      pos({ id: 'd', strike: new Decimal(430), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('4-leg spread');
+  });
+
+  it('4-leg iron shape with invalid strike ordering: NOT an iron condor', () => {
+    // Put short strike > call short strike (inverted)
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(370), szi: new Decimal(1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(450), szi: new Decimal(-1) }), // put above call side
+      pos({ id: 'c', type: 'call', strike: new Decimal(380), szi: new Decimal(-1) }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(430), szi: new Decimal(1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('4-leg spread');
+  });
+
+  it('iron condor across different expirations: NOT recognized (needs same exp)', () => {
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(370), szi: new Decimal(1), expiration: EXP_30D }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(380), szi: new Decimal(-1), expiration: EXP_30D }),
+      pos({ id: 'c', type: 'call', strike: new Decimal(420), szi: new Decimal(-1), expiration: EXP_60D }),
+      pos({ id: 'd', type: 'call', strike: new Decimal(430), szi: new Decimal(1), expiration: EXP_60D }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('4-leg spread');
+  });
+
+  // ===== Ratio spreads =====
+
+  it('call back-ratio (1x2): -1 @ 400, +2 @ 410 → net long', () => {
+    const legs = [
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(-1) }),
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(2) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Call Ratio Backspread');
+  });
+
+  it('put front-ratio (1x2): +1 @ 400, -2 @ 390 → net short', () => {
+    const legs = [
+      pos({ id: 'a', type: 'put', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', type: 'put', strike: new Decimal(390), szi: new Decimal(-2) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Put Ratio Frontspread');
+  });
+
+  it('ratio requires different abs qty (1x1 is a vertical, not a ratio)', () => {
+    const legs = [
+      pos({ id: 'a', strike: new Decimal(400), szi: new Decimal(1) }),
+      pos({ id: 'b', strike: new Decimal(410), szi: new Decimal(-1) }),
+    ];
+    expect(detectSimpleStrategy(legs)).toBe('Call Vertical');
   });
 });
