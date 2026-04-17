@@ -157,3 +157,33 @@ Iteration 4: build Black-Scholes Greeks module + tests. Highest priority because
 
 ### Next
 **`services/options/marketHours.ts` + tests** (iteration 5). Small, independent, unblocks the "Market closed" banner and the submit-disabled gate. Needs `isMarketOpen(now?)`, `nextOpen(now?)`, and a hardcoded NYSE 2026 holiday list. Pure function, easy to unit-test. After that, iteration 6 (static popular-symbols list + localStorage recents) is also small and independent. These two cheap wins leave the adapter/Greeks/fixture/market-hours/symbols foundation complete, at which point the route scaffold (iteration 7) becomes the gating task for any UI work.
+
+## Iteration: 2026-04-17 11:03
+
+### Picked
+Iteration 5: `services/options/marketHours.ts` + tests. Small, independent, unblocks the "Market closed" banner and submit-disabled gate. Also cheap to pair with iteration 6 next, so burning through the foundation pieces before committing to UI work.
+
+### Did
+- `src/services/options/marketHours.ts`:
+  - `isMarketOpen(now?)`, `isHoliday(now?)`, `isEarlyCloseDay(now?)`, `nextOpen(now?)`.
+  - `NYSE_HOLIDAYS_2026` (10 entries — NYE, MLK, Presidents, Good Friday, Memorial, Juneteenth, Jul 3 observed for Sat Jul 4, Labor, Thanksgiving, Christmas).
+  - `NYSE_EARLY_CLOSE_2026` (Nov 27 day-after-Thanksgiving and Dec 24 Christmas Eve) closing at 13:00 ET.
+  - DST handled via `Intl.DateTimeFormat` with `America/New_York` — no hardcoded UTC offsets. `openInstantForNyDate` iteratively corrects a UTC guess by reading it back through the formatter (converges in ≤4 passes).
+- `src/services/options/__tests__/marketHours.test.ts` — 18 tests using a local `nyDate()` helper that inverse-maps NY wall-clock → UTC. Covers:
+  - Constants/holiday-list integrity.
+  - Open boundaries (09:29 closed, 09:30 open, 15:59 open, 16:00 closed).
+  - Weekend closed (Sat + Sun).
+  - Good Friday and New Year holidays closed mid-session.
+  - Early-close day 13:00 boundary.
+  - `nextOpen`: already-open returns now; pre-open same day → 09:30; after-close → next day 09:30; Friday after-close → Monday 09:30; Thu Apr 2 after-close → Mon Apr 6 09:30 (skips Good Friday).
+- `npx tsc --noEmit` clean.
+- `npm test` → 141/141 green (was 123; +18).
+
+### Discovered
+- `Intl.DateTimeFormat` with `hour: '2-digit'` and `hour12: false` can emit `'24'` at midnight on some V8 builds (observed locally), so modulo-24 normalization in `partsInNewYork` is defensive but cheap.
+- Tried fixed UTC offset shortcuts first; abandoned them because DST makes the offset +/−5 depending on month, and the 2026 spring-forward (Mar 8) / fall-back (Nov 1) would silently produce off-by-one-hour bugs near those dates. Iterating on a live formatter is robust and runs in microseconds.
+- 2026 calendar quirks: Jul 4 is Saturday (observed Jul 3 full holiday, no early close there), Christmas Dec 25 is Friday, July 3 is Friday. Day-after-Thanksgiving and Christmas Eve are the only early-close days; no post-Independence-Day half-day this year.
+- Chose `minutesSinceMidnight` as the core time representation so boundary checks are plain integer comparisons — avoids any `new Date` re-construction inside the hot path.
+
+### Next
+**`services/options/symbols.ts` + static popular-list + `localStorage` recents** (iteration 6). Small and independent — finishes the data-layer scaffold. Then iteration 7 (route scaffold `#/options`) becomes the only gate on every UI task. After symbols lands, adapter/Greeks/market-hours/symbols are all in place and UI work can start flowing.
