@@ -943,3 +943,30 @@ Bonus polish list remaining:
 2. **Strategy-aware payoff zones** — highlight the max-profit *band* on iron condors (S between short put and short call), not just the peak point. Small SVG tweak: shade the `[shortPut.strike, shortCall.strike]` interval in green with higher opacity than the rest of the green fill. Could extend to show the *at-a-glance* profit zone on a vertical (between lower strike and upper strike), though that's visually subtle.
 3. **Payoff diagram + breakeven lines using analytical breakevens** — the PayoffDiagram currently shows BE lines from the sampled `curve.breakevens`. Swapping to `analyticalBreakevens(legs)` would be pixel-accurate at strike boundaries. One-line change in `PayoffDiagram.tsx`. Low-risk polish.
 4. **`## DONE`** — Spec's 24-item list complete; bonus polish 1 (annotations), 2 (slider), 3 (strategy-classifier reuse), 4 (analytical breakevens numeric) done. Remaining items are nice-to-have visual refinements.
+
+## Iteration: 2026-04-17 14:46
+
+### Picked
+Bonus polish #3 from the remaining list: **swap PayoffDiagram breakeven lines to `analyticalBreakevens`**. Small, low-risk, directly builds on the `analyticalBreakevens` function added last iteration. The dashed BE verticals on the chart were still coming from `curve.breakevens` (121-sample linear interpolation, ~$1 resolution on a $400 underlying). Now they're pixel-accurate — derived from the exact piecewise-linear zero crossings. Picked over RTL/jsdom setup (multi-iteration infra) and strategy-aware payoff zones (visual refinement requiring strategy-shape introspection) because it's a contained, visible accuracy win that reuses work already on disk.
+
+### Did
+- `src/components/options/PayoffDiagram.tsx`:
+  - Imported `analyticalBreakevens` alongside `buildPayoffCurve` / `expirationExtrema`.
+  - Added a `useMemo([legs, qtyScalar, curve.xMin, curve.xMax])` that calls `analyticalBreakevens(legs, qtyScalar)` and filters to breakevens visible on the chart (between `curve.xMin` and `curve.xMax`). Filtering matters because analytical breakevens can land outside the ±30% sampled window (e.g. a synthetic short put at a very high strike with small credit), and we only want to draw vertical lines inside the plot frame.
+  - Replaced the single `curve.breakevens.map(...)` render with the new `breakevens` variable. No other visual/interaction changes — same dashed gray vertical + `BE <price>` label.
+- `npx tsc --noEmit` clean.
+- `npm test` → 497/497 green (no test count change — pure wiring on top of already-tested `analyticalBreakevens`).
+
+### Discovered
+- **`analyticalBreakevens` can return values outside the plotted x-range.** The function enumerates zero crossings across *all* segments between strikes, including the `S=0` → lowest-strike and highest-strike → `2·maxStrike+1` tails. A basket whose expiration P&L crosses zero past the `±30%` default plot range would have produced a BE line clipped to the chart edge (because `xScale(b)` caps there), which would visually look like a breakeven at the chart edge rather than an off-screen breakeven. The `filter((b) => b >= xMin && b <= xMax)` is essential — without it, the rendered BE position would be misleading. Didn't need this filter for `curve.breakevens` because `findBreakevens` only operates on samples already bounded to the plot range.
+- **Dependencies on `curve.xMin`/`curve.xMax`, not `curve` itself.** Using `curve.xMin` and `curve.xMax` as the memo's dependencies (rather than `curve`) avoids re-computing breakevens when only `curve.samples`/`curve.yMin`/`curve.yMax` change (which they don't — all derive from the same inputs — but the memo dependency array should reflect the *actual* values read). React linter would complain otherwise; scalar primitives are also cheaper to diff than the full curve object.
+- **Precision gap from LEARNINGS iteration 2026-04-17 14:45 is now visible.** For a call vertical at K1=380/K2=390 with net debit $4.30, `findBreakevens` placed BE at something like $384.25 (nearest sample), while `analyticalBreakevens` returns $384.30 exactly. On a $400 underlying with ±30% range, a single sample is ~$1.98 wide, so the BE line can jump visually by a pixel or two as legs change. The swap eliminates that jitter.
+- **No change needed to `PayoffCurve.breakevens` itself** — `buildPayoffCurve` still computes it internally from samples. It's still used by anyone who wants a sampled BE (none in the current codebase, but the field is harmless and cheap to compute). Left as-is to avoid touching payoff.ts on a UI-only iteration.
+- **`expirationExtrema.atPrice` semantics** — when a bounded extremum occurs at `S=0` or `2·maxStrike+1`, those prices are also outside the default plot range. The existing max-profit/max-loss annotation already clips with `if (y < padT || y > padT + plotH) return null`, which gates on the *y* coordinate, not x. A bounded max-profit whose y-value falls inside the plot area but whose x-value lies at S=0 doesn't visually need clipping (the horizontal line extends across the plot width anyway — it's just a horizontal line), so no change needed there either.
+
+### Next
+Bonus polish list remaining (same as before minus #3):
+1. **RTL/jsdom setup** — unchanged. Multi-iteration infrastructure. Unblocks component-level tests for NetSummary breakeven formatting, cap banner, cell-click interactions, and now the PayoffDiagram's analytical BE rendering itself.
+2. **Strategy-aware payoff zones** — highlight the max-profit band on iron condors (S between short put and short call) rather than just the peak point. Small SVG tweak; ~20 lines. Shade the `[shortPut.strike, shortCall.strike]` interval in green with higher opacity than the rest of the green fill. Requires strategy introspection (the payoff module would need to expose the flat-band's bounds when one exists, or the PayoffDiagram would need to scan the `expiration` samples for runs of equal max-value).
+3. **`## DONE`** — Spec's 24-item list + four bonus polish items shipped. Remaining bonus items are visual refinements with diminishing returns. A reasonable point to mark done.
+

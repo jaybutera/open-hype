@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { Leg } from '../../services/options/types.ts';
-import { buildPayoffCurve, expirationExtrema } from '../../services/options/payoff.ts';
+import { analyticalBreakevens, buildPayoffCurve, expirationExtrema } from '../../services/options/payoff.ts';
 
 interface Props {
   legs: Leg[];
@@ -40,6 +40,11 @@ export function PayoffDiagram({
   );
 
   const extrema = useMemo(() => expirationExtrema(legs, qtyScalar), [legs, qtyScalar]);
+
+  const breakevens = useMemo(() => {
+    const all = analyticalBreakevens(legs, qtyScalar);
+    return all.filter((b) => b >= curve.xMin && b <= curve.xMax);
+  }, [legs, qtyScalar, curve.xMin, curve.xMax]);
 
   if (legs.length === 0 || (curve.yMin === 0 && curve.yMax === 0)) {
     return null;
@@ -124,7 +129,7 @@ export function PayoffDiagram({
       />
 
       {/* Breakeven markers */}
-      {curve.breakevens.map((b, i) => (
+      {breakevens.map((b, i) => (
         <g key={`be${i}`}>
           <line
             x1={xScale(b)} x2={xScale(b)} y1={padT} y2={padT + plotH}
