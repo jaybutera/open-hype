@@ -639,6 +639,227 @@ describe('option position storage', () => {
   });
 });
 
+// ── openOptionLegs ───────────────────────────────────────────────────
+
+import type { Leg, OptionContract } from '../../../services/options/types.ts';
+
+function mkContract(overrides: Partial<OptionContract> = {}): OptionContract {
+  return {
+    symbol: 'TSLA260417C00400000',
+    underlying: 'TSLA',
+    type: 'call',
+    strike: 400,
+    expiration: 1776384000,
+    bid: 4,
+    ask: 6,
+    last: 5,
+    iv: 0.5,
+    volume: 100,
+    openInterest: 200,
+    inTheMoney: false,
+    ...overrides,
+  };
+}
+
+function mkLeg(overrides: Partial<Leg> = {}): Leg {
+  return {
+    contract: mkContract(),
+    side: 'buy',
+    qty: 1,
+    ...overrides,
+  };
+}
+
+describe('openOptionLegs', () => {
+  it('rejects empty legs', () => {
+    const r = engine.openOptionLegs([]);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error).toMatch(/no legs/i);
+  });
+
+  it('rejects more than 4 legs', () => {
+    const legs: Leg[] = Array.from({ length: 5 }, (_, i) => mkLeg({
+      contract: mkContract({ symbol: `X${i}`, strike: 400 + i }),
+    }));
+    const r = engine.openOptionLegs(legs);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error).toMatch(/max/i);
+  });
+
+  it('rejects non-positive qtyScalar', () => {
+    const r = engine.openOptionLegs([mkLeg()], { qtyScalar: 0 });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects leg with zero quote', () => {
+    const r = engine.openOptionLegs([mkLeg({
+      contract: mkContract({ bid: 0, ask: 0, last: 0 }),
+    })]);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error).toMatch(/no usable quote/i);
+  });
+
+  it('rejects when cash required exceeds available balance', () => {
+    // Leg premium $5 mid × 100 × 1 = $500 debit; 1 long no margin. Fine.
+    // Swap to short at very high premium so margin blows out balance.
+    const short = mkLeg({ side: 'sell', contract: mkContract({ bid: 40, ask: 42 }) });
+    // short premium $41 × 100 × 1 × 5 = 20500 margin; credit = 4100; cashRequired = 16400. Balance 10000.
+    const r = engine.openOptionLegs([short]);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error).toMatch(/insufficient balance/i);
+  });
+
+  it('opens a single long call: debits premium, creates position, emits ledger', () => {
+    const r = engine.openOptionLegs([mkLeg({ qty: 2 })], { fillModel: 'mid' });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+
+    // mid = (4 + 6) / 2 = 5; qty 2 × 100 × 5 = $1000 debit
+    expect(engine.getBalance()).toBe('9000');
+    expect(r.positions).toHaveLength(1);
+    expect(r.positions[0].szi.toString()).toBe('2');
+    expect(r.positions[0].entryPx.toString()).toBe('5');
+    expect(r.positions[0].marginUsed.toString()).toBe('0');
+    expect(r.positions[0].spreadId).toBe(r.spreadId);
+
+    const fills = engine.getFills();
+    expect(fills).toHaveLength(1);
+    expect(fills[0].kind).toBe('option-open');
+    expect(fills[0].spreadId).toBe(r.spreadId);
+    expect(fills[0].side).toBe('buy');
+    expect(fills[0].size).toBe('2');
+  });
+
+  it('opens a short put: balance increases by credit, margin reserved, available drops', () => {
+    const short = mkLeg({
+      side: 'sell',
+      contract: mkContract({ type: 'put', bid: 2, ask: 3 }),
+    });
+    const balanceBefore = new Decimal(engine.getBalance());
+    const r = engine.openOptionLegs([short], { fillModel: 'mid' });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+
+    // mid 2.5 × 100 × 1 = 250 credit; margin = 2.5 × 100 × 1 × 5 = 1250
+    const balanceAfter = new Decimal(engine.getBalance());
+    expect(balanceAfter.sub(balanceBefore).toString()).toBe('250');
+
+    const pos = r.positions[0];
+    expect(pos.szi.toString()).toBe('-1');
+    expect(pos.marginUsed.toString()).toBe('1250');
+  });
+
+  it('vertical debit spread: one spreadId across both legs, one ledger entry per leg', () => {
+    const longCall = mkLeg({
+      contract: mkContract({ symbol: 'TSLA-A', bid: 5, ask: 7 }),
+    });
+    const shortCall = mkLeg({
+      side: 'sell',
+      contract: mkContract({ symbol: 'TSLA-B', strike: 410, bid: 2, ask: 4 }),
+    });
+    const r = engine.openOptionLegs([longCall, shortCall], { fillModel: 'mid' });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+
+    expect(r.positions).toHaveLength(2);
+    expect(r.positions[0].spreadId).toBe(r.spreadId);
+    expect(r.positions[1].spreadId).toBe(r.spreadId);
+    expect(r.positions[0].id).not.toBe(r.positions[1].id);
+
+    const fills = engine.getFills();
+    expect(fills).toHaveLength(2);
+    expect(fills.every(f => f.spreadId === r.spreadId)).toBe(true);
+    expect(fills.every(f => f.kind === 'option-open')).toBe(true);
+
+    // Long mid 6, short mid 3. Net debit = 600 - 300 = 300. Short margin = 3*100*1*5 = 1500.
+    // Balance after: 10000 - 300 = 9700.
+    expect(engine.getBalance()).toBe('9700');
+  });
+
+  it('cross fill model: buyer pays ask, seller hits bid', () => {
+    const buy = mkLeg({
+      contract: mkContract({ symbol: 'X-buy', bid: 4, ask: 6 }),
+    });
+    const sell = mkLeg({
+      side: 'sell',
+      contract: mkContract({ symbol: 'X-sell', strike: 420, bid: 1.5, ask: 2.5 }),
+    });
+    const r = engine.openOptionLegs([buy, sell], { fillModel: 'cross' });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+
+    // buyer pays 6, seller receives 1.5
+    expect(r.positions[0].entryPx.toString()).toBe('6');
+    expect(r.positions[1].entryPx.toString()).toBe('1.5');
+  });
+
+  it('rollback on reject: no position written, no ledger entry, balance unchanged', () => {
+    const good = mkLeg();
+    const bad = mkLeg({
+      contract: mkContract({ symbol: 'BAD', bid: 0, ask: 0, last: 0 }),
+    });
+    const balanceBefore = engine.getBalance();
+    const fillsBefore = engine.getFills().length;
+    const r = engine.openOptionLegs([good, bad]);
+    expect(r.success).toBe(false);
+    expect(engine.getBalance()).toBe(balanceBefore);
+    expect(engine.getOptionPositions()).toEqual([]);
+    expect(engine.getFills()).toHaveLength(fillsBefore);
+  });
+
+  it('qtyScalar scales size and debit', () => {
+    const r = engine.openOptionLegs([mkLeg({ qty: 1 })], { qtyScalar: 3 });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    // mid 5 × 100 × 3 = 1500
+    expect(engine.getBalance()).toBe('8500');
+    expect(r.positions[0].szi.toString()).toBe('3');
+  });
+
+  it('emitUpdate runs once per successful open (not once per leg)', () => {
+    const updates: ReturnType<PaperEngine['getState']>[] = [];
+    engine = new PaperEngine({
+      initialBalance: '10000', leverage: 10,
+      onUpdate: s => updates.push(s),
+    });
+    updates.length = 0;
+    const r = engine.openOptionLegs([mkLeg(), mkLeg({ contract: mkContract({ symbol: 'Y', strike: 410 }) })]);
+    expect(r.success).toBe(true);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].optionPositions).toHaveLength(2);
+  });
+
+  it('availableBalance accounts for option short-leg margin', () => {
+    const short = mkLeg({
+      side: 'sell',
+      contract: mkContract({ bid: 2, ask: 2 }),
+    });
+    engine.openOptionLegs([short]);
+    // After short: balance = 10000 + 200 = 10200. Margin reserved = 2*100*1*5 = 1000.
+    // Perp entry with $9201 margin should fit (10200 - 1000 = 9200 available) — should FAIL at 9201.
+    const rejected = engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: '92010', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
+    expect(rejected.success).toBe(false);
+  });
+
+  it('counters survive a JSON round-trip so new legs do not collide', () => {
+    engine.openOptionLegs([mkLeg()]);
+    const s = JSON.parse(JSON.stringify(engine.getState()));
+    const engine2 = new PaperEngine({ initialBalance: '10000', leverage: 10 });
+    engine2.loadState(s);
+    const r = engine2.openOptionLegs([mkLeg({ contract: mkContract({ symbol: 'Z' }) })]);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    // Must not collide with the leg id or spread id from engine #1
+    const allIds = [
+      ...engine2.getOptionPositions().map(p => p.id),
+    ];
+    expect(new Set(allIds).size).toBe(allIds.length);
+  });
+});
+
 // ── onUpdate callback ────────────────────────────────────────────────
 
 describe('onUpdate callback', () => {

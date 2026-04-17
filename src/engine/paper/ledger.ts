@@ -1,5 +1,7 @@
 import Decimal from 'decimal.js';
 
+export type LedgerKind = 'perp' | 'option-open' | 'option-close' | 'option-expire';
+
 export interface LedgerEntry {
   id: string;
   timestamp: number;
@@ -10,6 +12,8 @@ export interface LedgerEntry {
   fee: string;
   realizedPnl: string;
   balanceAfter: string;
+  kind?: LedgerKind;
+  spreadId?: string;
 }
 
 let nextId = 1;
@@ -33,6 +37,32 @@ export function createLedgerEntry(
     fee: fee.toString(),
     realizedPnl: realizedPnl.toString(),
     balanceAfter: balanceAfter.toString(),
+  };
+}
+
+export function createOptionLedgerEntry(params: {
+  kind: LedgerKind;
+  contractSymbol: string;
+  side: 'buy' | 'sell';
+  qty: Decimal;
+  premiumPerShare: Decimal;
+  cashDelta: Decimal;
+  realizedPnl: Decimal;
+  balanceAfter: Decimal;
+  spreadId: string;
+}): LedgerEntry {
+  return {
+    id: `paper-${nextId++}`,
+    timestamp: Date.now(),
+    coin: params.contractSymbol,
+    side: params.side,
+    size: params.qty.toString(),
+    price: params.premiumPerShare.toString(),
+    fee: '0',
+    realizedPnl: params.realizedPnl.toString(),
+    balanceAfter: params.balanceAfter.toString(),
+    kind: params.kind,
+    spreadId: params.spreadId,
   };
 }
 

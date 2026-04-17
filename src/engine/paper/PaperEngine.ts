@@ -4,13 +4,16 @@ import { DEFAULT_LEVERAGE, MAINTENANCE_MARGIN_RATE, MAKER_FEE_RATE, TAKER_FEE_RA
 import { matchOrders, matchTriggersByCandle, type PaperOrder, type FillResult } from './matching.ts';
 import { applyFill, computeUnrealizedPnl, computeLiquidationPrice, type PaperPosition } from './positions.ts';
 import { calculateFee } from './pnl.ts';
-import { createLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
+import { createLedgerEntry, createOptionLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
+import type { Leg } from '../../services/options/types.ts';
 import {
   serializeOptionPosition,
   deserializeOptionPosition,
   type OptionPosition,
   type OptionPositionJSON,
 } from './options/OptionPosition.ts';
+import { computeOpenLegsCost, legCashDelta, legMarginRequired } from './options/margin.ts';
+import { legFillPrice, type FillModel } from './options/pricing.ts';
 
 export interface PaperState {
   balance: string;
@@ -59,6 +62,8 @@ function rehydrateOrders(raw: any[]): PaperOrder[] {
 }
 
 let orderCounter = 0;
+let optionLegCounter = 0;
+let spreadCounter = 0;
 
 export class PaperEngine {
   private balance: Decimal;
@@ -80,6 +85,8 @@ export class PaperEngine {
     this.onUpdate = config.onUpdate ?? null;
     this.onRejection = config.onRejection ?? null;
     orderCounter = 0;
+    optionLegCounter = 0;
+    spreadCounter = 0;
     resetLedgerIds();
   }
 
@@ -117,6 +124,16 @@ export class PaperEngine {
       return m ? Math.max(max, parseInt(m[1])) : max;
     }, 0);
     resetLedgerIds(maxFillNum + 1);
+    const maxLegNum = Array.from(this.optionPositions.values()).reduce((max, p) => {
+      const m = p.id.match(/paper-opt-(\d+)/);
+      return m ? Math.max(max, parseInt(m[1])) : max;
+    }, 0);
+    optionLegCounter = maxLegNum;
+    const maxSpreadNum = Array.from(this.optionPositions.values()).reduce((max, p) => {
+      const m = p.spreadId.match(/paper-spread-(\d+)/);
+      return m ? Math.max(max, parseInt(m[1])) : max;
+    }, 0);
+    spreadCounter = maxSpreadNum;
     this.emitUpdate();
   }
 
@@ -356,6 +373,9 @@ export class PaperEngine {
         totalMargin = totalMargin.add(o.size.mul(o.price).div(this.leverage));
       }
     }
+    for (const op of this.optionPositions.values()) {
+      totalMargin = totalMargin.add(op.marginUsed);
+    }
     return this.balance.sub(totalMargin);
   }
 
@@ -452,8 +472,8 @@ export class PaperEngine {
 
   /**
    * Direct storage-only add; does NOT debit balance or run margin checks.
-   * Trade-submission flow (iteration 15) will replace this with a proper
-   * openOptionLegs() that debits premium and enforces margin.
+   * Kept for tests and raw rehydration. For live trade flow use
+   * {@link openOptionLegs}.
    */
   addOptionPosition(p: OptionPosition): void {
     this.optionPositions.set(p.id, p);
@@ -464,6 +484,104 @@ export class PaperEngine {
     const existed = this.optionPositions.delete(id);
     if (existed) this.emitUpdate();
     return existed;
+  }
+
+  /**
+   * Open a set of option legs atomically as one spread. Prices each leg by
+   * the chosen fill model, debits net premium (or credits for credit
+   * spreads), reserves cash margin for short legs, and records one ledger
+   * entry per leg tagged with the shared spreadId.
+   *
+   * Returns the new spreadId + created positions on success, or an error
+   * string on rejection. Balance and positions are unchanged on failure.
+   */
+  openOptionLegs(
+    legs: Leg[],
+    opts: { fillModel?: FillModel; qtyScalar?: number } = {},
+  ): { success: true; spreadId: string; positions: OptionPosition[] }
+    | { success: false; error: string } {
+    if (legs.length === 0) return { success: false, error: 'No legs to open' };
+    if (legs.length > 4) return { success: false, error: 'Too many legs (max 4)' };
+    const scalar = opts.qtyScalar ?? 1;
+    if (!Number.isFinite(scalar) || scalar <= 0) {
+      return { success: false, error: 'qtyScalar must be positive' };
+    }
+    const fillModel = opts.fillModel ?? 'mid';
+
+    // Price each leg and build signed-size + entry Decimal pairs.
+    const priced: Array<{
+      leg: Leg;
+      szi: Decimal;
+      entryPx: Decimal;
+    }> = [];
+    for (const leg of legs) {
+      if (!Number.isFinite(leg.qty) || leg.qty <= 0) {
+        return { success: false, error: `Leg qty must be positive (${leg.contract.symbol})` };
+      }
+      const { price } = legFillPrice(leg.contract, leg.side, fillModel);
+      if (price <= 0) {
+        return { success: false, error: `No usable quote for ${leg.contract.symbol}` };
+      }
+      const signedQty = new Decimal(leg.qty).mul(scalar).mul(leg.side === 'buy' ? 1 : -1);
+      priced.push({ leg, szi: signedQty, entryPx: new Decimal(price) });
+    }
+
+    const cost = computeOpenLegsCost(priced.map(p => ({ szi: p.szi, entryPx: p.entryPx })));
+    const available = this.availableBalance();
+    if (cost.cashRequired.gt(available)) {
+      return {
+        success: false,
+        error: `Insufficient balance: need ${cost.cashRequired.toFixed(2)}, available ${available.toFixed(2)}`,
+      };
+    }
+
+    const spreadId = `paper-spread-${++spreadCounter}`;
+    const openedAt = Date.now();
+    const created: OptionPosition[] = [];
+    for (const p of priced) {
+      const id = `paper-opt-${++optionLegCounter}`;
+      const marginUsed = legMarginRequired(p.szi, p.entryPx);
+      const position: OptionPosition = {
+        id,
+        spreadId,
+        contractSymbol: p.leg.contract.symbol,
+        underlying: p.leg.contract.underlying,
+        type: p.leg.contract.type,
+        strike: new Decimal(p.leg.contract.strike),
+        expiration: p.leg.contract.expiration,
+        szi: p.szi,
+        entryPx: p.entryPx,
+        marginUsed,
+        openedAt,
+      };
+      this.optionPositions.set(id, position);
+      created.push(position);
+    }
+
+    // Debit net premium. A credit spread has netDebit < 0, so this ADDS to
+    // the balance. Margin reservation is NOT subtracted here — it's reflected
+    // via each leg's marginUsed, which availableBalance() now counts.
+    this.balance = this.balance.sub(cost.netDebit);
+
+    // Emit one ledger entry per leg so the PnL calendar and activity view
+    // can render per-leg rows tagged with the shared spreadId.
+    for (const p of priced) {
+      const cashDelta = legCashDelta(p.szi, p.entryPx);
+      this.fills.push(createOptionLedgerEntry({
+        kind: 'option-open',
+        contractSymbol: p.leg.contract.symbol,
+        side: p.leg.side,
+        qty: p.szi.abs(),
+        premiumPerShare: p.entryPx,
+        cashDelta,
+        realizedPnl: new Decimal(0),
+        balanceAfter: this.balance,
+        spreadId,
+      }));
+    }
+
+    this.emitUpdate();
+    return { success: true, spreadId, positions: created };
   }
 
   private emitUpdate(): void {

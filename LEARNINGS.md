@@ -417,3 +417,43 @@ Iteration 14: extend the paper engine to hold option positions — types + stora
 
 Suggest breaking into sub-iterations if this grows too big: (15a) ledger + `openOptionLegs` engine method + tests; (15b) wire OrderForm → engine through the store.
 
+## Iteration: 2026-04-17 11:34
+
+### Picked
+Iteration 15a: ledger + `openOptionLegs` engine method + tests. Previous iteration flagged this split; doing the engine-side in isolation keeps the test surface tight and leaves the store/UI wiring (15b) as a clean follow-up. Biggest unlocked step since the paper account can't actually *open* an options trade yet.
+
+### Did
+- `src/engine/paper/ledger.ts`:
+  - Added `LedgerKind` (`'perp' | 'option-open' | 'option-close' | 'option-expire'`) and optional `kind` + `spreadId` fields on `LedgerEntry`. Perp entries don't set these and behave identically to before (the PnL calendar reads size/price/fee/realizedPnl unchanged).
+  - New `createOptionLedgerEntry({ kind, contractSymbol, side, qty, premiumPerShare, cashDelta, realizedPnl, balanceAfter, spreadId })` — stamps a leg-level entry with `coin = contractSymbol`, `size = qty`, `price = premium`, `fee = 0`, and the new `kind`/`spreadId` tags.
+- `src/engine/paper/options/margin.ts` — new module. `SHORT_PREMIUM_MARGIN_MULT = 5` per spec. `legCashDelta(szi, entryPx)` (signed, cash OUT for long, cash IN for short). `legMarginRequired(szi, entryPx)` (zero for long, premium×100×qty×5 for short). `computeOpenLegsCost(legs)` aggregates `{ netDebit, totalMargin, cashRequired = netDebit + totalMargin }`.
+- `src/engine/paper/options/pricing.ts` — new module. `FillModel = 'mid' | 'cross'`. `legFillPrice(contract, side, model) → { price, reliable }`. Cross: buy pays ask, sell hits bid. Either model falls back to the populated side, then `last`, then 0, marking `reliable=false`.
+- `src/engine/paper/PaperEngine.ts`:
+  - Module-scope `optionLegCounter` and `spreadCounter` reset in constructor; both resynced in `loadState` from regex-parsed max-id across rehydrated option positions. Prevents id collisions across process reloads.
+  - `availableBalance()` now subtracts `marginUsed` across option positions too, so perp orders placed after a short-option leg correctly see the reduced available cash.
+  - New `openOptionLegs(legs, { fillModel?, qtyScalar? })` — validates 1–4 legs, positive qtys, positive scalar, and a usable quote per leg; prices each via `legFillPrice`; aggregates cost via `computeOpenLegsCost`; rejects with `{ success: false, error }` if cashRequired > availableBalance. On success: mints a fresh `paper-spread-N` id, creates `paper-opt-M` leg positions (signed `szi`, rehydrated `strike` + `entryPx` + `marginUsed`), subtracts `netDebit` from `this.balance` (credit spreads INCREASE balance since netDebit is negative), appends one ledger entry per leg, emits ONE update.
+- Tests:
+  - `options/__tests__/margin.test.ts` — 14 tests: multiplier constant, long/short cash delta sign, short margin formula (1x/5x/empty), debit spread net math, credit spread with short margin dominant, empty input, qty scaling.
+  - `options/__tests__/pricing.test.ts` — 10 tests: mid fallback chain (both/bid-only/ask-only/last/nothing), cross buy-pays-ask/sell-hits-bid, cross falling through to mid when the crossing side is zero, reliability flag semantics.
+  - `__tests__/PaperEngine.test.ts` — 14 `openOptionLegs` tests: empty-legs reject, 5-leg reject, non-positive scalar reject, zero-quote reject, insufficient-balance reject, long-call opens (balance debit + ledger + sharedSpreadId), short-put opens (credit received + margin reserved), vertical debit spread (one spreadId, two ledger entries, correct net), cross fill model (buy=ask, sell=bid), **rollback on reject** (balance/positions/ledger all unchanged when one leg of a batch fails), qtyScalar scaling, single emitUpdate per batch, perp `availableBalance` correctly accounts for option short-margin, id collision survival across JSON round-trip.
+- `npx tsc --noEmit` clean.
+- `npm test` → 259/259 green (was 221; +38 new across three files).
+
+### Discovered
+- **Rollback semantics matter a lot here.** The naive write-as-you-go loop would half-open a spread if the 2nd or 3rd leg's quote were missing. I factored the loop in two passes: first `priced[]` with all validations/pricing, then a single pass that writes positions + debits balance + appends ledger entries. Any failure in pass 1 returns an error before any mutation happens. Pass 2 has no failure paths (everything is already validated), so "rollback" is automatic — there's nothing to roll back. Tested explicitly via the `rollback on reject` case.
+- **Credit spread balance math**: `balance.sub(netDebit)` is the same expression for both debit and credit spreads because `netDebit` is signed. Debit spread: netDebit > 0, balance goes DOWN. Credit spread: netDebit < 0, `sub(negative)` ADDS, balance goes UP. No branching needed, no special-case code. Tested in the short-put case.
+- **Margin is NOT subtracted from balance**, only from `availableBalance()`. The cash is still there; it's just reserved. This matches the perp engine's treatment of `marginUsed` and means closing a short leg restores capacity without a separate "margin release" step. `availableBalance()` now has a third summation (options) added alongside perp positions and pending entry orders.
+- **`fee: '0'` on option-open ledger entries is a deliberate simplification**. Real options have per-contract commissions (+ SEC/ORF fees). Paper trading doesn't charge fees anywhere today (perps pay taker/maker rate but that's a percentage of notional, not a per-unit commission). Parking as zero matches the perp path's "no commission noise" stance.
+- **Counter sync on `loadState`**: I parsed `paper-opt-(\d+)` and `paper-spread-(\d+)` out of rehydrated IDs with the same regex pattern as the existing order/fill counters. If a future iteration changes the ID format (e.g. to UUIDs) the counter sync logic will silently fail; documenting here so whoever does that knows to revisit three places at once.
+- **`Leg` type lives in `src/services/options/types.ts`** and the engine now imports it. This crosses the engine→services boundary which felt wrong at first, but the alternative (duplicating `Leg` in the engine or inventing an intermediate shape) is worse. The engine *is* the consumer of user-facing legs from the order form, so depending on the same shape is coherent. Flagging in case a future architectural pass wants to invert: move `Leg` into a neutral `src/types/` module.
+- **Test ordering quirk**: when I added a second `import type` inside the existing `PaperEngine.test.ts` mid-file (after the `onUpdate` section header), TS allowed it (imports can live anywhere in a module), and vitest didn't care. Kept the placement for organizational clarity — the `openOptionLegs` tests import things only they use. Not canonical but acceptable.
+
+### Next
+**Iteration 15b: wire the `OrderForm` Submit button through the store to `openOptionLegs`.** The engine-side machinery is ready. Needs:
+1. Account store action: `submitOptionSpread(legs, opts)` that calls `engine.openOptionLegs`, bubbles success/failure, and on success calls `saveActiveAccountState` so the new positions and debited balance persist.
+2. `OrderForm`'s `onSubmit` handler: invoke the store action, clear `legs` state on success, surface the error string inline on failure, show the submit button as `Submitting…` during the async (engine is sync today but make the hook treat it as sync or async).
+3. Possibly a toast or transient success banner — existing perp flow does this somewhere; mirror it.
+4. The market-hours gate is already in place on the Submit button (iteration 12). Short-margin path is tested. Only the plumbing from UI → store → engine is missing.
+
+After 15b, iteration 16 (`PositionsOptions` view) becomes the natural next bottleneck: the user can now open spreads but not yet see them.
+
