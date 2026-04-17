@@ -203,16 +203,33 @@ export function analyticalBreakevens(legs: Leg[], qtyScalar: number = 1): number
   return result;
 }
 
-export interface PayoffExtrema {
+export interface PayoffExtremum {
+  /** Best/worst P&L value at the enumerated pivots. */
+  value: number;
   /**
-   * Max profit in dollars at expiration. `bounded` indicates whether the
-   * payoff is capped on the upside — if unbounded (e.g. long call), `value` is
-   * still the best value observed at the high-side tail but should be shown as
-   * "Unlimited" to the user.
+   * Whether the payoff is capped on this side. `false` means the payoff
+   * diverges as S → +∞; the reported `value` is just the highest/lowest
+   * observed pivot and should be surfaced as "Unlimited" to the user.
    */
-  maxProfit: { value: number; bounded: boolean; atPrice: number };
-  /** Max loss (negative or zero) in dollars at expiration. Same bounded semantics. */
-  maxLoss: { value: number; bounded: boolean; atPrice: number };
+  bounded: boolean;
+  /** A representative underlying price where the extremum is achieved. */
+  atPrice: number;
+  /**
+   * Contiguous range of underlying prices [min, max] over which the payoff
+   * equals the extremum value. For single-point extrema (e.g. a long-straddle
+   * peak), `min === max === atPrice`. For flat-band strategies (iron condor
+   * max profit, bull call spread max profit above the upper strike), this
+   * spans a real interval. Only meaningful when `bounded` is true; unbounded
+   * sides set min = max = atPrice.
+   */
+  zone: { min: number; max: number };
+}
+
+export interface PayoffExtrema {
+  /** Max profit in dollars at expiration. */
+  maxProfit: PayoffExtremum;
+  /** Max loss (negative or zero) in dollars at expiration. */
+  maxLoss: PayoffExtremum;
 }
 
 /**
@@ -235,24 +252,61 @@ function rightTailSlope(legs: Leg[], qtyScalar: number = 1): number {
 }
 
 /**
+ * Widest contiguous run of pivot indices whose value equals `target` within
+ * epsilon. Returns the [lo, hi] index pair into the sorted pivots array. If
+ * no pivot matches (shouldn't happen — target must come from the same array),
+ * returns a single-point range at index 0.
+ *
+ * "Widest" rather than "first" matters for pathological baskets where the same
+ * extremum value is achieved at two disjoint pivot runs (rare but possible
+ * with opposing ratio spreads). The visually meaningful zone is the widest
+ * one, since that's the band traders care about.
+ */
+function widestRunAtValue(values: number[], target: number): { lo: number; hi: number } {
+  const EPS = 1e-6;
+  let bestLo = 0;
+  let bestHi = 0;
+  let bestSize = -1;
+  let curLo = -1;
+  for (let i = 0; i < values.length; i++) {
+    if (Math.abs(values[i] - target) < EPS) {
+      if (curLo === -1) curLo = i;
+      const size = i - curLo;
+      if (size > bestSize) {
+        bestLo = curLo;
+        bestHi = i;
+        bestSize = size;
+      }
+    } else {
+      curLo = -1;
+    }
+  }
+  return { lo: bestLo, hi: bestHi };
+}
+
+/**
  * Maximum profit / maximum loss for a basket of option legs at expiration.
  * Uses the piecewise-linear nature of option payoffs: extrema occur at one of
  * {S=0, each strike, S→∞}. Samples the payoff at each candidate price and
  * reports the best/worst. The `bounded` flag uses the right-tail slope — the
  * only side that can actually diverge, since S is floored at 0.
  *
- * Returns `{maxProfit: {value: 0, bounded: true, atPrice: 0}, maxLoss: same}`
- * for empty legs.
+ * Each side also reports a `zone` — the contiguous underlying-price range
+ * over which the extremum holds (e.g. the flat band between an iron condor's
+ * short strikes, or the region above a bull call spread's upper strike).
+ * Works because the payoff is linear between pivots: if two adjacent pivots
+ * share the extremum value, the entire segment between them is at the
+ * extremum (constant segment).
+ *
+ * Returns all-zero extrema with zone = {0, 0} for empty legs.
  */
 export function expirationExtrema(
   legs: Leg[],
   qtyScalar: number = 1,
 ): PayoffExtrema {
   if (legs.length === 0) {
-    return {
-      maxProfit: { value: 0, bounded: true, atPrice: 0 },
-      maxLoss: { value: 0, bounded: true, atPrice: 0 },
-    };
+    const zero = { value: 0, bounded: true, atPrice: 0, zone: { min: 0, max: 0 } };
+    return { maxProfit: zero, maxLoss: { ...zero, zone: { min: 0, max: 0 } } };
   }
 
   const strikes = legs.map((l) => l.contract.strike);
@@ -267,19 +321,20 @@ export function expirationExtrema(
   candidates.add(maxStrike * 2 + 1);
 
   const sorted = Array.from(candidates).sort((a, b) => a - b);
+  const values = sorted.map((S) => expirationPnl(legs, S, qtyScalar));
   let bestProfit = -Infinity;
   let bestProfitAt = sorted[0];
   let worstLoss = Infinity;
   let worstLossAt = sorted[0];
-  for (const S of sorted) {
-    const v = expirationPnl(legs, S, qtyScalar);
+  for (let i = 0; i < sorted.length; i++) {
+    const v = values[i];
     if (v > bestProfit) {
       bestProfit = v;
-      bestProfitAt = S;
+      bestProfitAt = sorted[i];
     }
     if (v < worstLoss) {
       worstLoss = v;
-      worstLossAt = S;
+      worstLossAt = sorted[i];
     }
   }
 
@@ -290,8 +345,22 @@ export function expirationExtrema(
   const profitBounded = rightSlope <= 0;
   const lossBounded = rightSlope >= 0;
 
+  // Zones only make sense when the side is bounded. On unbounded sides, the
+  // "zone" collapses to the atPrice anchor — the payoff continues improving
+  // past it, so there's no meaningful flat band.
+  let profitZone = { min: bestProfitAt, max: bestProfitAt };
+  if (profitBounded) {
+    const { lo, hi } = widestRunAtValue(values, bestProfit);
+    profitZone = { min: sorted[lo], max: sorted[hi] };
+  }
+  let lossZone = { min: worstLossAt, max: worstLossAt };
+  if (lossBounded) {
+    const { lo, hi } = widestRunAtValue(values, worstLoss);
+    lossZone = { min: sorted[lo], max: sorted[hi] };
+  }
+
   return {
-    maxProfit: { value: bestProfit, bounded: profitBounded, atPrice: bestProfitAt },
-    maxLoss: { value: worstLoss, bounded: lossBounded, atPrice: worstLossAt },
+    maxProfit: { value: bestProfit, bounded: profitBounded, atPrice: bestProfitAt, zone: profitZone },
+    maxLoss: { value: worstLoss, bounded: lossBounded, atPrice: worstLossAt, zone: lossZone },
   };
 }

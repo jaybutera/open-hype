@@ -116,6 +116,38 @@ export function PayoffDiagram({
       <polygon points={aboveZero.join(' ')} fill={COL_SELL} fillOpacity={0.10} />
       <polygon points={belowZero.join(' ')} fill={COL_BUY} fillOpacity={0.10} />
 
+      {/* Max-profit / max-loss zones — contiguous bands where the extremum holds.
+          Only shown when the zone spans a real interval (not a single point)
+          and is bounded, since unbounded zones collapse to atPrice. */}
+      {extrema.maxProfit.bounded && extrema.maxProfit.value > 0
+        && extrema.maxProfit.zone.max > extrema.maxProfit.zone.min && (() => {
+        const xl = Math.max(curve.xMin, extrema.maxProfit.zone.min);
+        const xr = Math.min(curve.xMax, extrema.maxProfit.zone.max);
+        if (xr <= xl) return null;
+        const zx = xScale(xl);
+        const zw = xScale(xr) - zx;
+        return (
+          <rect
+            x={zx} y={padT} width={zw} height={plotH}
+            fill={COL_SELL} fillOpacity={0.08}
+          />
+        );
+      })()}
+      {extrema.maxLoss.bounded && extrema.maxLoss.value < 0
+        && extrema.maxLoss.zone.max > extrema.maxLoss.zone.min && (() => {
+        const xl = Math.max(curve.xMin, extrema.maxLoss.zone.min);
+        const xr = Math.min(curve.xMax, extrema.maxLoss.zone.max);
+        if (xr <= xl) return null;
+        const zx = xScale(xl);
+        const zw = xScale(xr) - zx;
+        return (
+          <rect
+            x={zx} y={padT} width={zw} height={plotH}
+            fill={COL_BUY} fillOpacity={0.08}
+          />
+        );
+      })()}
+
       {/* Zero line (bold) */}
       <line
         x1={padL} x2={width - padR} y1={zeroY} y2={zeroY}

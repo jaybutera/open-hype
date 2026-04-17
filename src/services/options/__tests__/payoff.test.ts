@@ -368,6 +368,94 @@ describe('expirationExtrema', () => {
     // The reported atPrice should be the far-right probe (2*K+1 = 801)
     expect(e.maxLoss.atPrice).toBeGreaterThan(400);
   });
+
+  it('empty legs: zones collapse to a single point at 0', () => {
+    const e = expirationExtrema([]);
+    expect(e.maxProfit.zone).toEqual({ min: 0, max: 0 });
+    expect(e.maxLoss.zone).toEqual({ min: 0, max: 0 });
+  });
+
+  it('long call: loss zone spans S=0 through the strike (payoff flat at -premium while OTM)', () => {
+    // Call is worthless for S ≤ strike, so the max-loss band is [0, K].
+    const e = expirationExtrema([leg()]);
+    expect(e.maxLoss.zone.min).toBe(0);
+    expect(e.maxLoss.zone.max).toBe(400);
+    // Profit side is unbounded — zone collapses to atPrice
+    expect(e.maxProfit.zone.min).toBe(e.maxProfit.atPrice);
+    expect(e.maxProfit.zone.max).toBe(e.maxProfit.atPrice);
+  });
+
+  it('long put: profit zone single-point at S=0, loss zone spans strike through right tail', () => {
+    // Put is worthless for S ≥ strike, so max loss (premium paid) is flat on that whole range.
+    const e = expirationExtrema([leg({}, { type: 'put', strike: 400 })]);
+    expect(e.maxProfit.zone).toEqual({ min: 0, max: 0 });
+    expect(e.maxLoss.zone.min).toBe(400);
+    expect(e.maxLoss.zone.max).toBeGreaterThanOrEqual(400 * 2 + 1);
+  });
+
+  it('call vertical debit spread: profit zone extends above the short strike', () => {
+    // Long 400C @ 10.5, short 410C @ 5 — above 410 payoff is flat at max profit
+    const long = leg({}, { strike: 400, bid: 10, ask: 11 });
+    const short = leg({ side: 'sell' }, { strike: 410, bid: 4, ask: 6 });
+    const e = expirationExtrema([long, short]);
+    // Zone starts at the upper strike and extends to the right probe
+    expect(e.maxProfit.zone.min).toBe(410);
+    expect(e.maxProfit.zone.max).toBeGreaterThanOrEqual(410 * 2 + 1);
+    // Loss zone starts at S=0 and extends through the lower strike
+    expect(e.maxLoss.zone.min).toBe(0);
+    expect(e.maxLoss.zone.max).toBe(400);
+  });
+
+  it('iron condor: profit zone is the flat band between short strikes', () => {
+    const shortPut = leg(
+      { side: 'sell' },
+      { type: 'put', strike: 390, bid: 2.5, ask: 3.5, symbol: 'X:P390' },
+    );
+    const longPut = leg(
+      { side: 'buy' },
+      { type: 'put', strike: 380, bid: 0.5, ask: 1.5, symbol: 'X:P380' },
+    );
+    const shortCall = leg(
+      { side: 'sell' },
+      { type: 'call', strike: 420, bid: 2.5, ask: 3.5, symbol: 'X:C420' },
+    );
+    const longCall = leg(
+      { side: 'buy' },
+      { type: 'call', strike: 430, bid: 0.5, ask: 1.5, symbol: 'X:C430' },
+    );
+    const e = expirationExtrema([shortPut, longPut, shortCall, longCall]);
+    // Max profit is flat between 390 and 420 (the short strikes)
+    expect(e.maxProfit.zone.min).toBe(390);
+    expect(e.maxProfit.zone.max).toBe(420);
+  });
+
+  it('long straddle: profit zone collapses (unbounded), loss zone single-point at strike', () => {
+    const call = leg({}, { type: 'call', strike: 400, bid: 10, ask: 11, symbol: 'X:C' });
+    const put = leg({}, { type: 'put', strike: 400, bid: 9, ask: 10, symbol: 'X:P' });
+    const e = expirationExtrema([call, put]);
+    // Unbounded profit — zone pinned to atPrice
+    expect(e.maxProfit.zone.min).toBe(e.maxProfit.atPrice);
+    expect(e.maxProfit.zone.max).toBe(e.maxProfit.atPrice);
+    // Loss at the strike (single point)
+    expect(e.maxLoss.zone).toEqual({ min: 400, max: 400 });
+  });
+
+  it('short strangle: profit zone is the flat band between short strikes', () => {
+    const shortCall = leg(
+      { side: 'sell' },
+      { type: 'call', strike: 420, bid: 2.5, ask: 3.5, symbol: 'X:C420' },
+    );
+    const shortPut = leg(
+      { side: 'sell' },
+      { type: 'put', strike: 380, bid: 2.5, ask: 3.5, symbol: 'X:P380' },
+    );
+    const e = expirationExtrema([shortCall, shortPut]);
+    // Profit is flat between the two short strikes = max premium collected
+    expect(e.maxProfit.zone.min).toBe(380);
+    expect(e.maxProfit.zone.max).toBe(420);
+    // Loss is unbounded
+    expect(e.maxLoss.bounded).toBe(false);
+  });
 });
 
 describe('analyticalBreakevens', () => {
