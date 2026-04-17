@@ -82,3 +82,25 @@ Task 1 from iteration list: port the Yahoo proxy plugin from `/tmp/yahoo-proxy-t
 
 ### Next
 Most important next task: **capture a real TSLA chain response as a fixture JSON** (iteration 2). Reason: the adapter, Greeks, and chain-rendering components all need a deterministic test input. Once a fixture exists, the adapter + `OptionChain` parser (iteration 3) can be built and tested offline, and subsequent UI work isn't gated by Yahoo availability. Also worth addressing the pre-existing `PaperEngine.test.ts` tsc errors to restore the clean-typecheck gate.
+
+## Iteration: 2026-04-17 10:56
+
+### Picked
+Iteration 2 from the list — capture a real TSLA chain as fixture JSON. Highest priority because every downstream pure-logic task (adapter parser, Greeks tests, chain-row rendering, strategy detection) needs deterministic offline input. Also addressed the pre-existing `PaperEngine.test.ts` tsc errors flagged last iteration so the clean-typecheck gate is actually meaningful again.
+
+### Did
+- Created `src/services/options/__fixtures__/` directory.
+- Ran `npm run dev` in the background, curled `/api/options/TSLA`, saved the raw Yahoo response as `src/services/options/__fixtures__/tsla_chain.json` (117 KB).
+- Verified fixture integrity with Node: `symbol=TSLA`, `price=$406.41`, 22 expirations, 194 strikes, 183 calls + 188 puts for the first expiration (1776384000 = 2026-04-17). Sample call `TSLA260417C00005000` bid/ask/IV match shape expected by the adapter interface.
+- Fixed `src/engine/paper/__tests__/PaperEngine.test.ts` tsc errors at lines 431,447 by wrapping `r.oid!` with `String(...)` since `PlaceOrderResult.oid` is `number | string` and `cancelOrder` takes `string`.
+- `npx tsc --noEmit` → clean.
+- `npm test` → 97/97 green.
+
+### Discovered
+- Yahoo's `impliedVolatility` field appears to be returned as a percentage-ish number in the fixture (e.g. `39.90625` for a deep-ITM TSLA call), not the `0.5 = 50%` decimal the adapter spec assumes. Need to verify on a near-ATM contract before deciding the normalization: the deep-ITM numbers might be garbage/high-IV from a wide spread rather than genuine scale mismatch. **Check during adapter work (iteration 3).** If truly percentage, divide by 100 in the normalizer.
+- Yahoo returns `calls` and `puts` as separate arrays already sorted by strike — adapter doesn't need to re-sort, just trust the upstream.
+- The top-level response shape is `{ optionChain: { result: [ { underlyingSymbol, expirationDates[], strikes[], quote{regularMarketPrice,bid?,ask?}, options:[{expirationDate, calls[], puts[]}] } ] } }`. `options` is an array of length 1 — the loaded expiration. All other expirations are just in `expirationDates[]`; you have to re-fetch with `?date=` to get their calls/puts.
+- Fixture is checked in as-is (117 KB JSON, still well under any reasonable size limit).
+
+### Next
+**Build `services/options/types.ts` + `yahooAdapter.ts`** (iteration 3). Parse the fixture into a normalized `OptionChain`. Unit-test the parser against the fixture so IV scaling, ITM detection, and bid/ask defaulting are pinned down. This unblocks Greeks (iteration 4 — needs the normalized `OptionContract` shape) and every chain-rendering component.

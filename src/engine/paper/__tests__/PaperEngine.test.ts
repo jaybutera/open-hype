@@ -428,7 +428,7 @@ describe('trade setup: entry + TP + SL end-to-end', () => {
 describe('cancel and order drag', () => {
   it('cancels an existing order', () => {
     const r = placeLimitBuy('BTC', '50000', '0.1');
-    expect(engine.cancelOrder(r.oid!)).toBe(true);
+    expect(engine.cancelOrder(String(r.oid))).toBe(true);
     expect(engine.getOpenOrders()).toHaveLength(0);
   });
 
@@ -444,7 +444,7 @@ describe('cancel and order drag', () => {
     openLong('BTC', '50000', '1');
     const r = placeTP('BTC', 'sell', '55000', '1', true);
 
-    engine.cancelOrder(r.oid!);
+    engine.cancelOrder(String(r.oid));
     placeTP('BTC', 'sell', '56000', '1', true);
 
     // Old price doesn't trigger
