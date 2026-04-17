@@ -9,6 +9,7 @@ import { SymbolSearch } from './SymbolSearch.tsx';
 import { ExpirationTabs } from './ExpirationTabs.tsx';
 import { ChainGrid } from './ChainGrid.tsx';
 import { OrderForm } from './OrderForm.tsx';
+import { PositionsOptions } from './PositionsOptions.tsx';
 
 const adapter = new YahooOptionsAdapter();
 
@@ -221,6 +222,8 @@ export function OptionsPage({ engine }: Props) {
           />
         </div>
       )}
+
+      <PositionsOptions chain={chain} />
     </div>
   );
 }

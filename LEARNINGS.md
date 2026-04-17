@@ -494,3 +494,51 @@ Iteration 15b: wire the `OrderForm` Submit button through to `PaperEngine.openOp
 5. Live chain mark is only available for the currently-loaded underlying. For spreads on other symbols, show entry-basis + expiration + last-fill without a live mark; flag with a subtle indicator so users know why it's stale.
 6. Decision needed: place this view inline on the options page (below the chain/form) or as its own tab/section. Inline on the options page is the minimum-friction option — the right-side form gets the live action, the bottom gets the positions list.
 
+## Iteration: 2026-04-17 11:44
+
+### Picked
+Iteration 16: `PositionsOptions` view — options-positions subview inline on the options page. Highest-priority unblocked task: the user could open spreads via iteration 15b but had no way to see them after the OrderForm cleared. The positions view is also a prerequisite for iteration 17 (close-position flow).
+
+### Did
+- `src/engine/paper/options/spreadSummary.ts` — pure helpers on arrays of `OptionPosition`:
+  - `spreadEntryBasis(legs)` → signed Decimal (debit +, credit −).
+  - `spreadCurrentMark(legs, chain)` → `{ netMarkPerShare, netMarkTotal, legsPriced, legCount }`. Pulls live mid from the chain when `chain.underlying` and `contract.symbol` both match; falls back to `entryPx` otherwise.
+  - `spreadUnrealizedPnl(legs, chain)` → signed Decimal. Only live-priced legs contribute (unpriced legs yield 0 PnL rather than using entry as a confused proxy).
+  - `spreadNetGreeks(legs, underlyingPrice, now)` → flat 0.3 IV fallback (used when no chain is loaded).
+  - `spreadNetGreeksFromChain(legs, chain, now)` → reads per-leg IV from the chain when the underlying matches; otherwise that leg contributes zero Greeks.
+  - `spreadNearestDte(legs, now)` / `spreadFarthestDte(legs, now)` → floor-rounded whole-day counts from the nearest / farthest-expiring leg.
+  - `detectSimpleStrategy(legs)` → placeholder covering: Long/Short Call/Put, Call/Put Vertical, Long/Short Straddle/Strangle, Calendar, Diagonal, `N-leg spread` fallback. Proper detection (Iron Condor / Butterfly / Iron Fly) is still iteration 19.
+- `src/engine/paper/options/__tests__/spreadSummary.test.ts` — 35 tests: entry basis (debit/credit/empty/verticals both directions), current mark (no chain / match / mismatched underlying / missing symbol / short sign-flip), unrealized PnL (no chain / long up / short down / partial chain coverage), Greeks (zero underlying / long ATM / short ATM / vertical cancellation / qty linearity), Greeks-from-chain (no chain / mismatched underlying / live IV affects gamma + price), DTE (same-exp / calendar / expired / empty), strategy detection (all supported cases + 4-leg + empty).
+- `src/components/options/PositionsOptions.tsx`:
+  - Reads `paperOptionPositions` from store, deserializes, groups by `spreadId`, sorts by earliest `openedAt`.
+  - Header row: `Symbol | Strategy | Entry | Mark | PnL | DTE`.
+  - One collapsible row per spread. Entry column is colored (red for debit, green for credit, gray for even); PnL colored when live. Mark + PnL show `—` for spreads whose underlying isn't the currently-loaded chain (non-intrusive staleness flag).
+  - Expanded body: 5-column Net Greeks grid (Δ Γ ν Θ ρ, only when chain matches), then one row per leg showing side badge (LONG green / SHORT red), contract label, entry price, signed cost basis, and per-leg unrealized PnL if live. When chain doesn't match, an italic hint reads "Load X's chain above to see live marks and unrealized PnL."
+  - Empty state: "No open option positions." as italic gray text below the section divider.
+- `src/components/options/OptionsPage.tsx` — imported `PositionsOptions`, rendered below the chain/form grid. It reads from the store directly, so no props threading needed beyond `chain`.
+- No close-flow stub; iteration 17's responsibility. The section deliberately doesn't provide interactive close buttons yet — clicking expand/collapse is the only interaction.
+- `npx tsc --noEmit` clean.
+- `npm test` → 294/294 green (was 259; +35).
+
+### Discovered
+- **Vega is non-monotonic in IV at ATM**. The original test asserted "higher IV → higher vega" which only holds far from ATM. At ATM, vega peaks around IV ≈ 0.5 and *drops* for higher IVs (it's proportional to the normal PDF at d1, and d1 shifts away from zero as σ grows). Replaced with two strict assertions that DO hold: higher IV → lower gamma at ATM (probability mass spreads out), and higher IV → higher option price (extrinsic value). Noting for future Greeks tests: if you're writing "vega increases with IV", make sure you mean it.
+- **Unrealized PnL for unpriced legs = 0, not "entry vs entry".** Early version of `spreadUnrealizedPnl` summed `legUnrealizedPnl(l, entryPx)` for unpriced legs, which always yields 0 anyway — but doing it explicitly was misleading. Switched to `continue` so it's obvious from the code that we skip unpriced legs. The PnL column shows `—` in the UI when `legsPriced === 0`, so users never see a "0 PnL" that might mean "breakeven" but actually means "no data".
+- **`spreadCurrentMark` falls back to entryPx for unpriced legs** (not 0). This keeps the mark a sensible display value across all underlyings — the spread's mark reads like its opening-value if no live data, which matches Robinhood Legend's behavior when the chain is stale. But the `legsPriced` counter makes it trivial to detect "was anything actually live" at the UI layer.
+- **Two Greeks functions**: `spreadNetGreeks` uses a flat 0.3 IV, `spreadNetGreeksFromChain` reads IV from the chain. Kept both because:
+  - `spreadNetGreeks` is the right abstraction when you *don't* have a chain (e.g. a future "positions across many underlyings" view where only one chain is loaded).
+  - `spreadNetGreeksFromChain` is what the positions view actually uses.
+  - Unit tests cover both. Duplication is ~15 lines and the semantic difference is meaningful.
+- **IV not stored on OptionPosition**. Entry IV is implicitly baked into `entryPx` but we don't capture it at open time. This means Greeks for a position on an unloaded chain are just a flat-IV estimate. If we cared about "IV at entry" for analytics we'd need to add it; for paper-trading PnL/Greeks display, the chain-derived IV for live positions is what matters.
+- **Strategy detection 2-leg logic**: checking `sameExp && sameType && !sameStrike && opposingSides` captures verticals cleanly; calendars flip `sameExp` and `opposingSides`; straddles/strangles share direction. Kept the branches spelled out rather than a decision tree — the classifier is short enough that readability beats cleverness, and iteration 19 will replace it with a proper recognizer anyway.
+- **Deserialize-on-read vs deserialize-on-store**: chose to deserialize inside the positions view's `useMemo` rather than changing the store shape. The store keeps `OptionPositionJSON[]` (simple serializable state that's already the right shape for localStorage), and only views that need `Decimal` arithmetic pay the conversion cost. If future iterations find themselves doing this conversion in many places, reconsider — but today it's 1 call site.
+- **UI column widths**: `16px 120px 1fr 100px 100px 120px 100px` for the header + each row. The `1fr` on Strategy lets the strategy label truncate the underlying column proportionally on narrow screens without cramping the numeric columns. Hardcoded pixel widths rather than `minmax(…, 1fr)` because the numeric columns have known max widths from the dollar formatter.
+- **No RTL-based component test for this view.** The pure helpers get 35 test cases; the component is a thin presenter over them. When RTL lands (probably pre-iteration-17 since close-flow needs interaction tests), this view's expand/collapse + chain-matching branches are good targets.
+
+### Next
+**Iteration 17: close-position flow.** Needs a way to close an individual leg or an entire spread:
+1. Add a "Close" action to each spread row (and optionally to each leg row in the expanded view for partial closes). Clicking it builds a new set of legs with opposite sides and loads them into the OrderForm — mirror-entry style — so the existing Submit flow handles the exit.
+2. New engine method `closeOptionSpread(spreadId, { fillModel?, qtyScalar? })` or `closeOptionLeg(id, { fillModel?, qtyScalar? })` that (a) computes realized PnL from entry vs close fill price, (b) removes the position (or reduces szi for partial), (c) releases any marginUsed back to available balance, (d) credits/debits balance by the close proceeds, (e) writes an `option-close` ledger entry.
+3. Important: the current flow opens a fresh spreadId per batch. Closing via "mirror into OrderForm" would reopen a NEW spread rather than close the existing one — which is wrong semantically but also doesn't release margin. Needs a dedicated engine path, not a reuse of `openOptionLegs`.
+4. The positions view will need to hide closed spreads (once szi = 0 for all legs they should just disappear from the UI — engine should delete them, not keep zero-sized legs around).
+
+Iteration 18 (market-hours gating) is also a small, satisfying win that could slip in if iteration 17 feels too large for one session. The market-hours banner exists in the header already; the missing piece is disabling Submit when market is closed (done in iteration 15b) AND freezing chain data rather than refetching on an interval (no interval fetch exists yet, so this mostly means: don't add one when closed). Minimal work left.
