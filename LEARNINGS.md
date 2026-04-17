@@ -542,3 +542,47 @@ Iteration 16: `PositionsOptions` view — options-positions subview inline on th
 4. The positions view will need to hide closed spreads (once szi = 0 for all legs they should just disappear from the UI — engine should delete them, not keep zero-sized legs around).
 
 Iteration 18 (market-hours gating) is also a small, satisfying win that could slip in if iteration 17 feels too large for one session. The market-hours banner exists in the header already; the missing piece is disabling Submit when market is closed (done in iteration 15b) AND freezing chain data rather than refetching on an interval (no interval fetch exists yet, so this mostly means: don't add one when closed). Minimal work left.
+
+## Iteration: 2026-04-17 11:50
+
+### Picked
+Iteration 17: close-position flow. Highest-priority unblocked task — iteration 16 gave users a positions view but no way to exit. The spec explicitly calls out that mirror-into-OrderForm would wrongly *re-open* a new spread instead of closing the existing one and wouldn't release margin, so a dedicated engine path was required.
+
+### Did
+- `PaperEngine.closeOptionSpread(spreadId, contracts, { fillModel })` in `src/engine/paper/PaperEngine.ts`:
+  - Looks up every leg of the spread, matches each `contractSymbol` against the caller-supplied `OptionContract[]`, prices the close at the opposite side (long → sell bid/mid, short → buy ask/mid) via the shared `legFillPrice` helper.
+  - Atomic: prices all legs first; if any contract is missing from the supplied list or has no usable quote (bid/ask/last all zero), returns `{ success: false, error }` with zero mutations.
+  - Per leg: realized PnL = `(closePx − entryPx) × szi × 100`. Cash delta = `szi × closePx × 100` (naturally handles long-sells-to-close = +cash and short-buys-to-close = −cash via signed szi). Position is deleted; margin release happens automatically via `availableBalance()` no longer counting the leg's `marginUsed`.
+  - One `option-close` ledger entry per leg tagged with the shared `spreadId` and the close-side (`'sell'` for long exits, `'buy'` for short exits).
+  - Single `emitUpdate()` at the end, not per leg.
+- `PaperEngine.closeOptionLegById(legId, contracts, { fillModel })` — single-leg wrapper for expanded-view per-leg close (not yet wired into UI; used by close tests and available for the "optional per-leg close" spec note). Leaves sibling legs open and preserves `spreadId` on the remaining legs.
+- 14 new vitest cases in `PaperEngine.test.ts` under `closeOptionSpread` and `closeOptionLegById`:
+  - Reject paths: unknown spreadId, missing contract in chain, zero-quote contract, atomic rejection with mixed good+bad legs (asserts no mutation).
+  - Happy paths: single long call at profit / at loss, short put at profit (premium decay), vertical debit spread with summed realized PnL + per-leg close ledger entries.
+  - Side-effects: margin fully releases (can open another short with full initial balance after round-trip), onUpdate fires exactly once, cross fill-model uses bid for long-close and ask for short-close.
+  - `closeOptionLegById`: closes one leg of a multi-leg spread leaving the other intact, spreadId preserved on remaining leg, atomic rejection when contract not found.
+- Wired Close button into `src/components/options/PositionsOptions.tsx`:
+  - Added `engine: PaperEngine` prop and threaded `engine` from `OptionsPage.tsx`.
+  - New 8th grid column (72px) on each spread row. Button is enabled only when `chainMatches && mark.legsPriced === legs.length` — i.e. the currently-loaded chain covers every leg with a live mid. Disabled button gets a muted style and a tooltip explaining why ("Load X's chain to enable closing" / "Chain is missing quotes for one or more legs").
+  - On click: `engine.closeOptionSpread(spreadId, [...chain.calls, ...chain.puts], { fillModel: 'mid' })`. Shows a per-spread inline feedback line (green on success with `Closed N legs · PnL ±$XXX`, red on error). Feedback is scoped by spreadId so one spread's error doesn't clutter another's row.
+  - Converted the spread row from `<button>` to `<div role-less clickable>` because a `<button>` cannot legally contain another `<button>` (the Close action). Kept `onClick` on the outer div for expand/collapse; the Close button calls `e.stopPropagation()` so clicking Close doesn't also toggle the expansion.
+- `npx tsc --noEmit` clean. `npm test` → 308/308 green (was 294; +14).
+
+### Discovered
+- **Signed-szi arithmetic is the right abstraction for close math.** The same three-line block — `realized = (closePx - entryPx) × szi × 100`, `cashDelta = szi × closePx × 100` — correctly handles both long and short exits because szi's sign flips every factor: long closes credit cash (positive szi × positive closePx → +); short closes debit cash (negative szi × positive closePx → −). No branch on `isLong`. This mirrors how `openOptionLegs` uses `legCashDelta(szi, entryPx)`. Worth preserving the symmetry if anyone reaches for a branch-on-side rewrite later.
+- **Margin release is implicit, not explicit.** Nothing in `closeOptionSpread` touches margin bookkeeping — `optionPositions.delete(leg.id)` is enough because `availableBalance()` sums `marginUsed` across the live `optionPositions` Map. This felt wrong the first time through (no "release" line), so I added a dedicated test (`releases short-leg margin so availableBalance fully recovers`) that closes a short and then immediately re-opens it at the same premium to prove the margin is back in play. If future iterations ever cache `totalMargin` for perf, that test will catch the regression.
+- **Atomic-on-reject required pricing in two phases.** First pass: look up & price every leg, bail on the first failure. Second pass: mutate balance/positions/ledger. Mixing the two would leave the engine in a half-closed state if leg 3 of 4 has a zero quote. This matches the pattern already in `openOptionLegs` (priced array built before any mutation).
+- **Caller supplies contracts, not the engine.** Considered having the engine hold a chain or fetch one, but this keeps the engine pure and testable (no network, no React state) and matches how `openOptionLegs` takes `Leg[]` with embedded contracts. The UI adapter (PositionsOptions) bridges store → chain → engine in one place.
+- **Disabled-when-chain-doesn't-match was the right UX default.** Tempted to offer "close at last mark" fallback, but if the chain doesn't cover the leg's underlying, there's no way to price it at current market and the user almost certainly wants to load the chain first. Tooltip makes this legible without cluttering the row. The engine itself already rejects on missing contracts, so the UI gate is defense-in-depth.
+- **Nested `<button>` would have been a silent a11y bug.** React doesn't error on `<button><button></button></button>` but HTML does — browsers will "fix" it by closing the outer button early, breaking layout. Spotted this while adding the Close control and restructured. The expand/collapse row is now a `div` with `onClick`; noting because the analogous fix may be needed when iteration 17+ adds per-leg close buttons inside the expanded view.
+- **Balance after close includes the full round-trip.** At open: balance -= netDebit. At close: balance += sum(cashDelta). For a long call at $5 entry / $8 close: open balance -500; close balance +800; net +300 = realized PnL. The ledger's `balanceAfter` field on the close entry already reflects this; the `realizedPnl` field is the per-leg contribution. Tests assert both — worth preserving, because if open-time debit ever double-counted margin reservation, the close's `balanceAfter` would drift.
+
+### Next
+**Iteration 18: market-hours gating (polish pass).** The banner already shows open/closed and Submit is disabled when closed (iteration 15b). Remaining work:
+1. When the market is closed, freeze the chain display so stale quotes aren't presented as live — show a subtle "Last updated: HH:MM ET" next to the price.
+2. Don't auto-refetch on symbol/expiration changes when the market is closed (currently the `useEffect` in `OptionsPage` fires unconditionally). Decide policy: either (a) still fetch once so the user sees strikes & IVs even when closed, or (b) show "Market closed — reopen at X:XX ET" instead of a fresh chain.
+3. Same for Close button: already disabled when `!chainMatches`, but when market is closed we should prefer showing a "Close disabled while market closed" tooltip over a stale-mid close. Small addition to `canClose` logic.
+
+Alternative: **Iteration 19 (strategy auto-detection)** is a fun self-contained task — replace `detectSimpleStrategy`'s 2/3-leg placeholder with a proper recognizer for Iron Condor / Iron Fly / Butterfly / Broken-Wing Butterfly. No dependencies on other iterations. ~100 lines of classifier + tests.
+
+Either is a reasonable next pick. Iteration 18 feels higher-priority because it completes the "don't deceive the user" UX story; iteration 19 is pure polish on an already-functioning feature.

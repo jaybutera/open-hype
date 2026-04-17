@@ -223,7 +223,7 @@ export function OptionsPage({ engine }: Props) {
         </div>
       )}
 
-      <PositionsOptions chain={chain} />
+      <PositionsOptions chain={chain} engine={engine} />
     </div>
   );
 }

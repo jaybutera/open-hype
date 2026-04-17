@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import Decimal from 'decimal.js';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import type { OptionChain } from '../../services/options/types.ts';
+import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import {
   deserializeOptionPosition,
   groupBySpread,
@@ -21,7 +22,10 @@ import {
 
 interface Props {
   chain: OptionChain | null;
+  engine: PaperEngine;
 }
+
+type CloseFeedback = { spreadId: string; kind: 'success' | 'error'; message: string };
 
 function fmtUsd(v: number): string {
   const abs = Math.abs(v);
@@ -65,9 +69,11 @@ interface SpreadRowProps {
   chain: OptionChain | null;
   expanded: boolean;
   onToggle: () => void;
+  onClose: () => void;
+  feedback: CloseFeedback | null;
 }
 
-function SpreadRow({ legs, chain, expanded, onToggle }: SpreadRowProps) {
+function SpreadRow({ legs, chain, expanded, onToggle, onClose, feedback }: SpreadRowProps) {
   const firstLeg = legs[0];
   const underlying = firstLeg.underlying;
   const chainMatches = chain && chain.underlying.toUpperCase() === underlying.toUpperCase();
@@ -86,25 +92,26 @@ function SpreadRow({ legs, chain, expanded, onToggle }: SpreadRowProps) {
   const pnlColor = pnlNum > 0 ? '#0ecb81' : pnlNum < 0 ? '#f6465d' : '#8a8f98';
   const dteLabel = nearest === farthest ? fmtDte(nearest) : `${fmtDte(nearest)} → ${fmtDte(farthest)}`;
 
+  const canClose = chainMatches && mark.legsPriced === legs.length;
+  const closeTitle = !chainMatches
+    ? `Load ${underlying}'s chain to enable closing`
+    : mark.legsPriced < legs.length
+      ? 'Chain is missing quotes for one or more legs'
+      : 'Close all legs at current mid';
+
   return (
     <div style={{ borderBottom: '1px solid #1a1f2e' }}>
-      <button
-        type="button"
+      <div
         onClick={onToggle}
         style={{
-          width: '100%',
           display: 'grid',
-          gridTemplateColumns: '16px 120px 1fr 100px 100px 120px 100px',
+          gridTemplateColumns: '16px 120px 1fr 100px 100px 120px 100px 72px',
           gap: 12,
           alignItems: 'center',
           padding: '10px 14px',
-          background: 'transparent',
-          border: 'none',
           color: '#e1e4e8',
           fontSize: 12,
-          textAlign: 'left',
           cursor: 'pointer',
-          fontFamily: 'inherit',
         }}
       >
         <span style={{ color: '#8a8f98', fontSize: 10 }}>{expanded ? '▾' : '▸'}</span>
@@ -122,7 +129,41 @@ function SpreadRow({ legs, chain, expanded, onToggle }: SpreadRowProps) {
           {chainMatches && mark.legsPriced > 0 ? fmtSigned(pnlNum) : '—'}
         </span>
         <span style={{ color: '#8a8f98' }}>{dteLabel}</span>
-      </button>
+        <button
+          type="button"
+          title={closeTitle}
+          disabled={!canClose}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          style={{
+            padding: '4px 8px',
+            fontSize: 11,
+            fontWeight: 600,
+            color: canClose ? '#e1e4e8' : '#4d545f',
+            background: canClose ? 'rgba(246,70,93,0.10)' : 'transparent',
+            border: `1px solid ${canClose ? '#f6465d' : '#1a1f2e'}`,
+            cursor: canClose ? 'pointer' : 'not-allowed',
+            letterSpacing: 0.3,
+            fontFamily: 'inherit',
+          }}
+        >
+          Close
+        </button>
+      </div>
+
+      {feedback && (
+        <div
+          style={{
+            padding: '4px 14px 8px',
+            fontSize: 11,
+            color: feedback.kind === 'success' ? '#0ecb81' : '#f6465d',
+          }}
+        >
+          {feedback.message}
+        </div>
+      )}
 
       {expanded && (
         <div style={{ padding: '8px 14px 12px', background: '#0a0d14' }}>
@@ -215,9 +256,10 @@ function SpreadRow({ legs, chain, expanded, onToggle }: SpreadRowProps) {
   );
 }
 
-export function PositionsOptions({ chain }: Props) {
+export function PositionsOptions({ chain, engine }: Props) {
   const rawPositions = useAccountStore((s) => s.paperOptionPositions);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [feedback, setFeedback] = useState<CloseFeedback | null>(null);
 
   const grouped = useMemo(() => {
     const positions = rawPositions.map(deserializeOptionPosition);
@@ -255,6 +297,25 @@ export function PositionsOptions({ chain }: Props) {
     });
   };
 
+  const handleClose = (spreadId: string) => {
+    if (!chain) {
+      setFeedback({ spreadId, kind: 'error', message: 'Chain not loaded.' });
+      return;
+    }
+    const contracts = [...chain.calls, ...chain.puts];
+    const result = engine.closeOptionSpread(spreadId, contracts, { fillModel: 'mid' });
+    if (result.success) {
+      const pnl = result.realizedPnl.toNumber();
+      setFeedback({
+        spreadId,
+        kind: 'success',
+        message: `Closed ${result.closedLegs} leg${result.closedLegs === 1 ? '' : 's'} · PnL ${fmtSigned(pnl)}`,
+      });
+    } else {
+      setFeedback({ spreadId, kind: 'error', message: result.error });
+    }
+  };
+
   return (
     <div style={{ borderTop: '1px solid #1a1f2e' }}>
       <div
@@ -274,7 +335,7 @@ export function PositionsOptions({ chain }: Props) {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '16px 120px 1fr 100px 100px 120px 100px',
+          gridTemplateColumns: '16px 120px 1fr 100px 100px 120px 100px 72px',
           gap: 12,
           padding: '6px 14px',
           fontSize: 10,
@@ -292,6 +353,7 @@ export function PositionsOptions({ chain }: Props) {
         <span>Mark</span>
         <span>PnL</span>
         <span>DTE</span>
+        <span></span>
       </div>
       {grouped.map(([spreadId, legs]) => (
         <SpreadRow
@@ -300,6 +362,8 @@ export function PositionsOptions({ chain }: Props) {
           chain={chain}
           expanded={expanded.has(spreadId)}
           onToggle={() => toggle(spreadId)}
+          onClose={() => handleClose(spreadId)}
+          feedback={feedback && feedback.spreadId === spreadId ? feedback : null}
         />
       ))}
     </div>

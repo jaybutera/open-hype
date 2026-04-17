@@ -5,7 +5,7 @@ import { matchOrders, matchTriggersByCandle, type PaperOrder, type FillResult } 
 import { applyFill, computeUnrealizedPnl, computeLiquidationPrice, type PaperPosition } from './positions.ts';
 import { calculateFee } from './pnl.ts';
 import { createLedgerEntry, createOptionLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
-import type { Leg } from '../../services/options/types.ts';
+import type { Leg, OptionContract } from '../../services/options/types.ts';
 import {
   serializeOptionPosition,
   deserializeOptionPosition,
@@ -14,6 +14,7 @@ import {
 } from './options/OptionPosition.ts';
 import { computeOpenLegsCost, legCashDelta, legMarginRequired } from './options/margin.ts';
 import { legFillPrice, type FillModel } from './options/pricing.ts';
+import { CONTRACT_MULTIPLIER } from './options/OptionPosition.ts';
 
 export interface PaperState {
   balance: string;
@@ -582,6 +583,126 @@ export class PaperEngine {
 
     this.emitUpdate();
     return { success: true, spreadId, positions: created };
+  }
+
+  /**
+   * Close every leg of an open spread at once. Caller supplies the current
+   * chain's contracts so the engine can price each leg; the engine looks up
+   * each leg's contract by symbol. The close fill is the opposite side of
+   * the leg (long → sell at bid/mid, short → buy at ask/mid).
+   *
+   * For each leg: realized PnL is `(closePx - entryPx) × szi × 100`, the
+   * position is removed, its reserved margin is released, and the balance
+   * is credited/debited by the close proceeds. One `option-close` ledger
+   * entry is written per leg tagged with the shared spreadId.
+   *
+   * Fails atomically: if any leg lacks a matching contract or has no usable
+   * quote, nothing is modified and an error is returned.
+   */
+  closeOptionSpread(
+    spreadId: string,
+    contracts: OptionContract[],
+    opts: { fillModel?: FillModel } = {},
+  ): { success: true; realizedPnl: Decimal; closedLegs: number }
+    | { success: false; error: string } {
+    const legs = this.getOptionPositionsBySpread(spreadId);
+    if (legs.length === 0) {
+      return { success: false, error: `No open spread ${spreadId}` };
+    }
+    const fillModel = opts.fillModel ?? 'mid';
+    const bySymbol = new Map<string, OptionContract>();
+    for (const c of contracts) bySymbol.set(c.symbol, c);
+
+    // Price every leg first; bail out before touching state on any failure.
+    const priced: Array<{ leg: OptionPosition; closePx: Decimal; closeSide: 'buy' | 'sell' }> = [];
+    for (const leg of legs) {
+      const contract = bySymbol.get(leg.contractSymbol);
+      if (!contract) {
+        return { success: false, error: `No contract in chain for ${leg.contractSymbol}` };
+      }
+      const closeSide: 'buy' | 'sell' = leg.szi.isPositive() ? 'sell' : 'buy';
+      const { price } = legFillPrice(contract, closeSide, fillModel);
+      if (price <= 0) {
+        return { success: false, error: `No usable quote for ${leg.contractSymbol}` };
+      }
+      priced.push({ leg, closePx: new Decimal(price), closeSide });
+    }
+
+    let totalRealized = new Decimal(0);
+    for (const { leg, closePx, closeSide } of priced) {
+      // Per-leg realized PnL: long → (close - entry) × qty × 100,
+      // short (szi < 0) → same formula (szi sign flips it correctly).
+      const realized = closePx.sub(leg.entryPx).mul(leg.szi).mul(CONTRACT_MULTIPLIER);
+      totalRealized = totalRealized.add(realized);
+
+      // Cash delta at close: long selling to close → cash in (+szi × closePx × 100);
+      // short buying to close → cash out (−|szi| × closePx × 100, i.e. szi × closePx × 100
+      // with szi < 0). The same formula works for both because szi is signed.
+      const cashDelta = leg.szi.mul(closePx).mul(CONTRACT_MULTIPLIER);
+      this.balance = this.balance.add(cashDelta);
+
+      this.optionPositions.delete(leg.id);
+
+      this.fills.push(createOptionLedgerEntry({
+        kind: 'option-close',
+        contractSymbol: leg.contractSymbol,
+        side: closeSide,
+        qty: leg.szi.abs(),
+        premiumPerShare: closePx,
+        cashDelta,
+        realizedPnl: realized,
+        balanceAfter: this.balance,
+        spreadId,
+      }));
+    }
+
+    this.emitUpdate();
+    return { success: true, realizedPnl: totalRealized, closedLegs: priced.length };
+  }
+
+  /**
+   * Close a single option leg by id. Thin wrapper over closeOptionSpread's
+   * per-leg logic — useful for expanded-view per-leg close actions. Leaves
+   * any sibling legs from the same spread open.
+   */
+  closeOptionLegById(
+    legId: string,
+    contracts: OptionContract[],
+    opts: { fillModel?: FillModel } = {},
+  ): { success: true; realizedPnl: Decimal }
+    | { success: false; error: string } {
+    const leg = this.optionPositions.get(legId);
+    if (!leg) return { success: false, error: `No open leg ${legId}` };
+    const fillModel = opts.fillModel ?? 'mid';
+    const contract = contracts.find((c) => c.symbol === leg.contractSymbol);
+    if (!contract) {
+      return { success: false, error: `No contract in chain for ${leg.contractSymbol}` };
+    }
+    const closeSide: 'buy' | 'sell' = leg.szi.isPositive() ? 'sell' : 'buy';
+    const { price } = legFillPrice(contract, closeSide, fillModel);
+    if (price <= 0) {
+      return { success: false, error: `No usable quote for ${leg.contractSymbol}` };
+    }
+    const closePx = new Decimal(price);
+    const realized = closePx.sub(leg.entryPx).mul(leg.szi).mul(CONTRACT_MULTIPLIER);
+    const cashDelta = leg.szi.mul(closePx).mul(CONTRACT_MULTIPLIER);
+
+    this.balance = this.balance.add(cashDelta);
+    this.optionPositions.delete(leg.id);
+    this.fills.push(createOptionLedgerEntry({
+      kind: 'option-close',
+      contractSymbol: leg.contractSymbol,
+      side: closeSide,
+      qty: leg.szi.abs(),
+      premiumPerShare: closePx,
+      cashDelta,
+      realizedPnl: realized,
+      balanceAfter: this.balance,
+      spreadId: leg.spreadId,
+    }));
+
+    this.emitUpdate();
+    return { success: true, realizedPnl: realized };
   }
 
   private emitUpdate(): void {

@@ -860,6 +860,253 @@ describe('openOptionLegs', () => {
   });
 });
 
+// ── closeOptionSpread / closeOptionLegById ───────────────────────────
+
+describe('closeOptionSpread', () => {
+  it('rejects unknown spreadId', () => {
+    const r = engine.closeOptionSpread('paper-spread-999', []);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error).toMatch(/no open spread/i);
+  });
+
+  it('rejects when a leg has no matching contract in the chain', () => {
+    const open = engine.openOptionLegs([mkLeg()]);
+    expect(open.success).toBe(true);
+    if (!open.success) return;
+    const r = engine.closeOptionSpread(open.spreadId, []);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error).toMatch(/no contract/i);
+    // Position still open, balance unchanged (still 9500 — 10000 - 500 debit).
+    expect(engine.getOptionPositions()).toHaveLength(1);
+    expect(engine.getBalance()).toBe('9500');
+  });
+
+  it('rejects when a leg has a zero-quote contract (no usable fill)', () => {
+    const open = engine.openOptionLegs([mkLeg()]);
+    if (!open.success) throw new Error('setup failed');
+    const dead = mkContract({ bid: 0, ask: 0, last: 0 });
+    const r = engine.closeOptionSpread(open.spreadId, [dead]);
+    expect(r.success).toBe(false);
+    expect(engine.getOptionPositions()).toHaveLength(1);
+  });
+
+  it('closes a single long call at a profit: balance credited, PnL realized, position removed, ledger tagged', () => {
+    // Open: mid 5 × 1 × 100 = 500 debit → balance 9500
+    const open = engine.openOptionLegs([mkLeg()]);
+    if (!open.success) throw new Error('setup failed');
+    const fillsBefore = engine.getFills().length;
+    // Close at mid 8 (bid 7, ask 9) → cash in 800, realized PnL = (8-5)×1×100 = 300
+    const closeContract = mkContract({ bid: 7, ask: 9 });
+    const r = engine.closeOptionSpread(open.spreadId, [closeContract]);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+
+    expect(r.realizedPnl.toString()).toBe('300');
+    expect(r.closedLegs).toBe(1);
+    expect(engine.getOptionPositions()).toHaveLength(0);
+    // 9500 + 800 = 10300
+    expect(engine.getBalance()).toBe('10300');
+
+    const fills = engine.getFills();
+    expect(fills).toHaveLength(fillsBefore + 1);
+    const closeFill = fills[fills.length - 1];
+    expect(closeFill.kind).toBe('option-close');
+    expect(closeFill.side).toBe('sell');
+    expect(closeFill.spreadId).toBe(open.spreadId);
+    expect(closeFill.realizedPnl).toBe('300');
+    expect(closeFill.price).toBe('8');
+  });
+
+  it('closes a single long call at a loss: balance still credited (smaller), PnL negative', () => {
+    const open = engine.openOptionLegs([mkLeg()]);
+    if (!open.success) throw new Error('setup failed');
+    // Close at mid 2: cash in 200, realized = (2-5)×1×100 = -300
+    const r = engine.closeOptionSpread(open.spreadId, [mkContract({ bid: 1, ask: 3 })]);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.realizedPnl.toString()).toBe('-300');
+    // 9500 + 200 = 9700
+    expect(engine.getBalance()).toBe('9700');
+  });
+
+  it('closes a short put: balance debited by buy-to-close cost, margin released', () => {
+    // Open short put: mid 2.5 × 1 × 100 = 250 credit → balance 10250.
+    // Short margin reserved = 2.5 × 100 × 1 × 5 = 1250.
+    const short = mkLeg({
+      side: 'sell',
+      contract: mkContract({ type: 'put', bid: 2, ask: 3 }),
+    });
+    const open = engine.openOptionLegs([short]);
+    if (!open.success) throw new Error('setup failed');
+    expect(engine.getBalance()).toBe('10250');
+    // availableBalance after open = 10250 - 1250 = 9000
+    // Now close at mid 1 (premium decayed): pay 100 to buy back.
+    // Realized PnL = (1 - 2.5) × (-1) × 100 = 150 (short profits from decay).
+    const r = engine.closeOptionSpread(open.spreadId, [mkContract({ type: 'put', bid: 0.5, ask: 1.5 })]);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.realizedPnl.toString()).toBe('150');
+    // Balance: 10250 - 100 = 10150
+    expect(engine.getBalance()).toBe('10150');
+    // Margin released (position gone) — availableBalance now = full balance.
+    expect(engine.getOptionPositions()).toHaveLength(0);
+  });
+
+  it('closes a vertical debit spread: both legs closed, realized PnL summed, single spreadId across ledger entries', () => {
+    const longCall = mkLeg({ contract: mkContract({ symbol: 'A', bid: 5, ask: 7 }) });
+    const shortCall = mkLeg({
+      side: 'sell',
+      contract: mkContract({ symbol: 'B', strike: 410, bid: 2, ask: 4 }),
+    });
+    const open = engine.openOptionLegs([longCall, shortCall]);
+    if (!open.success) throw new Error('setup failed');
+    // balance 9700 (net debit 300 debited)
+    const fillsBefore = engine.getFills().length;
+
+    // Close: A at mid 8 (bid 7, ask 9), B at mid 1 (bid 0.5, ask 1.5).
+    //   Long A close-sell: cash +800, realized (8-6)×1×100 = 200
+    //   Short B close-buy: cash -100, realized (1-3)×(-1)×100 = 200
+    //   Total realized: 400; net cash delta: +700
+    //   Balance: 9700 + 700 = 10400
+    const r = engine.closeOptionSpread(open.spreadId, [
+      mkContract({ symbol: 'A', bid: 7, ask: 9 }),
+      mkContract({ symbol: 'B', strike: 410, bid: 0.5, ask: 1.5 }),
+    ]);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.realizedPnl.toString()).toBe('400');
+    expect(r.closedLegs).toBe(2);
+    expect(engine.getBalance()).toBe('10400');
+    expect(engine.getOptionPositions()).toHaveLength(0);
+
+    const newFills = engine.getFills().slice(fillsBefore);
+    expect(newFills).toHaveLength(2);
+    expect(newFills.every(f => f.kind === 'option-close')).toBe(true);
+    expect(newFills.every(f => f.spreadId === open.spreadId)).toBe(true);
+  });
+
+  it('atomic on reject: one bad leg → no mutations for the good leg', () => {
+    const longA = mkLeg({ contract: mkContract({ symbol: 'A' }) });
+    const longB = mkLeg({ contract: mkContract({ symbol: 'B', strike: 410 }) });
+    const open = engine.openOptionLegs([longA, longB]);
+    if (!open.success) throw new Error('setup failed');
+    const balanceBefore = engine.getBalance();
+    const fillsBefore = engine.getFills().length;
+
+    // One contract good, the other has no quote at all.
+    const r = engine.closeOptionSpread(open.spreadId, [
+      mkContract({ symbol: 'A', bid: 10, ask: 12 }),
+      mkContract({ symbol: 'B', strike: 410, bid: 0, ask: 0, last: 0 }),
+    ]);
+    expect(r.success).toBe(false);
+    // Both legs still open, balance unchanged, no new ledger.
+    expect(engine.getOptionPositions()).toHaveLength(2);
+    expect(engine.getBalance()).toBe(balanceBefore);
+    expect(engine.getFills()).toHaveLength(fillsBefore);
+  });
+
+  it('releases short-leg margin so availableBalance fully recovers', () => {
+    const short = mkLeg({
+      side: 'sell',
+      contract: mkContract({ type: 'put', bid: 2, ask: 3 }),
+    });
+    const open = engine.openOptionLegs([short]);
+    if (!open.success) throw new Error('setup failed');
+    // Close at same price → realized 0, balance back to 10000.
+    engine.closeOptionSpread(open.spreadId, [mkContract({ type: 'put', bid: 2, ask: 3 })]);
+    expect(engine.getBalance()).toBe('10000');
+    // Margin reservation is gone — can place a new short with full balance.
+    const r = engine.openOptionLegs([short]);
+    expect(r.success).toBe(true);
+  });
+
+  it('emits onUpdate once per close (not once per leg)', () => {
+    const updates: ReturnType<PaperEngine['getState']>[] = [];
+    engine = new PaperEngine({
+      initialBalance: '10000', leverage: 10,
+      onUpdate: (s) => updates.push(s),
+    });
+    const open = engine.openOptionLegs([
+      mkLeg({ contract: mkContract({ symbol: 'A' }) }),
+      mkLeg({ contract: mkContract({ symbol: 'B', strike: 410 }) }),
+    ]);
+    if (!open.success) throw new Error('setup failed');
+    updates.length = 0;
+    const r = engine.closeOptionSpread(open.spreadId, [
+      mkContract({ symbol: 'A', bid: 5, ask: 7 }),
+      mkContract({ symbol: 'B', strike: 410, bid: 2, ask: 4 }),
+    ]);
+    expect(r.success).toBe(true);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].optionPositions).toHaveLength(0);
+  });
+
+  it('respects cross fill model: long closes at bid, short closes at ask', () => {
+    const long = mkLeg({ contract: mkContract({ symbol: 'L', bid: 4, ask: 6 }) });
+    const short = mkLeg({
+      side: 'sell',
+      contract: mkContract({ symbol: 'S', strike: 410, bid: 2, ask: 3 }),
+    });
+    const open = engine.openOptionLegs([long, short], { fillModel: 'cross' });
+    if (!open.success) throw new Error('setup failed');
+
+    // Close with cross: long sells → bid; short buys → ask.
+    const r = engine.closeOptionSpread(open.spreadId, [
+      mkContract({ symbol: 'L', bid: 8, ask: 10 }),
+      mkContract({ symbol: 'S', strike: 410, bid: 1, ask: 2 }),
+    ], { fillModel: 'cross' });
+    expect(r.success).toBe(true);
+    const fills = engine.getFills().filter((f) => f.kind === 'option-close');
+    // long entry = ask 6, long close = bid 8 → realized (8-6)*1*100 = 200
+    // short entry = bid 2, short close = ask 2 → realized (2-2)*(-1)*100 = 0
+    const longClose = fills.find((f) => f.coin === 'L')!;
+    const shortClose = fills.find((f) => f.coin === 'S')!;
+    expect(longClose.price).toBe('8');
+    expect(shortClose.price).toBe('2');
+  });
+});
+
+describe('closeOptionLegById', () => {
+  it('rejects unknown leg id', () => {
+    const r = engine.closeOptionLegById('paper-opt-999', []);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error).toMatch(/no open leg/i);
+  });
+
+  it('closes one leg of a multi-leg spread and leaves the other open', () => {
+    const legA = mkLeg({ contract: mkContract({ symbol: 'A' }) });
+    const legB = mkLeg({ contract: mkContract({ symbol: 'B', strike: 410 }) });
+    const open = engine.openOptionLegs([legA, legB]);
+    if (!open.success) throw new Error('setup failed');
+    const [posA, posB] = open.positions;
+
+    const r = engine.closeOptionLegById(posA.id, [mkContract({ symbol: 'A', bid: 7, ask: 9 })]);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.realizedPnl.toString()).toBe('300'); // (8-5)*1*100
+    // Only posB remains; spreadId preserved on remaining leg.
+    const remaining = engine.getOptionPositions();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(posB.id);
+    expect(remaining[0].spreadId).toBe(open.spreadId);
+
+    const closeFill = engine.getFills().find((f) => f.kind === 'option-close')!;
+    expect(closeFill.coin).toBe('A');
+    expect(closeFill.spreadId).toBe(open.spreadId);
+  });
+
+  it('rejects atomically when the contract is not in the chain', () => {
+    const open = engine.openOptionLegs([mkLeg()]);
+    if (!open.success) throw new Error('setup failed');
+    const posId = open.positions[0].id;
+    const balanceBefore = engine.getBalance();
+    const r = engine.closeOptionLegById(posId, []);
+    expect(r.success).toBe(false);
+    expect(engine.getOptionPositions()).toHaveLength(1);
+    expect(engine.getBalance()).toBe(balanceBefore);
+  });
+});
+
 // ── onUpdate callback ────────────────────────────────────────────────
 
 describe('onUpdate callback', () => {
