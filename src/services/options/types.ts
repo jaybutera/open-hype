@@ -33,6 +33,14 @@ export interface SymbolHit {
   name?: string;
 }
 
+export type LegSide = 'buy' | 'sell';
+
+export interface Leg {
+  contract: OptionContract;
+  side: LegSide;
+  qty: number;
+}
+
 export interface OptionsAdapter {
   id: 'yahoo' | 'deribit' | 'tradier';
   getChain(symbol: string, expiration?: number): Promise<OptionChain>;

@@ -1,10 +1,14 @@
-import type { OptionContract } from '../../services/options/types.ts';
+import type { Leg, OptionContract } from '../../services/options/types.ts';
+import { hasLeg } from '../../services/options/legs.ts';
 
 interface Props {
   strike: number;
   call?: OptionContract;
   put?: OptionContract;
   underlyingPrice: number;
+  legs: Leg[];
+  onCellClick: (contract: OptionContract, side: 'buy' | 'sell') => void;
+  atCapacity: boolean;
 }
 
 function fmtPrice(n: number): string {
@@ -14,8 +18,6 @@ function fmtPrice(n: number): string {
 
 function fmtIv(iv: number): string {
   if (!Number.isFinite(iv) || iv <= 0) return '—';
-  // IV is a decimal (0.33 = 33%). Clamp absurd values (deep OTM/ITM wings can
-  // have 40+). Display only reliable regime; flag the rest with `*`.
   if (iv > 5) return `${(iv * 100).toFixed(0)}%*`;
   return `${(iv * 100).toFixed(1)}%`;
 }
@@ -37,10 +39,58 @@ const CENTER: React.CSSProperties = { textAlign: 'center', padding: '6px 8px' };
 
 const BID_COLOR = '#0ecb81';
 const ASK_COLOR = '#f6465d';
+const SELECTED_BID_BG = 'rgba(14,203,129,0.22)';
+const SELECTED_ASK_BG = 'rgba(246,70,93,0.22)';
 
-export function ChainRow({ strike, call, put, underlyingPrice }: Props) {
+function tradeCellStyle(params: {
+  base: React.CSSProperties;
+  itm: boolean;
+  side: 'buy' | 'sell';
+  selected: boolean;
+  priced: boolean;
+  interactive: boolean;
+}): React.CSSProperties {
+  const { base, itm, side, selected, priced, interactive } = params;
+  const color = priced ? (side === 'sell' ? BID_COLOR : ASK_COLOR) : '#3d4250';
+  let background: string = itm ? ITM_BG : 'transparent';
+  if (selected) {
+    background = side === 'sell' ? SELECTED_BID_BG : SELECTED_ASK_BG;
+  }
+  return {
+    ...base,
+    background,
+    color,
+    fontWeight: 600,
+    cursor: interactive ? 'pointer' : 'default',
+    userSelect: 'none',
+    outline: selected
+      ? `1px solid ${side === 'sell' ? BID_COLOR : ASK_COLOR}`
+      : 'none',
+    outlineOffset: selected ? -1 : 0,
+  };
+}
+
+export function ChainRow({
+  strike,
+  call,
+  put,
+  underlyingPrice,
+  legs,
+  onCellClick,
+  atCapacity,
+}: Props) {
   const callItm = call?.inTheMoney ?? strike < underlyingPrice;
   const putItm = put?.inTheMoney ?? strike > underlyingPrice;
+
+  const callBidSelected = !!call && hasLeg(legs, call, 'sell');
+  const callAskSelected = !!call && hasLeg(legs, call, 'buy');
+  const putBidSelected = !!put && hasLeg(legs, put, 'sell');
+  const putAskSelected = !!put && hasLeg(legs, put, 'buy');
+
+  const callBidInteractive = !!call && call.bid > 0 && (!atCapacity || callBidSelected || callAskSelected);
+  const callAskInteractive = !!call && call.ask > 0 && (!atCapacity || callAskSelected || callBidSelected);
+  const putBidInteractive = !!put && put.bid > 0 && (!atCapacity || putBidSelected || putAskSelected);
+  const putAskInteractive = !!put && put.ask > 0 && (!atCapacity || putAskSelected || putBidSelected);
 
   return (
     <tr
@@ -58,24 +108,30 @@ export function ChainRow({ strike, call, put, underlyingPrice }: Props) {
         {call ? fmtInt(call.openInterest) : ''}
       </td>
       <td
-        style={{
-          ...RIGHT_ALIGN,
-          background: callItm ? ITM_BG : 'transparent',
-          color: call && call.bid > 0 ? BID_COLOR : '#3d4250',
-          fontWeight: 600,
-        }}
+        style={tradeCellStyle({
+          base: RIGHT_ALIGN,
+          itm: callItm,
+          side: 'sell',
+          selected: callBidSelected,
+          priced: !!call && call.bid > 0,
+          interactive: callBidInteractive,
+        })}
         title={call ? `Sell call @ bid ${fmtPrice(call.bid)}` : undefined}
+        onClick={callBidInteractive ? () => onCellClick(call!, 'sell') : undefined}
       >
         {call ? fmtPrice(call.bid) : ''}
       </td>
       <td
-        style={{
-          ...RIGHT_ALIGN,
-          background: callItm ? ITM_BG : 'transparent',
-          color: call && call.ask > 0 ? ASK_COLOR : '#3d4250',
-          fontWeight: 600,
-        }}
+        style={tradeCellStyle({
+          base: RIGHT_ALIGN,
+          itm: callItm,
+          side: 'buy',
+          selected: callAskSelected,
+          priced: !!call && call.ask > 0,
+          interactive: callAskInteractive,
+        })}
         title={call ? `Buy call @ ask ${fmtPrice(call.ask)}` : undefined}
+        onClick={callAskInteractive ? () => onCellClick(call!, 'buy') : undefined}
       >
         {call ? fmtPrice(call.ask) : ''}
       </td>
@@ -97,24 +153,30 @@ export function ChainRow({ strike, call, put, underlyingPrice }: Props) {
 
       {/* PUT side (right) */}
       <td
-        style={{
-          ...LEFT_ALIGN,
-          background: putItm ? ITM_BG : 'transparent',
-          color: put && put.bid > 0 ? BID_COLOR : '#3d4250',
-          fontWeight: 600,
-        }}
+        style={tradeCellStyle({
+          base: LEFT_ALIGN,
+          itm: putItm,
+          side: 'sell',
+          selected: putBidSelected,
+          priced: !!put && put.bid > 0,
+          interactive: putBidInteractive,
+        })}
         title={put ? `Sell put @ bid ${fmtPrice(put.bid)}` : undefined}
+        onClick={putBidInteractive ? () => onCellClick(put!, 'sell') : undefined}
       >
         {put ? fmtPrice(put.bid) : ''}
       </td>
       <td
-        style={{
-          ...LEFT_ALIGN,
-          background: putItm ? ITM_BG : 'transparent',
-          color: put && put.ask > 0 ? ASK_COLOR : '#3d4250',
-          fontWeight: 600,
-        }}
+        style={tradeCellStyle({
+          base: LEFT_ALIGN,
+          itm: putItm,
+          side: 'buy',
+          selected: putAskSelected,
+          priced: !!put && put.ask > 0,
+          interactive: putAskInteractive,
+        })}
         title={put ? `Buy put @ ask ${fmtPrice(put.ask)}` : undefined}
+        onClick={putAskInteractive ? () => onCellClick(put!, 'buy') : undefined}
       >
         {put ? fmtPrice(put.ask) : ''}
       </td>
@@ -127,4 +189,3 @@ export function ChainRow({ strike, call, put, underlyingPrice }: Props) {
     </tr>
   );
 }
-

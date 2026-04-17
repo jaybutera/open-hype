@@ -1,9 +1,12 @@
 import { useMemo } from 'react';
-import type { OptionChain, OptionContract } from '../../services/options/types.ts';
+import type { Leg, OptionChain, OptionContract } from '../../services/options/types.ts';
+import { MAX_LEGS } from '../../services/options/legs.ts';
 import { ChainRow } from './ChainRow.tsx';
 
 interface Props {
   chain: OptionChain;
+  legs: Leg[];
+  onCellClick: (contract: OptionContract, side: 'buy' | 'sell') => void;
 }
 
 interface StrikeRow {
@@ -41,8 +44,9 @@ const HEADER_CELL: React.CSSProperties = {
   borderBottom: '1px solid #2a2f3e',
 };
 
-export function ChainGrid({ chain }: Props) {
+export function ChainGrid({ chain, legs, onCellClick }: Props) {
   const rows = useMemo(() => buildStrikeRows(chain), [chain]);
+  const atCapacity = legs.length >= MAX_LEGS;
 
   if (rows.length === 0) {
     return (
@@ -110,6 +114,9 @@ export function ChainGrid({ chain }: Props) {
               call={r.call}
               put={r.put}
               underlyingPrice={chain.underlyingPrice}
+              legs={legs}
+              onCellClick={onCellClick}
+              atCapacity={atCapacity}
             />
           ))}
         </tbody>

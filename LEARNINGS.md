@@ -320,3 +320,33 @@ Iteration 10: `ChainGrid` + `ChainRow` (render-only). Natural follow-up to itera
 
 ### Next
 **Iteration 11: click-to-add-leg interaction.** Layer on top of `ChainRow`: clicking a bid cell appends a SELL leg, clicking an ask cell appends a BUY leg. Needs (a) a `legs[]` state somewhere reachable by both `ChainGrid` and the upcoming `OrderForm`, (b) per-cell highlighting when that cell's contract is in `legs[]`, (c) 4-leg cap, (d) toggle-off by clicking the same cell again. State likely lifts to `OptionsPage` (same reasoning as `symbol` in iteration 8). `OrderForm` in iteration 12 then consumes the same `legs[]`. Shape leg state as `{ contract, side: 'buy'|'sell', qty: number }`.
+
+## Iteration: 2026-04-17 11:19
+
+### Picked
+Iteration 11: click-to-add-leg interaction. Direct continuation of iteration 10 — the chain grid exists but is inert. Without this, nothing downstream (order form, submit flow, positions) has any source of legs. Small enough to land in one iteration, with a pure helper as the tested core.
+
+### Did
+- `src/services/options/types.ts` — added `LegSide` and `Leg` ({ contract, side, qty }).
+- `src/services/options/legs.ts` — new pure module. `MAX_LEGS = 4`, `legKey`, `findLegIndex`, `hasLeg`, `toggleLeg(legs, contract, side)`. Toggle semantics:
+  - Same contract + same side present → remove.
+  - Same contract + opposite side present → flip side, preserve qty.
+  - New contract → append (no-op if already at 4).
+  - Removals and side-flips are always allowed, even at the cap.
+- `src/services/options/__tests__/legs.test.ts` — 11 tests covering all toggle branches (append, remove, flip, cap-enforcement, cap-bypass for remove/flip, multi-leg, distinct-symbol, immutability). Input-mutation invariant explicitly asserted via deep-clone snapshot compare.
+- `ChainRow` — now takes `legs`, `onCellClick`, `atCapacity` props. Bid/ask cells are click-targets (bid → sell, ask → buy). Selected cells get a coloured background (green for sell, red for buy) and an outline. Cells with no bid/ask (=0) remain uninteractive (greyed + no cursor). When the leg cap is reached, only already-selected cells (for removal/flip) remain interactive — everything else shows `cursor: default`.
+- `ChainGrid` — threads legs + onCellClick through to rows; computes `atCapacity = legs.length >= MAX_LEGS` once.
+- `OptionsPage` — new `legs` state, `handleCellClick` wraps `toggleLeg`. Symbol change clears legs (old legs reference contracts from a stale chain). New indicator strip above the grid shows leg count (N/4), per-leg chips with side/type/strike/price, a "Max legs reached" warning at the cap, and a "Clear" button to reset. This strip is the provisional surface the real `OrderForm` (iteration 12) will replace.
+- `npx tsc --noEmit` clean.
+- `npm test` → 181/181 green (was 170; +11).
+
+### Discovered
+- Legs must not survive a symbol swap. They hold references to `OptionContract` objects from the previous chain — displaying or re-toggling them after symbol change would be nonsensical. Clear in `handleSymbolChange`. Expiration change is trickier (iteration 12+ question): a diagonal/calendar spread *needs* legs to persist across exp switches because switching tabs is how you pick a second leg's expiration. So only `symbol` change clears; exp change doesn't. This matches spec §Expiration selector: "Each tab independently owned by each leg — default is chain's current expiration. Changing a leg's expiration (for calendars/diagonals): click a cell on a different expiration tab."
+- Side-flip on opposite-side click (rather than append-second-leg-same-contract) is the right default — you can't have both a long and a short of the same exact contract in a normal strategy; if a user clicks the same row's ask then bid, they almost certainly meant "I changed my mind, make it a sell." It also avoids the weird case where naïve append would instantly hit the cap after two clicks on one row.
+- Cells with `bid = 0` or `ask = 0` (75/183 calls have bid=0 in the TSLA fixture, noted iteration 3) are intentionally not interactive. Clicking into a position at a zero price makes no sense; the fill-model decision (fall back to last, disable, or mid) is a paper-engine concern for the Submit iteration, not a click-handling concern here.
+- Kept the leg-chip strip deliberately minimal and temporary. The real `OrderForm` (right-side panel per spec) will show buy/sell badge + full contract string + mark + qty stepper + remove + net-debit/credit/Greeks footer. Building that as a proper panel is iteration 12's scope; for iteration 11 the chip strip is enough to prove click-to-add works and to visualize state during interactive testing.
+- The `atCapacity` flag plus per-cell interactive-override (still clickable if already selected on that cell OR its flip-side) is what lets the user *remove* or *flip* legs at the cap without getting trapped. Tested in `legs.test.ts` via the "still allows removal / side-flip even when at the cap" cases.
+- Styled selection with both background shade AND outline — background alone was subtle enough that on ITM rows (already tinted blue) selected-sell-green bled into the ITM blue. Outline gives a hard edge; keep both.
+
+### Next
+**Iteration 12: `OrderForm` right-side panel.** Replace the provisional leg-chip strip with the real panel: per-leg rows with Buy/Sell badge (editable), contract string (e.g. `TSLA 4/17 $300 Call`), mark price (mid), qty stepper, remove button. Footer: net debit/credit (signed per contract + total × 100), limit price (default net mid), order type (Limit/Market), qty scalar applied to all legs, Submit button. Needs a per-leg `qty` update handler (already have the state shape — just add a setter). Net-Greeks (iteration 13) is a natural pair with the footer; could bundle or split depending on scope. Layout shift: the page becomes two columns (chain left, order form right) once the form gets real — pick a CSS grid or flex split at 70/30.
