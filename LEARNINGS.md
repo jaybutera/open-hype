@@ -239,3 +239,35 @@ Iteration 7: wire `#/options` route + empty page scaffold into `App.tsx`. Gating
 
 ### Next
 **Iteration 8: `SymbolSearch` component.** First real UI piece — ties together the static popular list, recents-storage, and free-form entry built in iteration 6. Should live in `src/components/options/SymbolSearch.tsx`, render a text input with a 300ms-debounced dropdown, wire Enter to commit a free-form ticker. Needs to hand its selected-symbol state *somewhere* — either lift it to `OptionsPage`'s local state or stash it in a dedicated Zustand store. A local `useState` on `OptionsPage` is the simplest until we need the symbol in a sibling like `PositionsOptions` view, at which point a store is warranted. Start local; promote if needed.
+
+## Iteration: 2026-04-17 11:10
+
+### Picked
+Iteration 8: `SymbolSearch` component. First real UI piece. Ties `symbols.ts` (popular list, recents, ranked search) to the `#/options` page scaffold from iteration 7. Prerequisite for `ExpirationTabs` and `ChainGrid` — neither has meaning without a selected symbol.
+
+### Did
+- `src/components/options/SymbolSearch.tsx`:
+  - 300ms-debounced dropdown (`DEBOUNCE_MS = 300`).
+  - Empty query → shows recents (from `getRecentSymbols()`), labeled with a `Recent` section header.
+  - Non-empty query → `searchPopularSymbols(query, 12)`; if upper-cased query isn't an exact match inside the hits, prepend it as a free-form row so users can type unlisted tickers (AMZN-style).
+  - Click a row, press Enter, or commit typed text → calls `addRecentSymbol()` to push it to the front of localStorage recents, clears input, fires `onChange(symbol)` up to the parent.
+  - Keyboard: ArrowDown/Up navigate, Enter commits active row (or free-form typed value), Escape closes + blurs.
+  - Outside-click closes via `mousedown` listener on `document`, mirroring `AssetSelector.tsx` convention.
+  - `onMouseDown` (not `onClick`) to commit a row — `onClick` fires after the input's `blur`, which lets the outside-click handler close the dropdown before the selection registers; `onMouseDown` with `preventDefault` sidesteps that race.
+  - Styling matches existing dark tokens (`#141820` bg, `#2a2f3e` border, `#1a1f2e` hover/selected, no rounding, monospace-ish letter-spacing on the input).
+- `src/components/options/OptionsPage.tsx`:
+  - New `symbol` state (`useState<string | null>(null)`).
+  - Second top bar below the market-status bar hosting `<SymbolSearch>` + a "Loaded: TSLA" indicator when a symbol is selected.
+  - Body placeholder text now switches on `symbol` — `"Select a symbol above to load its option chain."` vs. `"Chain for TSLA will render here."`.
+- `npx tsc --noEmit` clean.
+- `npm test` → 161/161 green (no new tests; `symbols.ts` helpers already have 20 dedicated tests from iteration 6, and the component is a thin presentational shell over those helpers).
+
+### Discovered
+- Decision: kept the selected symbol in `OptionsPage` local state, not a Zustand store. Rationale: so far only `OptionsPage` needs it; `ExpirationTabs`/`ChainGrid`/`OrderForm` will all be children of `OptionsPage` and receive it via props. If `PositionsOptions` eventually wants to jump-to-chain on click, promotion to a store is a one-file change. Premature store is worse than late store.
+- `onMouseDown(preventDefault)` is the right pattern for dropdown items when the anchor input has focus — `onClick` races with the outside-click `mousedown` handler on `document` and the dropdown can close before the click commits. Both `AssetSelector` and `PaperAccountSelector` use `mousedown` for the outside-close; matching their convention avoids surprise.
+- `autoCapitalize="characters"` on the input is a nice hint for mobile, but it doesn't affect desktop typing. We rely on `searchPopularSymbols` upper-casing the query internally and on `commit()` upper-casing the final value via `addRecentSymbol` (which also normalizes). Both layers defend against case drift.
+- The free-form fallback row (prepending the raw query when it isn't in the popular list) has no `name` field, so the UI shows `"Free-form"` as a subtitle. That makes it visually distinct from curated entries and hints that the fetch might 404.
+- No dedicated unit test file for the component this iteration. The component is a presentation shell over `symbols.ts` helpers (which have 20 tests) and browser event handling — the interactive behavior is hard to cover meaningfully without jsdom + `@testing-library/react`, and the repo doesn't currently use either. If we add RTL later, this component is a natural candidate; skipping for now to stay in scope.
+
+### Next
+**Iteration 9: `ExpirationTabs`.** The symbol's now selectable, so the next user-facing flow is picking an expiration. `ExpirationTabs` should render horizontally-scrollable tabs from `chain.expirations[]`, each labeled `Apr 17 (1d)` / `May 16 (29d)` etc., and fire a callback on selection. To render real tabs it needs an `OptionChain` — which means `OptionsPage` has to actually call `yahooAdapter.getChain(symbol)` when the symbol changes. Bundle the fetch into iteration 9 (chain-loading effect + loading state + the tabs UI). After that, iteration 10 (`ChainGrid` render-only) is the natural follow-up.

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { isMarketOpen, nextOpen } from '../../services/options/marketHours.ts';
+import { SymbolSearch } from './SymbolSearch.tsx';
 
 export function OptionsPage() {
   const [now, setNow] = useState(() => new Date());
+  const [symbol, setSymbol] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000);
@@ -52,8 +54,22 @@ export function OptionsPage() {
         )}
       </div>
 
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '12px 16px', borderBottom: '1px solid #1a1f2e',
+      }}>
+        <SymbolSearch value={symbol} onChange={setSymbol} />
+        {symbol && (
+          <span style={{ fontSize: 13, color: '#8a8f98' }}>
+            Loaded: <strong style={{ color: '#e1e4e8' }}>{symbol}</strong>
+          </span>
+        )}
+      </div>
+
       <div style={{ padding: 24, color: '#8a8f98', fontSize: 13 }}>
-        Options chain, symbol search, and order form will render here.
+        {symbol
+          ? `Chain for ${symbol} will render here.`
+          : 'Select a symbol above to load its option chain.'}
       </div>
     </div>
   );
