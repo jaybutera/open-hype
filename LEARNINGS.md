@@ -127,3 +127,33 @@ Iteration 3: build `services/options/types.ts` + `yahooAdapter.ts` and parse the
 
 ### Next
 **Build `services/options/greeks.ts` + tests** (iteration 4). Black-Scholes delta/gamma/vega/theta/rho for `(S, K, T, r, σ, type)` with `r = 0.045` and `T` in years. Unit-test known-value benchmarks (standard BS pricing table entries) and a sanity test against the TSLA fixture (ATM call delta ~0.5, etc.). This unblocks the net-Greeks panel in the order form and the payoff diagram. After Greeks, market-hours (iteration 5) is a small independent piece that unblocks the market-closed banner.
+
+## Iteration: 2026-04-17 11:00
+
+### Picked
+Iteration 4: build Black-Scholes Greeks module + tests. Highest priority because the order form's net-Greeks panel, position-level Greeks, and the payoff diagram all depend on a pricing function. Market-hours (iteration 5) is independent and comparable size, but Greeks unblocks more downstream UI surface area.
+
+### Did
+- `src/services/options/greeks.ts` — pure `blackScholes({ S, K, T, sigma, type, r? }) → { price, delta, gamma, vega, theta, rho }`. Exports `RISK_FREE_RATE = 0.045`, `SECONDS_PER_YEAR`, helpers `normCdf`, `normPdf`, `yearsUntil(expUnix, nowUnix?)`. `normCdf` uses the Abramowitz-Stegun 7.1.26 rational approximation (accurate to ~1e-7, no dependency on `erf`).
+- Vega and rho reported per 1% change (divide by 100); theta per day (divide by 365). Standard broker-facing conventions — aligns with what the UI will show.
+- Degenerate inputs (T≤0 or sigma≤0) collapse to intrinsic value with delta = step function at K.
+- `src/services/options/__tests__/greeks.test.ts` — 17 tests:
+  - `normCdf`/`normPdf` boundary values.
+  - `yearsUntil` conversion + clamp.
+  - Hull textbook case (S=42, K=40, r=0.10, σ=0.20, T=0.5) → call 4.759, put 0.808.
+  - Put-call parity (C - P = S - Ke^-rT).
+  - Call/put delta differ by 1; gamma and vega equal across types.
+  - ATM r=0 delta sanity for both types.
+  - T=0 intrinsic/degenerate branches.
+  - TSLA-fixture sanity projected 30 days forward (ATM call delta in (0.3,0.7), positive gamma/vega, negative theta; ATM put symmetric).
+- `npx tsc --noEmit` clean.
+- `npm test` → 123/123 green (was 106; +17).
+
+### Discovered
+- The committed TSLA fixture's **loaded expiration equals the captured day** (both 2026-04-17). `yearsUntil(loadedExpiration, asOf)` returns 0, so any Greeks test that naively takes the front-month ATM contract falls into the degenerate T≤0 branch. Worked around by projecting to a 30-day synthetic horizon in the fixture sanity test. Future tests that want non-trivial Greeks against the fixture need to either (a) use a later expiration from `chain.expirations[1..]` once we fetch one (requires per-expiration re-fetch) or (b) project time forward synthetically.
+- Divergent IV on deep-ITM/OTM wings (40+) noted in iteration 3 is a *real* hazard for Greeks display — a 40.0 IV ATM option would produce gamma/vega that dwarf everything else in a net-Greeks sum. The Greeks function itself is correct; the UI will need to clamp or flag absurd-IV contracts when rendering. Flagging for the order-form iteration.
+- `Math.SQRT2` makes normCdf simpler and faster than a hand-rolled `Math.sqrt(2)` constant; also avoids floating-point reproducibility concerns across V8 versions.
+- Kept `searchSymbols` stubbed in the adapter from last iteration — still valid. No changes to adapter or types this iteration.
+
+### Next
+**`services/options/marketHours.ts` + tests** (iteration 5). Small, independent, unblocks the "Market closed" banner and the submit-disabled gate. Needs `isMarketOpen(now?)`, `nextOpen(now?)`, and a hardcoded NYSE 2026 holiday list. Pure function, easy to unit-test. After that, iteration 6 (static popular-symbols list + localStorage recents) is also small and independent. These two cheap wins leave the adapter/Greeks/fixture/market-hours/symbols foundation complete, at which point the route scaffold (iteration 7) becomes the gating task for any UI work.
