@@ -10,10 +10,15 @@ import { NetSummary } from './NetSummary.tsx';
 
 export type OrderType = 'limit' | 'market';
 
+export type OrderFormFeedback =
+  | { kind: 'success'; message: string }
+  | { kind: 'error'; message: string };
+
 interface Props {
   legs: Leg[];
   underlyingPrice: number;
   marketOpen: boolean;
+  feedback?: OrderFormFeedback | null;
   onUpdateLeg: (index: number, next: Leg) => void;
   onRemoveLeg: (index: number) => void;
   onClear: () => void;
@@ -31,7 +36,7 @@ function strategyLabel(legs: Leg[]): string {
 }
 
 export function OrderForm({
-  legs, underlyingPrice, marketOpen,
+  legs, underlyingPrice, marketOpen, feedback,
   onUpdateLeg, onRemoveLeg, onClear, onSubmit,
 }: Props) {
   const [orderType, setOrderType] = useState<OrderType>('limit');
@@ -119,6 +124,22 @@ export function OrderForm({
       </div>
 
       <NetSummary legs={legs} underlyingPrice={underlyingPrice} qtyScalar={qtyScalar} />
+
+      {feedback && (
+        <div
+          role={feedback.kind === 'error' ? 'alert' : 'status'}
+          style={{
+            padding: '8px 12px',
+            borderTop: '1px solid #1a1f2e',
+            background: feedback.kind === 'success' ? 'rgba(14,203,129,0.08)' : 'rgba(246,70,93,0.08)',
+            color: feedback.kind === 'success' ? '#0ecb81' : '#f6465d',
+            fontSize: 11,
+            lineHeight: 1.35,
+          }}
+        >
+          {feedback.message}
+        </div>
+      )}
 
       {legs.length > 0 && (
         <div style={{

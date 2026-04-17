@@ -457,3 +457,40 @@ Iteration 15a: ledger + `openOptionLegs` engine method + tests. Previous iterati
 
 After 15b, iteration 16 (`PositionsOptions` view) becomes the natural next bottleneck: the user can now open spreads but not yet see them.
 
+## Iteration: 2026-04-17 11:38
+
+### Picked
+Iteration 15b: wire the `OrderForm` Submit button through to `PaperEngine.openOptionLegs`. Flagged as next step in the previous iteration — the engine-side machinery was complete but there was no path from a clicked Submit to a real opened position. Highest priority because nothing in iterations 16+ (positions view, close flow, expiration settlement) has any data to work with until the user can actually open a spread in the paper account.
+
+### Did
+- `src/App.tsx` — now passes `engine` to `OptionsPage` at the `#/options` hash branch, mirroring how `AppLayout` receives it.
+- `src/components/options/OptionsPage.tsx`:
+  - Accepts `engine: PaperEngine` prop.
+  - New `handleSubmit` calls `engine.openOptionLegs(legs, { qtyScalar, fillModel: 'mid' })`. On success: clears legs, shows `Opened N-leg spread (paper-spread-X).`. On failure: shows the engine's error string verbatim (`Insufficient balance …`, `No usable quote …`, etc.).
+  - Submitting via the engine triggers `onUpdate` → `updatePaperState` (store) → `saveActiveAccountState` (localStorage) via the existing `useEngine` wiring, so positions and debited balance persist without any extra plumbing.
+  - Reads `paperBalance` + `paperOptionPositions.length` from `useAccountStore`. Balance is shown on the right of the symbol-bar as `Paper balance: $10,000.00 · N open option legs`.
+  - Symbol change, clear, and leg-click all clear the feedback banner so stale success/error messages don't linger.
+- `src/components/options/OrderForm.tsx`:
+  - New `feedback?: OrderFormFeedback | null` prop (`{ kind: 'success'|'error', message }`).
+  - Renders an inline banner between `NetSummary` and the control grid (stays visible after legs clear on success). `role="alert"` for errors, `role="status"` for success. Colors follow the existing green/red tokens with 8%-alpha backgrounds.
+- No new tests — the wiring is a thin glue layer over components already tested from both sides (59 engine tests cover `openOptionLegs`; 16 `netSummary` tests + 11 `legs` tests cover the OrderForm's inputs). RTL still isn't in the repo, so interactive-component tests stay out of scope.
+- `npx tsc --noEmit` clean.
+- `npm test` → 259/259 green (unchanged from iteration 15a).
+
+### Discovered
+- Decision: called `engine.openOptionLegs` directly from `handleSubmit` rather than adding a `submitOptionSpread` action to `usePaperAccountsStore`. The perp path follows the same convention (`OrderPanel.tsx` calls `engine.placeOrder` directly), and the engine's `onUpdate` callback already handles state + persistence. Adding a store action would just be a passthrough that duplicates the engine's return-type.
+- The engine is synchronous, so there's no `Submitting…` transient state to show. Submit clicks finish in the same React tick. If fill-simulation ever gets a delay (e.g. for animated order-book eats), we'd need to introduce async state — for now, no.
+- Feedback banner has to render outside the `legs.length > 0` guard on the control grid. Success clears legs → the grid unmounts → without a stable position, success messages would flash for zero frames. Placed it between `NetSummary` (always renders) and the control grid (legs > 0) so it survives the transition.
+- `feedback` is cleared on symbol change, clear-all, and leg-click. NOT cleared on qty/side edits, because those don't materially invalidate the previous submission context. Matches the limit-override reset heuristic in iteration 12 (leg count, not per-leg edits).
+- Balance indicator uses `Number(paperBalance).toLocaleString(...)`. The stored value is a `Decimal` string like `"10000"` — `Number(...)` works cleanly for display purposes (12 significant digits is plenty for $ balances; precision matters inside the engine, not in the header chip).
+- Fill model is hard-coded `'mid'` at the call site. The spec mentions mid/bid-for-sell/ask-for-buy ('cross') as the two models; exposing a toggle in the OrderForm footer is a small future add but not scope for 15b. When added, the control should slot in next to `Order type` in the existing 2-col grid.
+
+### Next
+**Iteration 16: `PositionsOptions` view — options-positions subview in the existing positions list.** The user can now open spreads but has no way to see them after the OrderForm clears. Should:
+1. Read `paperOptionPositions` from `useAccountStore` and group by `spreadId` via the `groupBySpread` helper from iteration 14.
+2. Per spread: show a single row (strategy-name placeholder until iteration 19, net entry credit/debit from summing `legCostBasis`, current net mark from `legMark` on the current chain if it's the active symbol, unrealized PnL, net Greeks, DTE to nearest-leg expiration).
+3. Expand-to-see-legs for each spread.
+4. Click a spread → stub close-panel (actual close flow is iteration 17).
+5. Live chain mark is only available for the currently-loaded underlying. For spreads on other symbols, show entry-basis + expiration + last-fill without a live mark; flag with a subtle indicator so users know why it's stale.
+6. Decision needed: place this view inline on the options page (below the chain/form) or as its own tab/section. Inline on the options page is the minimum-friction option — the right-side form gets the live action, the bottom gets the positions list.
+

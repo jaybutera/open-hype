@@ -75,7 +75,7 @@ function AppInner() {
   }
 
   if (hash === '#/options') {
-    return <OptionsPage />;
+    return <OptionsPage engine={engine} />;
   }
 
   return <AppLayout engine={engine} />;

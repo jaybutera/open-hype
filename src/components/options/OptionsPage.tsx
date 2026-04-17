@@ -3,6 +3,8 @@ import { isMarketOpen, nextOpen } from '../../services/options/marketHours.ts';
 import { YahooOptionsAdapter } from '../../services/options/yahooAdapter.ts';
 import type { Leg, LegSide, OptionChain, OptionContract } from '../../services/options/types.ts';
 import { toggleLeg } from '../../services/options/legs.ts';
+import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
+import { useAccountStore } from '../../store/useAccountStore.ts';
 import { SymbolSearch } from './SymbolSearch.tsx';
 import { ExpirationTabs } from './ExpirationTabs.tsx';
 import { ChainGrid } from './ChainGrid.tsx';
@@ -10,7 +12,15 @@ import { OrderForm } from './OrderForm.tsx';
 
 const adapter = new YahooOptionsAdapter();
 
-export function OptionsPage() {
+interface Props {
+  engine: PaperEngine;
+}
+
+type SubmitFeedback =
+  | { kind: 'success'; message: string }
+  | { kind: 'error'; message: string };
+
+export function OptionsPage({ engine }: Props) {
   const [now, setNow] = useState(() => new Date());
   const [symbol, setSymbol] = useState<string | null>(null);
   const [chain, setChain] = useState<OptionChain | null>(null);
@@ -18,10 +28,31 @@ export function OptionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedExp, setSelectedExp] = useState<number | null>(null);
   const [legs, setLegs] = useState<Leg[]>([]);
+  const [feedback, setFeedback] = useState<SubmitFeedback | null>(null);
+  const paperBalance = useAccountStore((s) => s.paperBalance);
+  const optionPositionCount = useAccountStore((s) => s.paperOptionPositions.length);
 
   const handleCellClick = useCallback((contract: OptionContract, side: LegSide) => {
     setLegs((prev) => toggleLeg(prev, contract, side));
+    setFeedback(null);
   }, []);
+
+  const handleSubmit = useCallback(
+    (order: { orderType: 'limit' | 'market'; limitPrice: number | null; qtyScalar: number }) => {
+      if (legs.length === 0) return;
+      const result = engine.openOptionLegs(legs, { qtyScalar: order.qtyScalar, fillModel: 'mid' });
+      if (result.success) {
+        setLegs([]);
+        setFeedback({
+          kind: 'success',
+          message: `Opened ${result.positions.length}-leg spread (${result.spreadId}).`,
+        });
+      } else {
+        setFeedback({ kind: 'error', message: result.error });
+      }
+    },
+    [engine, legs],
+  );
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000);
@@ -71,6 +102,7 @@ export function OptionsPage() {
     setChain(null);
     setSelectedExp(null);
     setLegs([]);
+    setFeedback(null);
   };
 
   const open = isMarketOpen(now);
@@ -139,6 +171,17 @@ export function OptionsPage() {
         {error && (
           <span style={{ fontSize: 12, color: '#f6465d' }}>Error: {error}</span>
         )}
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#8a8f98' }}>
+          Paper balance:{' '}
+          <strong style={{ color: '#e1e4e8' }}>
+            ${Number(paperBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </strong>
+          {optionPositionCount > 0 && (
+            <>
+              {' '}· <span style={{ color: '#e1e4e8' }}>{optionPositionCount} open option leg{optionPositionCount === 1 ? '' : 's'}</span>
+            </>
+          )}
+        </span>
       </div>
 
       {expirations.length > 0 && (
@@ -170,15 +213,11 @@ export function OptionsPage() {
             legs={legs}
             underlyingPrice={chain.underlyingPrice}
             marketOpen={open}
+            feedback={feedback}
             onUpdateLeg={(i, next) => setLegs((prev) => prev.map((l, idx) => (idx === i ? next : l)))}
             onRemoveLeg={(i) => setLegs((prev) => prev.filter((_, idx) => idx !== i))}
-            onClear={() => setLegs([])}
-            onSubmit={(order) => {
-              // Paper-engine wiring lands in iteration 15. For now, log and flash via alert.
-              // Intentionally lightweight — don't touch the paper engine here.
-              // eslint-disable-next-line no-console
-              console.log('[options] submit (placeholder)', { legs, order });
-            }}
+            onClear={() => { setLegs([]); setFeedback(null); }}
+            onSubmit={handleSubmit}
           />
         </div>
       )}
