@@ -5,12 +5,19 @@ import { matchOrders, matchTriggersByCandle, type PaperOrder, type FillResult } 
 import { applyFill, computeUnrealizedPnl, computeLiquidationPrice, type PaperPosition } from './positions.ts';
 import { calculateFee } from './pnl.ts';
 import { createLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
+import {
+  serializeOptionPosition,
+  deserializeOptionPosition,
+  type OptionPosition,
+  type OptionPositionJSON,
+} from './options/OptionPosition.ts';
 
 export interface PaperState {
   balance: string;
   positions: PaperPosition[];
   openOrders: PaperOrder[];
   fills: LedgerEntry[];
+  optionPositions: OptionPositionJSON[];
 }
 
 export interface PaperEngineConfig {
@@ -58,6 +65,7 @@ export class PaperEngine {
   private positions: Map<string, PaperPosition> = new Map();
   private openOrders: PaperOrder[] = [];
   private fills: LedgerEntry[] = [];
+  private optionPositions: Map<string, OptionPosition> = new Map();
   private leverage: number;
   private makerRate: string;
   private takerRate: string;
@@ -79,7 +87,13 @@ export class PaperEngine {
    * Load saved state from a persisted paper account.
    * Rehydrates Decimal fields from serialized JSON.
    */
-  loadState(saved: { balance: string; positions: any[]; openOrders: any[]; fills: LedgerEntry[] }): void {
+  loadState(saved: {
+    balance: string;
+    positions: any[];
+    openOrders: any[];
+    fills: LedgerEntry[];
+    optionPositions?: OptionPositionJSON[];
+  }): void {
     this.balance = new Decimal(saved.balance);
     this.positions.clear();
     for (const p of rehydratePositions(saved.positions)) {
@@ -87,6 +101,11 @@ export class PaperEngine {
     }
     this.openOrders = rehydrateOrders(saved.openOrders);
     this.fills = [...saved.fills];
+    this.optionPositions.clear();
+    for (const raw of saved.optionPositions ?? []) {
+      const op = deserializeOptionPosition(raw);
+      this.optionPositions.set(op.id, op);
+    }
     // Sync counters so new IDs don't collide with loaded ones
     const maxOrdNum = this.openOrders.reduce((max, o) => {
       const m = o.id.match(/paper-ord-(\d+)/);
@@ -415,7 +434,36 @@ export class PaperEngine {
       positions: this.getPositions(),
       openOrders: this.getOpenOrders(),
       fills: [...this.fills],
+      optionPositions: this.getOptionPositions().map(serializeOptionPosition),
     };
+  }
+
+  getOptionPositions(): OptionPosition[] {
+    return Array.from(this.optionPositions.values());
+  }
+
+  getOptionPosition(id: string): OptionPosition | null {
+    return this.optionPositions.get(id) ?? null;
+  }
+
+  getOptionPositionsBySpread(spreadId: string): OptionPosition[] {
+    return this.getOptionPositions().filter(p => p.spreadId === spreadId);
+  }
+
+  /**
+   * Direct storage-only add; does NOT debit balance or run margin checks.
+   * Trade-submission flow (iteration 15) will replace this with a proper
+   * openOptionLegs() that debits premium and enforces margin.
+   */
+  addOptionPosition(p: OptionPosition): void {
+    this.optionPositions.set(p.id, p);
+    this.emitUpdate();
+  }
+
+  removeOptionPosition(id: string): boolean {
+    const existed = this.optionPositions.delete(id);
+    if (existed) this.emitUpdate();
+    return existed;
   }
 
   private emitUpdate(): void {

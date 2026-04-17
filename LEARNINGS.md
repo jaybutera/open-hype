@@ -377,3 +377,43 @@ Iteration 12: `OrderForm` right-side panel, **bundled with iteration 13 (net Gre
 ### Next
 **Iteration 14: extend the paper engine to hold option positions.** Types + storage first, no trading behavior yet. Needs (a) a new `OptionPosition` shape, (b) discriminated `Instrument` union in the engine's position/trade records, (c) `spreadId` linking multi-leg positions, (d) the account store surviving a round-trip through persistence. Once types are in place, iteration 15 (wire Submit → place option paper trade, debit/credit balance) becomes straightforward. Between iterations 14 and 15, the Submit button in the new OrderForm will stay as its console-log placeholder.
 
+## Iteration: 2026-04-17 11:29
+
+### Picked
+Iteration 14: extend the paper engine to hold option positions — types + storage, no trading behavior yet. Gating task for iteration 15 (Submit → place paper trade) because Submit needs a home for newly-opened legs. Chose to land it before iteration 15 so the persistence contract is pinned down first; implementing trade flow before storage would mean touching storage twice.
+
+### Did
+- `src/engine/paper/options/OptionPosition.ts` — new module:
+  - `OptionPosition` shape: `{ id, spreadId, contractSymbol, underlying, type, strike, expiration, szi, entryPx, marginUsed, openedAt }`. `szi` is signed Decimal (+ long, − short) matching `PaperPosition` convention; `strike/szi/entryPx/marginUsed` are `Decimal` for precision.
+  - `OptionPositionJSON` parallel type with `string` for Decimal fields; `serializeOptionPosition` / `deserializeOptionPosition` for persistence round-trip.
+  - Pure helpers: `CONTRACT_MULTIPLIER = 100`, `legNotional`, `legCostBasis`, `legUnrealizedPnl`, `groupBySpread(positions) → Map<spreadId, legs[]>`.
+- `src/engine/paper/persistence.ts` — `PaperAccount.optionPositions?: OptionPositionJSON[]` (optional so legacy saved accounts still load). `createDefaultAccount()` seeds `optionPositions: []`.
+- `src/engine/paper/PaperEngine.ts`:
+  - New `Map<string, OptionPosition>` field.
+  - `loadState(saved)` accepts optional `optionPositions` and rehydrates; legacy saves (no key) load cleanly as empty.
+  - `getState()` now includes `optionPositions: OptionPositionJSON[]` (always present, possibly empty).
+  - New methods: `getOptionPositions()`, `getOptionPosition(id)`, `getOptionPositionsBySpread(spreadId)`, `addOptionPosition(p)`, `removeOptionPosition(id)`. `addOptionPosition` is storage-only — no balance debit, no margin check. Iteration 15 will replace with a proper `openOptionLegs()` that debits premium and enforces cash margin.
+- `src/store/useAccountStore.ts` — added `paperOptionPositions: OptionPositionJSON[]` slice + `updatePaperState` accepts optional `optionPositions`.
+- `src/store/usePaperAccountsStore.ts` — `saveActiveAccountState` accepts optional `optionPositions`; only writes the key when present (preserves JSON shape for perp-only callers).
+- Tests:
+  - `src/engine/paper/options/__tests__/OptionPosition.test.ts` — 15 tests: serialize/deserialize round-trip (incl. fractional and short), notional/cost-basis/PnL signs for long & short, qty scaling, `groupBySpread`.
+  - `src/engine/paper/__tests__/PaperEngine.test.ts` +8 tests: initial empty, add/get by id, group by spread, remove (found/missing), getState JSON-shape check, full JSON round-trip with negative szi + high-precision entry, legacy saved-state (no key) loads clean, options-added-doesn't-disturb-perps.
+- `npx tsc --noEmit` clean.
+- `npm test` → 221/221 green (was 197; +24).
+
+### Discovered
+- Making `optionPositions` optional on `PaperAccount` (with `?`) rather than required-with-default is the right compatibility move: any localStorage JSON persisted before this iteration loads without a migration pass. The engine's `loadState` is the one place that reads it, and it uses `saved.optionPositions ?? []`. No writer code path produces an account without the key from now on, so real accounts always have it.
+- `PaperState.optionPositions` is NON-optional (unlike `PaperAccount.optionPositions`). The engine always produces it — even if empty — because the field is under the engine's control. `PaperAccount` is the serialized-account shape which must accept *external* inputs (old localStorage), so its field is optional. Two different invariants, same underlying data.
+- Kept `addOptionPosition` deliberately unsafe (no balance debit, no margin check). Iteration 15's trade flow will layer balance/margin/ledger semantics on top. If I'd bundled them here, the storage API would be tangled with fill semantics and harder to test in isolation. Now the storage is a thin CRUD layer; the trade submission layer in iteration 15 will own the economics.
+- `useAccountStore.updatePaperState` takes the wider PaperState shape (includes options) but its parameter type lists only a subset. TS allows the super-set-in / subset-out pattern via structural compatibility, so `engine.getState()` wires straight into the store without adapters. Kept `optionPositions?` optional on the param to mirror the legacy-compat invariant on `PaperAccount`.
+- `groupBySpread` is the obvious primitive the positions view (iteration 16) and strategy-detector (iteration 19) will share. Shipping it now with tests keeps them dependency-free.
+- `CONTRACT_MULTIPLIER` is duplicated across `services/options/netSummary.ts` (exported) and here. They MUST stay in sync. Considered cross-importing but didn't want a service→engine dependency (wrong direction) or engine→service (works but unusual). If they drift, tests on both sides will catch the regression via PnL and notional mismatches. Small duplication; document here as the reason.
+
+### Next
+**Iteration 15: wire Submit → place option paper trade.** This is the biggest unlocked step now. Needs:
+1. A new `openOptionLegs(legs: Leg[], fillModel: 'mid'|'ask-buy-bid-sell', qtyScalar: number)` method on `PaperEngine` that (a) derives a per-leg fill price from the contract's current bid/ask per the fill model, (b) computes premium debit (long) / credit (short) × 100 × qty × scalar, (c) validates total debit ≤ available balance (including a conservative 5× short-premium cash reservation per spec), (d) assigns a fresh `spreadId`, (e) appends `OptionPosition`s + writes a new ledger entry kind tagged `option-open`.
+2. A new ledger-entry variant to record option fills (the current `LedgerEntry` shape is very perp-coin-oriented; either add an optional `instrument` field or add a parallel `OptionLedgerEntry` type).
+3. Wire the OrderForm Submit button's `onSubmit` to call this new engine method via the store, then clear legs + show toast on success.
+
+Suggest breaking into sub-iterations if this grows too big: (15a) ledger + `openOptionLegs` engine method + tests; (15b) wire OrderForm → engine through the store.
+

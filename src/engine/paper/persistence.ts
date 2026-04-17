@@ -1,6 +1,7 @@
 import type { LedgerEntry } from './ledger.ts';
 import type { PaperPosition } from './positions.ts';
 import type { PaperOrder } from './matching.ts';
+import type { OptionPositionJSON } from './options/OptionPosition.ts';
 
 const STORAGE_KEY = 'hl-paper-accounts';
 
@@ -13,6 +14,7 @@ export interface PaperAccount {
   positions: PaperPosition[];
   openOrders: PaperOrder[];
   fills: LedgerEntry[];
+  optionPositions?: OptionPositionJSON[];
 }
 
 export interface PaperAccountsData {
@@ -34,6 +36,7 @@ export function createDefaultAccount(): PaperAccount {
     positions: [],
     openOrders: [],
     fills: [],
+    optionPositions: [],
   };
 }
 

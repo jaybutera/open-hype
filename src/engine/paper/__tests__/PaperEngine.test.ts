@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import Decimal from 'decimal.js';
 import { PaperEngine } from '../PaperEngine.ts';
 import type { PaperOrder } from '../matching.ts';
+import type { OptionPosition } from '../options/OptionPosition.ts';
 
 let engine: PaperEngine;
 
@@ -545,6 +547,95 @@ describe('state persistence', () => {
     engine2.onPriceUpdate('BTC', '56000');
     expect(engine2.getPositions()).toHaveLength(0);
     expect(engine2.getOpenOrders()).toHaveLength(0);
+  });
+});
+
+// ── Option positions ─────────────────────────────────────────────────
+
+function makeOptionPosition(overrides: Partial<OptionPosition> = {}): OptionPosition {
+  return {
+    id: 'op-1',
+    spreadId: 'sp-1',
+    contractSymbol: 'TSLA260417C00400000',
+    underlying: 'TSLA',
+    type: 'call',
+    strike: new Decimal(400),
+    expiration: 1776384000,
+    szi: new Decimal(1),
+    entryPx: new Decimal('5.25'),
+    marginUsed: new Decimal(525),
+    openedAt: 1713345600,
+    ...overrides,
+  };
+}
+
+describe('option position storage', () => {
+  it('starts with no option positions', () => {
+    expect(engine.getOptionPositions()).toEqual([]);
+  });
+
+  it('addOptionPosition stores and getOptionPosition retrieves', () => {
+    const p = makeOptionPosition();
+    engine.addOptionPosition(p);
+    expect(engine.getOptionPositions()).toHaveLength(1);
+    expect(engine.getOptionPosition('op-1')!.contractSymbol).toBe(p.contractSymbol);
+  });
+
+  it('getOptionPositionsBySpread returns only matching legs', () => {
+    engine.addOptionPosition(makeOptionPosition({ id: 'a', spreadId: 'sp-1' }));
+    engine.addOptionPosition(makeOptionPosition({ id: 'b', spreadId: 'sp-1', strike: new Decimal(410) }));
+    engine.addOptionPosition(makeOptionPosition({ id: 'c', spreadId: 'sp-2' }));
+    expect(engine.getOptionPositionsBySpread('sp-1').map(l => l.id).sort()).toEqual(['a', 'b']);
+    expect(engine.getOptionPositionsBySpread('sp-2').map(l => l.id)).toEqual(['c']);
+  });
+
+  it('removeOptionPosition returns false on unknown id', () => {
+    expect(engine.removeOptionPosition('nope')).toBe(false);
+  });
+
+  it('removeOptionPosition returns true and deletes', () => {
+    engine.addOptionPosition(makeOptionPosition());
+    expect(engine.removeOptionPosition('op-1')).toBe(true);
+    expect(engine.getOptionPositions()).toEqual([]);
+  });
+
+  it('getState().optionPositions are serializable JSON', () => {
+    engine.addOptionPosition(makeOptionPosition());
+    const raw = engine.getState().optionPositions;
+    expect(raw).toHaveLength(1);
+    expect(typeof raw[0].strike).toBe('string');
+    expect(typeof raw[0].szi).toBe('string');
+    expect(typeof raw[0].entryPx).toBe('string');
+  });
+
+  it('survives JSON round-trip through loadState', () => {
+    engine.addOptionPosition(makeOptionPosition({ szi: new Decimal(-2), entryPx: new Decimal('3.14159265') }));
+    const serialized = JSON.parse(JSON.stringify(engine.getState()));
+    const engine2 = new PaperEngine({ initialBalance: '10000', leverage: 10 });
+    engine2.loadState(serialized);
+    const revived = engine2.getOptionPositions();
+    expect(revived).toHaveLength(1);
+    expect(revived[0].szi.toString()).toBe('-2');
+    expect(revived[0].entryPx.toString()).toBe('3.14159265');
+  });
+
+  it('loadState tolerates legacy saved states without optionPositions', () => {
+    // Legacy account JSON from before options existed — no optionPositions key.
+    const legacy = {
+      balance: '10000',
+      positions: [],
+      openOrders: [],
+      fills: [],
+    };
+    engine.loadState(legacy);
+    expect(engine.getOptionPositions()).toEqual([]);
+  });
+
+  it('does not disturb perp positions when options are added', () => {
+    openLong('BTC', '50000', '1');
+    engine.addOptionPosition(makeOptionPosition());
+    expect(engine.getPositions()).toHaveLength(1);
+    expect(engine.getOptionPositions()).toHaveLength(1);
   });
 });
 

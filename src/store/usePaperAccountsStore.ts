@@ -21,6 +21,7 @@ interface PaperAccountsStore {
     positions: PaperAccount['positions'];
     openOrders: PaperAccount['openOrders'];
     fills: PaperAccount['fills'];
+    optionPositions?: PaperAccount['optionPositions'];
   }) => void;
 }
 
@@ -79,7 +80,14 @@ export const usePaperAccountsStore = create<PaperAccountsStore>((set, get) => {
       const { activeAccountId } = get();
       const accounts = get().accounts.map(a =>
         a.id === activeAccountId
-          ? { ...a, balance: state.balance, positions: state.positions, openOrders: state.openOrders, fills: state.fills }
+          ? {
+              ...a,
+              balance: state.balance,
+              positions: state.positions,
+              openOrders: state.openOrders,
+              fills: state.fills,
+              ...(state.optionPositions !== undefined ? { optionPositions: state.optionPositions } : {}),
+            }
           : a
       );
       set({ accounts });

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { PaperPosition } from '../engine/paper/positions.ts';
 import type { PaperOrder } from '../engine/paper/matching.ts';
 import type { LedgerEntry } from '../engine/paper/ledger.ts';
+import type { OptionPositionJSON } from '../engine/paper/options/OptionPosition.ts';
 import type { Position, ClearinghouseState } from '../types/position.ts';
 import type { OpenOrder } from '../types/order.ts';
 
@@ -18,12 +19,14 @@ interface AccountStore {
   paperPositions: PaperPosition[];
   paperOrders: PaperOrder[];
   paperFills: LedgerEntry[];
+  paperOptionPositions: OptionPositionJSON[];
   lastRejection: string | null;
   updatePaperState: (state: {
     balance: string;
     positions: PaperPosition[];
     openOrders: PaperOrder[];
     fills: LedgerEntry[];
+    optionPositions?: OptionPositionJSON[];
   }) => void;
   setRejection: (msg: string | null) => void;
 }
@@ -44,12 +47,14 @@ export const useAccountStore = create<AccountStore>((set) => ({
   paperPositions: [],
   paperOrders: [],
   paperFills: [],
+  paperOptionPositions: [],
   lastRejection: null,
   updatePaperState: (state) => set({
     paperBalance: state.balance,
     paperPositions: state.positions,
     paperOrders: state.openOrders,
     paperFills: state.fills,
+    paperOptionPositions: state.optionPositions ?? [],
   }),
   setRejection: (msg) => set({ lastRejection: msg }),
 }));
