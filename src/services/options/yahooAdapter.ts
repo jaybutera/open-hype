@@ -5,6 +5,7 @@ import type {
   OptionsAdapter,
   SymbolHit,
 } from './types';
+import { classifyChainError } from './chainErrors';
 import { searchPopularSymbols } from './symbols';
 
 interface YahooOptionRaw {
@@ -99,12 +100,32 @@ export class YahooOptionsAdapter implements OptionsAdapter {
     const url = expiration
       ? `/api/options/${encodeURIComponent(upper)}?date=${expiration}`
       : `/api/options/${encodeURIComponent(upper)}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Yahoo chain fetch failed: ${res.status} ${res.statusText}`);
+    let res: Response;
+    try {
+      res = await fetch(url);
+    } catch (e) {
+      throw classifyChainError({ thrown: e });
     }
-    const json = (await res.json()) as YahooChainResponse;
-    return parseYahooChain(json);
+    if (!res.ok) {
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch {
+        body = await res.text().catch(() => '');
+      }
+      throw classifyChainError({ status: res.status, body });
+    }
+    let json: YahooChainResponse;
+    try {
+      json = (await res.json()) as YahooChainResponse;
+    } catch (e) {
+      throw classifyChainError({ thrown: e });
+    }
+    try {
+      return parseYahooChain(json);
+    } catch (e) {
+      throw classifyChainError({ thrown: e });
+    }
   }
 
   async searchSymbols(query: string): Promise<SymbolHit[]> {

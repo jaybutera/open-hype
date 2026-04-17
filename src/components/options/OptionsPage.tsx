@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Decimal from 'decimal.js';
 import { isMarketOpen, nextOpen } from '../../services/options/marketHours.ts';
 import { YahooOptionsAdapter } from '../../services/options/yahooAdapter.ts';
+import { ChainFetchError } from '../../services/options/chainErrors.ts';
 import type { Leg, LegSide, OptionChain, OptionContract } from '../../services/options/types.ts';
 import { toggleLeg } from '../../services/options/legs.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
@@ -14,6 +15,28 @@ import { PositionsOptions } from './PositionsOptions.tsx';
 
 const adapter = new YahooOptionsAdapter();
 
+const SPINNER_KEYFRAMES = `@keyframes hl-spin { to { transform: rotate(360deg); } }`;
+
+function Spinner() {
+  return (
+    <>
+      <style>{SPINNER_KEYFRAMES}</style>
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-block',
+          width: 12,
+          height: 12,
+          borderRadius: '50%',
+          border: '2px solid rgba(138,143,152,0.35)',
+          borderTopColor: '#3861fb',
+          animation: 'hl-spin 0.7s linear infinite',
+        }}
+      />
+    </>
+  );
+}
+
 interface Props {
   engine: PaperEngine;
 }
@@ -22,12 +45,14 @@ type SubmitFeedback =
   | { kind: 'success'; message: string }
   | { kind: 'error'; message: string };
 
+type ChainError = { kind: string; message: string };
+
 export function OptionsPage({ engine }: Props) {
   const [now, setNow] = useState(() => new Date());
   const [symbol, setSymbol] = useState<string | null>(null);
   const [chain, setChain] = useState<OptionChain | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ChainError | null>(null);
   const [selectedExp, setSelectedExp] = useState<number | null>(null);
   const [legs, setLegs] = useState<Leg[]>([]);
   const [feedback, setFeedback] = useState<SubmitFeedback | null>(null);
@@ -101,8 +126,12 @@ export function OptionsPage({ engine }: Props) {
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        setError(msg);
+        if (e instanceof ChainFetchError) {
+          setError({ kind: e.kind, message: e.message });
+        } else {
+          const msg = e instanceof Error ? e.message : String(e);
+          setError({ kind: 'unknown', message: msg });
+        }
         setChain(null);
       })
       .finally(() => {
@@ -204,10 +233,15 @@ export function OptionsPage({ engine }: Props) {
           </span>
         )}
         {loading && (
-          <span style={{ fontSize: 12, color: '#8a8f98' }}>Loading…</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#8a8f98' }}>
+            <Spinner />
+            Loading chain…
+          </span>
         )}
-        {error && (
-          <span style={{ fontSize: 12, color: '#f6465d' }}>Error: {error}</span>
+        {error && !loading && (
+          <span style={{ fontSize: 12, color: '#f6465d' }} title={`kind: ${error.kind}`}>
+            {error.message}
+          </span>
         )}
         <span style={{ marginLeft: 'auto', fontSize: 12, color: '#8a8f98' }}>
           Paper balance:{' '}
@@ -235,8 +269,19 @@ export function OptionsPage({ engine }: Props) {
         <div style={{ padding: 24, color: '#8a8f98', fontSize: 13 }}>
           {!symbol && 'Select a symbol above to load its option chain.'}
           {symbol && !open && 'Market closed — option chains can be loaded when the market reopens.'}
-          {symbol && open && loading && `Loading chain for ${symbol}…`}
-          {symbol && open && error && `Could not load ${symbol}: ${error}`}
+          {symbol && open && loading && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <Spinner />
+              Loading chain for {symbol}…
+            </span>
+          )}
+          {symbol && open && !loading && error && (
+            <span style={{ color: error.kind === 'not_found' ? '#8a8f98' : '#f6465d' }}>
+              {error.kind === 'not_found'
+                ? `No options listed for ${symbol}. Try a different ticker.`
+                : `Could not load ${symbol}: ${error.message}`}
+            </span>
+          )}
         </div>
       )}
       {chain && (

@@ -86,6 +86,36 @@ export function ChainRow({
   const putBidInteractive = !!put && put.bid > 0 && (!atCapacity || putBidSelected || putAskSelected);
   const putAskInteractive = !!put && put.ask > 0 && (!atCapacity || putAskSelected || putBidSelected);
 
+  const capMsg = 'At 4-leg cap — remove a leg first';
+  const callBidTitle = call
+    ? callBidInteractive
+      ? `Sell call @ bid ${fmtPrice(call.bid)}`
+      : atCapacity && call.bid > 0
+        ? capMsg
+        : undefined
+    : undefined;
+  const callAskTitle = call
+    ? callAskInteractive
+      ? `Buy call @ ask ${fmtPrice(call.ask)}`
+      : atCapacity && call.ask > 0
+        ? capMsg
+        : undefined
+    : undefined;
+  const putBidTitle = put
+    ? putBidInteractive
+      ? `Sell put @ bid ${fmtPrice(put.bid)}`
+      : atCapacity && put.bid > 0
+        ? capMsg
+        : undefined
+    : undefined;
+  const putAskTitle = put
+    ? putAskInteractive
+      ? `Buy put @ ask ${fmtPrice(put.ask)}`
+      : atCapacity && put.ask > 0
+        ? capMsg
+        : undefined
+    : undefined;
+
   const metricCtx = { underlyingPrice, nowSec };
   const [metricA, metricB] = metrics;
 
@@ -113,7 +143,7 @@ export function ChainRow({
           priced: !!call && call.bid > 0,
           interactive: callBidInteractive,
         })}
-        title={call ? `Sell call @ bid ${fmtPrice(call.bid)}` : undefined}
+        title={callBidTitle}
         onClick={callBidInteractive ? () => onCellClick(call!, 'sell') : undefined}
       >
         {call ? fmtPrice(call.bid) : ''}
@@ -127,7 +157,7 @@ export function ChainRow({
           priced: !!call && call.ask > 0,
           interactive: callAskInteractive,
         })}
-        title={call ? `Buy call @ ask ${fmtPrice(call.ask)}` : undefined}
+        title={callAskTitle}
         onClick={callAskInteractive ? () => onCellClick(call!, 'buy') : undefined}
       >
         {call ? fmtPrice(call.ask) : ''}
@@ -158,7 +188,7 @@ export function ChainRow({
           priced: !!put && put.bid > 0,
           interactive: putBidInteractive,
         })}
-        title={put ? `Sell put @ bid ${fmtPrice(put.bid)}` : undefined}
+        title={putBidTitle}
         onClick={putBidInteractive ? () => onCellClick(put!, 'sell') : undefined}
       >
         {put ? fmtPrice(put.bid) : ''}
@@ -172,7 +202,7 @@ export function ChainRow({
           priced: !!put && put.ask > 0,
           interactive: putAskInteractive,
         })}
-        title={put ? `Buy put @ ask ${fmtPrice(put.ask)}` : undefined}
+        title={putAskTitle}
         onClick={putAskInteractive ? () => onCellClick(put!, 'buy') : undefined}
       >
         {put ? fmtPrice(put.ask) : ''}

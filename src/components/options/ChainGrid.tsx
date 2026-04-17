@@ -79,6 +79,24 @@ export function ChainGrid({ chain, legs, onCellClick }: Props) {
 
   return (
     <div style={{ padding: '8px 16px 24px 16px' }}>
+      {atCapacity && (
+        <div
+          role="status"
+          style={{
+            padding: '6px 10px',
+            marginBottom: 8,
+            fontSize: 12,
+            fontWeight: 600,
+            color: '#f0b90b',
+            background: 'rgba(240,185,11,0.10)',
+            border: '1px solid rgba(240,185,11,0.35)',
+            letterSpacing: 0.3,
+          }}
+        >
+          4-leg cap reached — remove a leg in the order form or click a selected
+          cell to deselect it before adding another.
+        </div>
+      )}
       <div
         style={{
           display: 'flex',
