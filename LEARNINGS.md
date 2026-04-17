@@ -104,3 +104,26 @@ Iteration 2 from the list — capture a real TSLA chain as fixture JSON. Highest
 
 ### Next
 **Build `services/options/types.ts` + `yahooAdapter.ts`** (iteration 3). Parse the fixture into a normalized `OptionChain`. Unit-test the parser against the fixture so IV scaling, ITM detection, and bid/ask defaulting are pinned down. This unblocks Greeks (iteration 4 — needs the normalized `OptionContract` shape) and every chain-rendering component.
+
+## Iteration: 2026-04-17 10:58
+
+### Picked
+Iteration 3: build `services/options/types.ts` + `yahooAdapter.ts` and parse the TSLA fixture into a normalized `OptionChain`. Highest priority because Greeks, chain grid, order form, and paper engine options work all need the normalized `OptionContract` shape. Tested against the committed fixture so downstream work is offline-deterministic.
+
+### Did
+- `src/services/options/types.ts` — `OptionContract`, `OptionChain`, `OptionsAdapter`, `SymbolHit`.
+- `src/services/options/yahooAdapter.ts` — exports `parseYahooChain(raw) → OptionChain` (pure) and a `YahooOptionsAdapter` class that hits `/api/options/:symbol[?date=...]` and pipes the response through the parser. `searchSymbols` is a stub that returns the upper-cased input; real symbol list lands in iteration 6.
+- `src/services/options/__tests__/yahooAdapter.test.ts` — 9 tests against `__fixtures__/tsla_chain.json`: underlying metadata, 22 sorted expirations, 194 sorted strikes, 183 calls / 188 puts for the loaded expiration, deep-ITM contract field normalization, near-ATM IV decimal check, finite-number defaults, ITM flag sanity vs strike, and malformed-response throws.
+- `npx tsc --noEmit` clean.
+- `npm test` → 106/106 green (was 97; +9 new).
+
+### Discovered
+- IV is NOT uniformly scaled. ATM IV is a normal decimal (~0.33). Wings can be `4+` or even `40+` in the fixture — those appear to be genuine degenerate IV implied by very wide bid/ask on illiquid deep-ITM/OTM contracts, not a scale issue. **Do not normalize IV**; pass it through. The Greeks pricer will have to guard against stupidly large IVs if it ever tries to render them (probably clamp for display).
+- Yahoo returns calls/puts already sorted by strike — our parser trusts that (we only sort `strikes[]` and `expirationDates[]` at the chain level as a defensive measure).
+- 75/183 TSLA calls have `bid === 0` (no resting bid). The parser preserves this as-is; the order form will need a fill-model policy for unfilled-bid sells (e.g. fall back to last, or disable sell-to-open).
+- Vitest `include` pattern is `src/**/__tests__/**/*.test.ts` — tests must live under a `__tests__/` directory, not adjacent `foo.test.ts` as the spec's file-layout sketch suggests. Honoring the repo convention, not the spec's.
+- `tsconfig.json` already has `resolveJsonModule: true`, so `import fixture from '../__fixtures__/tsla_chain.json'` works without extra config.
+- Kept `searchSymbols` stubbed to avoid coupling the adapter to `symbols.ts` ahead of its iteration. When iteration 6 lands, that method gets rewritten to filter the popular list + recents.
+
+### Next
+**Build `services/options/greeks.ts` + tests** (iteration 4). Black-Scholes delta/gamma/vega/theta/rho for `(S, K, T, r, σ, type)` with `r = 0.045` and `T` in years. Unit-test known-value benchmarks (standard BS pricing table entries) and a sanity test against the TSLA fixture (ATM call delta ~0.5, etc.). This unblocks the net-Greeks panel in the order form and the payoff diagram. After Greeks, market-hours (iteration 5) is a small independent piece that unblocks the market-closed banner.
