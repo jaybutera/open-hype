@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isMarketOpen, nextOpen } from '../../services/options/marketHours.ts';
 import { YahooOptionsAdapter } from '../../services/options/yahooAdapter.ts';
 import type { Leg, LegSide, OptionChain, OptionContract } from '../../services/options/types.ts';
-import { MAX_LEGS, toggleLeg } from '../../services/options/legs.ts';
+import { toggleLeg } from '../../services/options/legs.ts';
 import { SymbolSearch } from './SymbolSearch.tsx';
 import { ExpirationTabs } from './ExpirationTabs.tsx';
 import { ChainGrid } from './ChainGrid.tsx';
+import { OrderForm } from './OrderForm.tsx';
 
 const adapter = new YahooOptionsAdapter();
 
@@ -157,53 +158,29 @@ export function OptionsPage() {
         </div>
       )}
       {chain && (
-        <>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '8px 16px', fontSize: 12, color: '#8a8f98',
-            borderBottom: '1px solid #1a1f2e',
-          }}>
-            <span>
-              Legs: <strong style={{ color: '#e1e4e8' }}>{legs.length}</strong>
-              <span style={{ color: '#3d4250' }}> / {MAX_LEGS}</span>
-            </span>
-            {legs.length > 0 && (
-              <>
-                {legs.map((l, i) => {
-                  const sideColor = l.side === 'buy' ? '#f6465d' : '#0ecb81';
-                  const price = l.side === 'buy' ? l.contract.ask : l.contract.bid;
-                  return (
-                    <span
-                      key={`${l.contract.symbol}:${l.side}:${i}`}
-                      style={{
-                        padding: '2px 6px', border: `1px solid ${sideColor}`,
-                        color: sideColor, letterSpacing: 0.3,
-                      }}
-                    >
-                      {l.side.toUpperCase()} {l.contract.type === 'call' ? 'C' : 'P'}
-                      {' '}{l.contract.strike.toFixed(l.contract.strike % 1 === 0 ? 0 : 2)}
-                      {' @ '}{price > 0 ? price.toFixed(2) : '—'}
-                    </span>
-                  );
-                })}
-                <button
-                  onClick={() => setLegs([])}
-                  style={{
-                    background: 'transparent', border: '1px solid #2a2f3e',
-                    color: '#8a8f98', padding: '2px 8px', fontSize: 11,
-                    cursor: 'pointer', borderRadius: 0,
-                  }}
-                >
-                  Clear
-                </button>
-              </>
-            )}
-            {legs.length >= MAX_LEGS && (
-              <span style={{ color: '#f6465d' }}>Max legs reached</span>
-            )}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) 340px',
+          alignItems: 'stretch',
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <ChainGrid chain={chain} legs={legs} onCellClick={handleCellClick} />
           </div>
-          <ChainGrid chain={chain} legs={legs} onCellClick={handleCellClick} />
-        </>
+          <OrderForm
+            legs={legs}
+            underlyingPrice={chain.underlyingPrice}
+            marketOpen={open}
+            onUpdateLeg={(i, next) => setLegs((prev) => prev.map((l, idx) => (idx === i ? next : l)))}
+            onRemoveLeg={(i) => setLegs((prev) => prev.filter((_, idx) => idx !== i))}
+            onClear={() => setLegs([])}
+            onSubmit={(order) => {
+              // Paper-engine wiring lands in iteration 15. For now, log and flash via alert.
+              // Intentionally lightweight — don't touch the paper engine here.
+              // eslint-disable-next-line no-console
+              console.log('[options] submit (placeholder)', { legs, order });
+            }}
+          />
+        </div>
       )}
     </div>
   );

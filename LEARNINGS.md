@@ -350,3 +350,30 @@ Iteration 11: click-to-add-leg interaction. Direct continuation of iteration 10 
 
 ### Next
 **Iteration 12: `OrderForm` right-side panel.** Replace the provisional leg-chip strip with the real panel: per-leg rows with Buy/Sell badge (editable), contract string (e.g. `TSLA 4/17 $300 Call`), mark price (mid), qty stepper, remove button. Footer: net debit/credit (signed per contract + total × 100), limit price (default net mid), order type (Limit/Market), qty scalar applied to all legs, Submit button. Needs a per-leg `qty` update handler (already have the state shape — just add a setter). Net-Greeks (iteration 13) is a natural pair with the footer; could bundle or split depending on scope. Layout shift: the page becomes two columns (chain left, order form right) once the form gets real — pick a CSS grid or flex split at 70/30.
+
+## Iteration: 2026-04-17 11:24
+
+### Picked
+Iteration 12: `OrderForm` right-side panel, **bundled with iteration 13 (net Greeks)**. The Net-Greeks footer and the net debit/credit footer are the same panel section, so splitting them would have meant shipping an OrderForm with a partial footer and then editing the same file next iteration. One coherent cut.
+
+### Did
+- `src/services/options/netSummary.ts` — pure helpers. `legMark` (mid preferred, falls back to bid/ask/last, reports `reliable` when both sides are >0), `legSignedMark`, `netPerShare`, `netTotal` (× 100 × qtyScalar), `legGreeks` (signs + qty-weights `blackScholes`), `netGreeks` (sums across legs). `CONTRACT_MULTIPLIER = 100` exported.
+- `src/services/options/__tests__/netSummary.test.ts` — 16 tests: legMark fallback chain, legSignedMark sign-by-side, netPerShare empty/weighted/net-credit, netTotal multiplier + scalar + default, netGreeks zero/cancellation/qty-scaling/sign-symmetry. Uses a 30-days-out synthetic expiration so Greeks avoid the degenerate T=0 branch that bit iteration 4.
+- `src/components/options/LegRow.tsx` — one leg row: BUY/SELL toggle (two mini-buttons, active side colored), contract label (`TSLA 4/17 $400 Call`), mark with one-sided warning, qty stepper with ± buttons + direct integer input, × remove button. Grid layout (`74px 1fr auto auto`).
+- `src/components/options/NetSummary.tsx` — shared footer block. Top: `Net Debit / Credit / Even` with per-contract + per-share breakdown, colored red/green/gray. Bottom: 2×5 Net Greeks grid (Δ Γ ν Θ ρ). Empty-state prompt when no legs. Calls `netPerShare` + `netGreeks` via `useMemo`.
+- `src/components/options/OrderForm.tsx` — right-side panel. Header (`Order · strategyLabel · N/4 legs` + Clear). Scrollable leg rows. `NetSummary` footer. Controls grid: order type (Limit/Market), qty scalar, limit-price input that defaults to net mid and becomes overridable (override resets when leg count changes so the default tracks new legs). Submit button green/blue-ified when `marketOpen && legs.length > 0`, disabled with a "Market closed" tagline otherwise. Submit payload `{ orderType, limitPrice, qtyScalar }` — placeholder `console.log` at the call site; paper-engine wiring is iteration 15.
+- `OptionsPage.tsx` — removed the provisional leg-chip strip, replaced with a 2-column grid: `minmax(0, 1fr) 340px` (chain / form). Wired leg update/remove/clear handlers and a `marketOpen` prop so the submit button follows the market-hours pill.
+- `npx tsc --noEmit` clean.
+- `npm test` → 197/197 green (was 181; +16).
+
+### Discovered
+- Spec's `netPerShare` is signed (debit positive, credit negative) but the UI shows absolute values with a "Debit / Credit" label. Keeping the sign in the helper (not the display) means downstream paper-engine wiring can trust the sign, and only the view layer has to `Math.abs` + color-branch.
+- Limit-override reset: I reset `limitOverride` when `legs.length` changes. Changing a qty or side on an existing leg keeps the override. That matches intuition — a user who typed `$2.50` doesn't want it wiped because they clicked the qty +. But adding/removing a leg materially changes what "net mid" means, so the default should re-take.
+- `useEffect`-based override reset is a code smell in abstract — derived state updated by effect — but the alternative (derive override-vs-auto from a comparison of the displayed input against the current mid) requires floating-point equality and defeats the purpose. Effect is the pragmatic pick.
+- Fixed 340px right column width: narrower feels cramped with 5 Greeks values + qty stepper; wider eats chain grid real-estate. Not responsive yet; if we care about mobile we'll swap to a flex-wrap layout, but the spec's UX anchor is desktop (Robinhood Legend is desktop-dominant).
+- No jsdom/RTL still — component unit tests are limited to pure helpers (`netSummary.ts`). The OrderForm has a handful of nuanced behaviors (limit default vs override sticky/reset, submit disable logic, strategy label selection) that would benefit from rendering tests. When RTL lands, these are the obvious targets.
+- `strategyLabel` is a placeholder — it returns `"1-leg"`, `"Long Call"`, or `"N-leg spread"`. Iteration 19 is proper strategy auto-detection (Vertical / Calendar / Iron Condor / …). Deliberately kept this trivial so I don't ship a half-detector that has to be replaced.
+
+### Next
+**Iteration 14: extend the paper engine to hold option positions.** Types + storage first, no trading behavior yet. Needs (a) a new `OptionPosition` shape, (b) discriminated `Instrument` union in the engine's position/trade records, (c) `spreadId` linking multi-leg positions, (d) the account store surviving a round-trip through persistence. Once types are in place, iteration 15 (wire Submit → place option paper trade, debit/credit balance) becomes straightforward. Between iterations 14 and 15, the Submit button in the new OrderForm will stay as its console-log placeholder.
+
