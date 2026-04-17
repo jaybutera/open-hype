@@ -187,3 +187,27 @@ Iteration 5: `services/options/marketHours.ts` + tests. Small, independent, unbl
 
 ### Next
 **`services/options/symbols.ts` + static popular-list + `localStorage` recents** (iteration 6). Small and independent — finishes the data-layer scaffold. Then iteration 7 (route scaffold `#/options`) becomes the only gate on every UI task. After symbols lands, adapter/Greeks/market-hours/symbols are all in place and UI work can start flowing.
+
+## Iteration: 2026-04-17 11:06
+
+### Picked
+Iteration 6: `services/options/symbols.ts` — static popular-symbols list + `localStorage` recents + symbol search. Small, independent, final data-layer piece. Landing it now closes out the foundation so the next iteration can be the `#/options` route scaffold without any remaining service-layer gaps.
+
+### Did
+- `src/services/options/symbols.ts`:
+  - `POPULAR_SYMBOLS` — 208 entries covering mega-cap tech, financials, healthcare, consumer, energy/industrials/materials, REITs, broad-market ETFs, sector ETFs (XLK/XLF/…), fixed-income (TLT/HYG/…), commodities (GLD/SLV/USO/…), volatility (VXX/UVXY/…), leveraged (TQQQ/SOXL/…), and crypto-adjacent (IBIT, FBTC, GBTC, ARKB, BITB, ETHA, ETHE, FETH, MSTR, MARA, RIOT, CLSK). Each entry has `{ symbol, name }`.
+  - `searchPopularSymbols(query, limit = 10)` — case-insensitive ranking: exact → prefix → substring (symbol) → substring (name). Empty query returns `[]`.
+  - `getRecentSymbols()`, `addRecentSymbol(symbol)`, `clearRecentSymbols()` — `localStorage` key `hl-options-recent-symbols`, 10-entry cap, most-recent-first, dedup by upper-cased symbol, trims and upper-cases input, gracefully tolerates missing `window`, corrupt JSON, quota errors, non-string array entries.
+- `src/services/options/yahooAdapter.ts#searchSymbols` — replaced stub with real implementation: upper-cases query, runs `searchPopularSymbols`, and if the exact ticker isn't already in the results, prepends it as a free-form fallback so the UI can still try to fetch a chain for unlisted tickers.
+- `src/services/options/__tests__/symbols.test.ts` — 20 tests covering list integrity (no dupes, uppercase, required anchors TSLA/SPY/QQQ/IBIT/FBTC, ≥150 entries), search ranking (exact-first, case-insensitive, prefix-before-substring ordering invariant, name fallback, limit honored), and full recents-storage lifecycle (empty, push-to-front, dedup, upper/trim, empty-input no-op, 10-cap, clear, corrupt-JSON, non-string filtering). Uses `vi.stubGlobal('window', ...)` with an in-memory Map-backed `localStorage` mock.
+- `npx tsc --noEmit` clean.
+- `npm test` → 161/161 green (was 141; +20).
+
+### Discovered
+- Vitest's jsdom environment isn't enabled for these test files (no leading `@vitest-environment jsdom` and the config is node by default), so `window` doesn't exist. `vi.stubGlobal('window', { localStorage: mockStorage })` is enough — the module only touches `window.localStorage`. Saves setting up jsdom for pure-logic tests.
+- The prefix-ranking assertion "all prefix matches precede all substring matches" needs to be stated as an ordering invariant rather than a count-based partition, because some queries (like `SP`) can have near-100% prefix matches, making a count split tautological. The invariant phrasing catches future regressions where substring or name matches accidentally slip ahead of prefix.
+- Free-form fallback in `searchSymbols`: prepending the upper-cased query even when it doesn't match the popular list lets the UI keep letting users try `AMZN`, `WBA`, etc. Chain fetch will 404 cleanly if the ticker has no listed options. Avoids forcing the popular list to be exhaustive.
+- Considered integrating the Yahoo `/v1/finance/search?q=` endpoint as an online autocomplete, but it requires the same cookie+crumb handshake as the chain endpoint and adds another rate-limit surface. Static list + free-form is good enough for v1; if we later want a real online search, it can be a proxy route at `/api/symbols/search?q=` that reuses the cached cookie/crumb.
+
+### Next
+**Iteration 7: wire `#/options` route + empty page scaffold into `App.tsx`.** Gating task for all UI work — `SymbolSearch`, `ExpirationTabs`, `ChainGrid`, etc. (iterations 8–13) can't land without it. Should be small: register the route alongside `#/pnl`, add a nav entry if there's a nav component, render an `OptionsPage.tsx` stub that just says "Options" so routing can be verified visually. Once that's in, iteration 8 (`SymbolSearch` using the new `symbols.ts` helpers) is the first real UI piece.

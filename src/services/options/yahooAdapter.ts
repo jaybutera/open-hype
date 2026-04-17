@@ -5,6 +5,7 @@ import type {
   OptionsAdapter,
   SymbolHit,
 } from './types';
+import { searchPopularSymbols } from './symbols';
 
 interface YahooOptionRaw {
   contractSymbol: string;
@@ -109,6 +110,9 @@ export class YahooOptionsAdapter implements OptionsAdapter {
   async searchSymbols(query: string): Promise<SymbolHit[]> {
     const q = query.trim().toUpperCase();
     if (!q) return [];
-    return [{ symbol: q }];
+    const hits = searchPopularSymbols(q);
+    if (hits.some((h) => h.symbol === q)) return hits;
+    // Free-form fallback: surface the typed ticker so the user can try-fetch it
+    return [{ symbol: q }, ...hits];
   }
 }
