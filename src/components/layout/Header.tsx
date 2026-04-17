@@ -47,6 +47,18 @@ export function Header() {
         PnL
       </a>
 
+      <a
+        href="#/options"
+        style={{
+          fontSize: 12, fontWeight: 600, color: '#8a8f98',
+          textDecoration: 'none', padding: '4px 10px',
+          background: 'transparent', border: '1px solid #2a2f3e',
+          borderRadius: 0, flexShrink: 0,
+        }}
+      >
+        Options
+      </a>
+
       <AssetSelector />
 
       {/* Favorite chips */}

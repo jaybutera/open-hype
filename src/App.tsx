@@ -1,6 +1,7 @@
 import { useEffect, useState, Component, type ReactNode } from 'react';
 import { AppLayout } from './components/layout/AppLayout.tsx';
 import { PnlCalendar } from './components/pnl/PnlCalendar.tsx';
+import { OptionsPage } from './components/options/OptionsPage.tsx';
 import { useMarketStore } from './store/useMarketStore.ts';
 import { usePaperEngine } from './hooks/useEngine.ts';
 import { useWebSocket } from './hooks/useWebSocket.ts';
@@ -71,6 +72,10 @@ function AppInner() {
 
   if (hash === '#/pnl') {
     return <PnlCalendar />;
+  }
+
+  if (hash === '#/options') {
+    return <OptionsPage />;
   }
 
   return <AppLayout engine={engine} />;

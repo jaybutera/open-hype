@@ -211,3 +211,31 @@ Iteration 6: `services/options/symbols.ts` — static popular-symbols list + `lo
 
 ### Next
 **Iteration 7: wire `#/options` route + empty page scaffold into `App.tsx`.** Gating task for all UI work — `SymbolSearch`, `ExpirationTabs`, `ChainGrid`, etc. (iterations 8–13) can't land without it. Should be small: register the route alongside `#/pnl`, add a nav entry if there's a nav component, render an `OptionsPage.tsx` stub that just says "Options" so routing can be verified visually. Once that's in, iteration 8 (`SymbolSearch` using the new `symbols.ts` helpers) is the first real UI piece.
+
+## Iteration: 2026-04-17 11:08
+
+### Picked
+Iteration 7: wire `#/options` route + empty page scaffold into `App.tsx`. Gating task for every UI iteration (8–13, 16, 18, 22). Without it there's no surface to render `SymbolSearch`, `ChainGrid`, `OrderForm`, etc. Small and unambiguous — cheap unblock.
+
+### Did
+- `src/components/options/OptionsPage.tsx` — new page component. Styled to match the `PnlCalendar` top-bar convention (back-link, bold title, existing color tokens). Renders:
+  - `<- Back to Trading` link to `#/`.
+  - `MARKET OPEN` / `MARKET CLOSED` pill computed from `isMarketOpen(now)`.
+  - When closed, inline `Next open: <date> ET` label from `nextOpen()`.
+  - Placeholder body text where chain + order form will render.
+  - `useEffect` ticks `now` every 30s so the pill flips across the 9:30/16:00 boundary without a refresh.
+- `src/App.tsx` — imported `OptionsPage`, added `hash === '#/options'` branch above the default `AppLayout` return. Mirrors the existing `#/pnl` pattern.
+- `src/components/layout/Header.tsx` — added an `Options` nav link next to the existing `PnL` chip, same styling (no new tokens).
+- `npx tsc --noEmit` clean.
+- `npm test` → 161/161 green (unchanged — no new test files; the page is a thin presentational shell with no pure logic worth testing yet. The `isMarketOpen`/`nextOpen` bits already have 18 dedicated tests from iteration 5).
+- Dev server smoke test: `npm run dev` + `curl http://localhost:3000/` → 200, `id="root"` present. Route hash changes happen client-side so curl-verifying the `/#/options` URL doesn't add signal; visual verification is deferred to the user.
+
+### Discovered
+- `App.tsx` does its hash routing with a simple `useHashRoute` hook (hashchange listener, no router library). New routes are two lines: import + hash comparison. Easier than pulling in react-router just for `/options`.
+- The existing `#/pnl` top-bar pattern (back-link to `#/` + bold title) already handles the "sub-page without header" case perfectly. Reusing it keeps `OptionsPage` self-contained and avoids having to decide whether the global `Header` should change based on route — that would force paper-account state decisions we haven't made yet (options share the perps account, so we DO want the paper account indicator, but not yet, not with a placeholder body).
+- The 30-second tick interval for the market-open pill is a tradeoff: finer ticks waste renders when the pill state flips only twice a day; coarser ticks risk missing the 9:30 open boundary by up to a minute. 30s is small enough to be unnoticeable.
+- Kept `borderRadius: 0` and the exact color tokens (`#3861fb`, `#0ecb81`, `#f6465d`, `#1a1f2e`) from the existing PnL page so the new route doesn't introduce visual drift. The repo clearly treats borders as hard edges — no rounding anywhere in the header/trading chrome.
+- No new Header imports required — just duplicated the chip-link JSX. If we end up with 3+ nav chips, worth extracting a `<NavChip>` component; not worth it for 2.
+
+### Next
+**Iteration 8: `SymbolSearch` component.** First real UI piece — ties together the static popular list, recents-storage, and free-form entry built in iteration 6. Should live in `src/components/options/SymbolSearch.tsx`, render a text input with a 300ms-debounced dropdown, wire Enter to commit a free-form ticker. Needs to hand its selected-symbol state *somewhere* — either lift it to `OptionsPage`'s local state or stash it in a dedicated Zustand store. A local `useState` on `OptionsPage` is the simplest until we need the symbol in a sibling like `PositionsOptions` view, at which point a store is warranted. Start local; promote if needed.
