@@ -4,6 +4,7 @@ import { YahooOptionsAdapter } from '../../services/options/yahooAdapter.ts';
 import type { OptionChain } from '../../services/options/types.ts';
 import { SymbolSearch } from './SymbolSearch.tsx';
 import { ExpirationTabs } from './ExpirationTabs.tsx';
+import { ChainGrid } from './ChainGrid.tsx';
 
 const adapter = new YahooOptionsAdapter();
 
@@ -140,19 +141,14 @@ export function OptionsPage() {
         />
       )}
 
-      <div style={{ padding: 24, color: '#8a8f98', fontSize: 13 }}>
-        {!symbol && 'Select a symbol above to load its option chain.'}
-        {symbol && loading && !chain && `Loading chain for ${symbol}…`}
-        {symbol && error && !chain && `Could not load ${symbol}: ${error}`}
-        {chain && (
-          <span>
-            Chain loaded: {chain.calls.length} calls, {chain.puts.length} puts
-            {' '}for expiration {new Date(chain.loadedExpiration * 1000).toLocaleDateString('en-US', {
-              timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
-            })}.
-          </span>
-        )}
-      </div>
+      {!chain && (
+        <div style={{ padding: 24, color: '#8a8f98', fontSize: 13 }}>
+          {!symbol && 'Select a symbol above to load its option chain.'}
+          {symbol && loading && `Loading chain for ${symbol}…`}
+          {symbol && error && `Could not load ${symbol}: ${error}`}
+        </div>
+      )}
+      {chain && <ChainGrid chain={chain} />}
     </div>
   );
 }

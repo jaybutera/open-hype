@@ -295,3 +295,28 @@ Iteration 9: `ExpirationTabs` + chain-loading in `OptionsPage`. Bundled the chai
 
 ### Next
 **Iteration 10: `ChainGrid` + `ChainRow` (render-only).** With symbol + expiration + chain loaded, the next visible piece is the options chain grid itself: calls left, strike center, puts right, one row per strike, sorted ascending. Start render-only (no click-to-add-leg — that's iteration 11). Default metrics columns: IV + OI (per spec — pick 2). Need to handle the strike-union case where a strike only has a call or only a put (rare but happens for deep ITM/OTM). Shade ITM rows subtly using a `background: rgba(56,97,251,0.05)` on the ITM side. The row component should be a pure presentational component taking `{ strike, call?, put?, underlyingPrice }` so interaction (iteration 11) layers on top cleanly.
+
+## Iteration: 2026-04-17 11:16
+
+### Picked
+Iteration 10: `ChainGrid` + `ChainRow` (render-only). Natural follow-up to iteration 9 — symbol + expiration + chain are all in place, so the grid is the next visible surface. Render-only first (no click-to-add-leg) keeps the iteration small and gives iteration 11 a clean presentational shell to attach interaction to.
+
+### Did
+- `src/components/options/ChainRow.tsx` — pure presentational `<tr>` for a single strike. Columns per spec: `[IV | OI | Bid | Ask] STRIKE [Bid | Ask | OI | IV]`. Bid cells green (`#0ecb81`), ask cells red (`#f6465d`), dimmed (`#3d4250`) when bid/ask = 0. Tooltips on bid/ask cells foreshadow iteration 11's click-to-sell / click-to-buy semantics. Strike cell is bold, centered, with left+right borders delimiting the CALL / PUT halves. ITM side gets `background: rgba(56,97,251,0.05)` per spec. Local formatting helpers: `fmtPrice` (2-decimal, `—` for 0/NaN), `fmtIv` (decimal → percent, clamps IV > 5 with `*` marker to flag absurd wings — see Greeks discovery from iteration 4), `fmtInt` (compact k/M for OI).
+- `src/components/options/ChainGrid.tsx` — container `<table>` with 9 `<col>` widths tuned so the STRIKE column is centered and calls/puts are mirror-balanced. Header row echoes the column semantics. Exports `buildStrikeRows(chain) → StrikeRow[]` as a pure helper — unions calls + puts by strike (handles strikes that only have one side), sorts ascending. Uses the loaded-expiration's calls/puts only, not the symbol-wide `chain.strikes`, because Yahoo's `strikes[]` is the universe across all expirations.
+- `src/components/options/__tests__/ChainGrid.test.ts` — 5 tests: pair call+put at same strike, strike-only-one-side, ascending sort, empty chain → [], dedup when both sides share some strikes and diverge on others.
+- `OptionsPage` now renders `<ChainGrid chain={chain} />` in place of the placeholder body text, gated on `chain` being loaded. Loading / error / empty-symbol copy still shows above when there's no chain.
+- `npx tsc --noEmit` clean.
+- `npm test` → 170/170 green (was 165; +5).
+
+### Discovered
+- The spec says "Metrics columns configurable (v1: IV, delta, volume, OI — pick 2 defaults)" — but delta isn't in the OptionContract (it's computed from Greeks, not returned by Yahoo). Picked **IV + OI** for now because both are directly on the contract and don't require running the BS pricer for every strike on render. Delta/gamma columns are a natural add in iteration 23 (metrics customization) where we can decide whether to compute Greeks for every visible row (194 strikes × 2 sides = 388 BS calls per chain render — probably fine, ~ms).
+- IV clamp: a 40+ IV on deep-wing contracts (discovered iteration 3) would render as `4000%` which is visually alarming. Clamping to `>5` showing `500%*` with asterisk preserves the information ("this number is not trustworthy") without forcing the user to squint at huge values. Real ATM IVs all fit under 5.
+- Yahoo's `chain.strikes[]` is the full union across all expirations; it's NOT the strike list for the loaded expiration. `buildStrikeRows` must derive strikes from the loaded calls/puts, otherwise the grid would render many empty rows for strikes that exist on other expirations. Missed this on the first draft.
+- Table layout via `<table>` + `<colgroup>` + fixed percentages gives reliable centering of the STRIKE column without flexbox subpixel drift. Considered CSS grid but `<table>` semantics + consistent alignment won out — and the HTML ends up tiny.
+- Kept `ChainRow` a real `<tr>` element (not a div-simulated row) so accessibility tools and screen readers see it as a data table. Probably moot for this UI but costs nothing.
+- The bid/ask tooltip text ("Sell call @ bid ...", "Buy call @ ask ...") is forward-looking for iteration 11 where clicking these cells will be the primary trading interaction. Adding them now means when click handlers land, the hover affordance is already in place.
+- No jsdom/RTL in repo (per iteration 8 & 9 notes); component-render interactions still untested. `buildStrikeRows` is pure and tested, which covers the part most likely to regress (row-union logic). Visual styling is reviewed by eye.
+
+### Next
+**Iteration 11: click-to-add-leg interaction.** Layer on top of `ChainRow`: clicking a bid cell appends a SELL leg, clicking an ask cell appends a BUY leg. Needs (a) a `legs[]` state somewhere reachable by both `ChainGrid` and the upcoming `OrderForm`, (b) per-cell highlighting when that cell's contract is in `legs[]`, (c) 4-leg cap, (d) toggle-off by clicking the same cell again. State likely lifts to `OptionsPage` (same reasoning as `symbol` in iteration 8). `OrderForm` in iteration 12 then consumes the same `legs[]`. Shape leg state as `{ contract, side: 'buy'|'sell', qty: number }`.
