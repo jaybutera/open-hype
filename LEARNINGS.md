@@ -586,3 +586,43 @@ Iteration 17: close-position flow. Highest-priority unblocked task — iteration
 Alternative: **Iteration 19 (strategy auto-detection)** is a fun self-contained task — replace `detectSimpleStrategy`'s 2/3-leg placeholder with a proper recognizer for Iron Condor / Iron Fly / Butterfly / Broken-Wing Butterfly. No dependencies on other iterations. ~100 lines of classifier + tests.
 
 Either is a reasonable next pick. Iteration 18 feels higher-priority because it completes the "don't deceive the user" UX story; iteration 19 is pure polish on an already-functioning feature.
+
+## Iteration: 2026-04-17 11:54
+
+### Picked
+Iteration 18: market-hours gating (polish pass). Higher-priority than iteration 19 per the previous iteration's note — completes the "don't deceive the user" UX story by ensuring we never (a) auto-fetch a fresh chain outside market hours, (b) present stale quotes as live, or (c) let a user close a position at a stale mid. Strategy auto-detection (iteration 19) is pure polish on a working feature and can wait.
+
+### Did
+- `src/components/options/OptionsPage.tsx`:
+  - Hoisted `const open = isMarketOpen(now)` to above the chain-fetch effect so the effect can short-circuit when the market is closed. Removed the duplicate declaration further down.
+  - Chain-fetch effect now early-returns when `!open`. Existing `chain` state is preserved so a chain fetched pre-close stays on screen (frozen), but symbol/exp changes while closed don't kick a new fetch — prevents stale data from being re-fetched and mis-presented as live.
+  - Added `open` to the effect's dependency array so a live market-open transition (the 30s `now` tick crossing 9:30 ET) will trigger the first fetch.
+  - New "Last updated" / "Frozen" timestamp chip next to the `Loaded:` label, using `chain.asOf`. Label and color flip: gray `Last updated: 14:05:12 ET` while open, italic red `Frozen: 15:59:58 ET` while closed. `title` tooltip gives the long-form reason in both states.
+  - Empty-chain copy now branches on `open`: when symbol selected but market closed and no prior chain, renders `"Market closed — option chains can be loaded when the market reopens."` instead of loading / error placeholders.
+- `src/components/options/PositionsOptions.tsx`:
+  - New `marketOpen: boolean` prop on both `PositionsOptions` and `SpreadRow`.
+  - `canClose = marketOpen && chainMatches && mark.legsPriced === legs.length`. Tooltip ordering: `Market closed` message takes precedence over `Load chain` / `missing quotes` messages, which themselves remain when market is open.
+  - Defensive gate inside `handleClose`: if `marketOpen` is false at call time, immediately sets a per-spread error feedback instead of invoking the engine. Handles the theoretical case where the UI is laggy and a user clicks Close at the exact tick the market closes.
+- `OptionsPage` threads `marketOpen={open}` into `<PositionsOptions>`.
+- `npx tsc --noEmit` clean.
+- `npm test` → 308/308 green (unchanged; no new tests — market-hours logic is already tested in `marketHours.test.ts`, and this iteration is pure UI wiring of the existing `isMarketOpen` boolean through the page/positions components).
+
+### Discovered
+- **Adding `open` to the fetch effect's dep array is what makes the "market just opened" transition work**. Without it, a user who left the page open overnight would see `MARKET CLOSED` flip to `MARKET OPEN` at 9:30 ET with no chain — symbol was selected, but the effect already ran when the market was closed (and early-returned), and would never re-run without a dep change. With `open` in the deps, the 30s `now` tick that flips the pill also re-fires the fetch effect; the early-return is skipped on the second run, and the chain loads fresh. Tested by setting `now` across the boundary manually during dev.
+- **Freeze vs. blank choice**: I picked *freeze the existing chain*, not *blank it out*, when the market closes mid-session. Rationale: the user may want to see where strikes are priced even when closed (e.g. to plan the next morning's trades), and the "Frozen: HH:MM:SS ET" timestamp + italic-red styling makes the freeze state unambiguous. Blanking it would feel punitive and lose strategy-planning utility. Stale quotes are only dangerous if presented *as live*, which the Frozen label makes impossible.
+- **`chain.asOf` was already populated by the adapter** (`Math.floor(Date.now() / 1000)` inside `parseYahooChain`) — no adapter changes needed. This saved a round-trip through the parser. If we ever want Yahoo's own quote timestamp (the `regularMarketTime` field) for finer precision, the parser is the place to put it.
+- **NYSE timezone formatting**: `Intl.DateTimeFormat` with `timeZone: 'America/New_York'` + `hour12: false` doesn't exist here — I used `hour: 'numeric', minute: '2-digit', second: '2-digit'`, which produces `2:59:58 PM` form. Acceptable since the `ET` suffix makes the timezone clear, but a future polish pass might force 24h for consistency with the `Next open` label. Not a blocker.
+- **Close-button gate order matters for UX**: `!marketOpen` is the new top tooltip priority because it's the most user-actionable (the user has no way to change market hours), while `!chainMatches` is actionable (they can load the chain). If both are true, the closed-market reason is what the user needs to know first. Same priority ordering could apply to the Submit button in the OrderForm — currently it's just `marketOpen ? enabled : disabled` with a flat "Market closed" label, which is fine.
+- **Defensive `handleClose` guard**: a lint might flag this as "unreachable" because the button is disabled when `!marketOpen`, but disabled-button-click-prevention is a browser-level concern that can be bypassed (DevTools enable) and the engine itself doesn't check market hours. Cheap insurance.
+
+### Next
+**Iteration 19: strategy auto-detection.** Proper recognizer to replace `detectSimpleStrategy`'s placeholder:
+1. Iron Condor (4 legs, same exp, 2 calls + 2 puts, OTM wings, the short legs form a box between the long legs)
+2. Iron Butterfly (4 legs, same exp, 2 calls + 2 puts, short legs at same strike, wings equidistant)
+3. Butterfly (3 legs or 4 with 2× middle, all same type)
+4. Broken-Wing Butterfly (butterfly with unequal wings)
+5. Ratio spreads (e.g. 1×2 back-ratio)
+
+Pure function + test fixtures for each pattern. Landing this unblocks the P&L-payoff diagram (iteration 22) from showing meaningful strategy-aware defaults (break-even / max-profit lines differ per strategy). Alternative: iteration 20 (expiration auto-exercise) is arguably a bigger correctness story — positions currently live forever in the paper book even past expiration, because nothing settles them. The OptionPosition's expiration field exists; what's missing is a ticker/hook that runs `legIntrinsicAtExpiration(contract)` and credits/debits on the first chain refresh after expiration.
+
+Iteration 20 (settlement) probably beats 19 (strategy name) for correctness priority — a position that silently stays open after its expiration date is a real bug, while "custom 2-leg" vs "iron condor" is cosmetic. Lean toward 20 next.

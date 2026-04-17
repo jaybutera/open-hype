@@ -23,6 +23,7 @@ import {
 interface Props {
   chain: OptionChain | null;
   engine: PaperEngine;
+  marketOpen: boolean;
 }
 
 type CloseFeedback = { spreadId: string; kind: 'success' | 'error'; message: string };
@@ -67,13 +68,14 @@ function fmtGreek(v: number, decimals: number = 3): string {
 interface SpreadRowProps {
   legs: OptionPosition[];
   chain: OptionChain | null;
+  marketOpen: boolean;
   expanded: boolean;
   onToggle: () => void;
   onClose: () => void;
   feedback: CloseFeedback | null;
 }
 
-function SpreadRow({ legs, chain, expanded, onToggle, onClose, feedback }: SpreadRowProps) {
+function SpreadRow({ legs, chain, marketOpen, expanded, onToggle, onClose, feedback }: SpreadRowProps) {
   const firstLeg = legs[0];
   const underlying = firstLeg.underlying;
   const chainMatches = chain && chain.underlying.toUpperCase() === underlying.toUpperCase();
@@ -92,12 +94,14 @@ function SpreadRow({ legs, chain, expanded, onToggle, onClose, feedback }: Sprea
   const pnlColor = pnlNum > 0 ? '#0ecb81' : pnlNum < 0 ? '#f6465d' : '#8a8f98';
   const dteLabel = nearest === farthest ? fmtDte(nearest) : `${fmtDte(nearest)} → ${fmtDte(farthest)}`;
 
-  const canClose = chainMatches && mark.legsPriced === legs.length;
-  const closeTitle = !chainMatches
-    ? `Load ${underlying}'s chain to enable closing`
-    : mark.legsPriced < legs.length
-      ? 'Chain is missing quotes for one or more legs'
-      : 'Close all legs at current mid';
+  const canClose = marketOpen && chainMatches && mark.legsPriced === legs.length;
+  const closeTitle = !marketOpen
+    ? 'Market closed — closing disabled until the market reopens'
+    : !chainMatches
+      ? `Load ${underlying}'s chain to enable closing`
+      : mark.legsPriced < legs.length
+        ? 'Chain is missing quotes for one or more legs'
+        : 'Close all legs at current mid';
 
   return (
     <div style={{ borderBottom: '1px solid #1a1f2e' }}>
@@ -256,7 +260,7 @@ function SpreadRow({ legs, chain, expanded, onToggle, onClose, feedback }: Sprea
   );
 }
 
-export function PositionsOptions({ chain, engine }: Props) {
+export function PositionsOptions({ chain, engine, marketOpen }: Props) {
   const rawPositions = useAccountStore((s) => s.paperOptionPositions);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [feedback, setFeedback] = useState<CloseFeedback | null>(null);
@@ -298,6 +302,10 @@ export function PositionsOptions({ chain, engine }: Props) {
   };
 
   const handleClose = (spreadId: string) => {
+    if (!marketOpen) {
+      setFeedback({ spreadId, kind: 'error', message: 'Market closed — closing disabled.' });
+      return;
+    }
     if (!chain) {
       setFeedback({ spreadId, kind: 'error', message: 'Chain not loaded.' });
       return;
@@ -360,6 +368,7 @@ export function PositionsOptions({ chain, engine }: Props) {
           key={spreadId}
           legs={legs}
           chain={chain}
+          marketOpen={marketOpen}
           expanded={expanded.has(spreadId)}
           onToggle={() => toggle(spreadId)}
           onClose={() => handleClose(spreadId)}

@@ -60,14 +60,25 @@ export function OptionsPage({ engine }: Props) {
     return () => clearInterval(t);
   }, []);
 
+  const open = isMarketOpen(now);
+  const reopen = open ? null : nextOpen(now);
+
   // Fetch chain when symbol or selectedExp changes. Symbol change clears exp and
   // loads the nearest expiration (the one Yahoo returns by default). Subsequent
   // exp changes refetch with ?date=.
+  //
+  // Market-closed policy: skip the fetch entirely. We never want to present
+  // stale quotes as live. If a chain was already loaded (market closed during a
+  // session), it stays frozen with the "Last updated" timestamp for context.
   useEffect(() => {
     if (!symbol) {
       setChain(null);
       setSelectedExp(null);
       setError(null);
+      setLoading(false);
+      return;
+    }
+    if (!open) {
       setLoading(false);
       return;
     }
@@ -94,7 +105,7 @@ export function OptionsPage({ engine }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [symbol, selectedExp]);
+  }, [symbol, selectedExp, open]);
 
   // Reset chain + exp + legs when the user switches symbol. Legs reference
   // contracts from the previous chain, so they can't survive the swap.
@@ -105,9 +116,6 @@ export function OptionsPage({ engine }: Props) {
     setLegs([]);
     setFeedback(null);
   };
-
-  const open = isMarketOpen(now);
-  const reopen = open ? null : nextOpen(now);
 
   const expirations = useMemo(() => chain?.expirations ?? [], [chain]);
 
@@ -166,6 +174,29 @@ export function OptionsPage({ engine }: Props) {
             )}
           </span>
         )}
+        {chain && (
+          <span
+            style={{
+              fontSize: 11,
+              color: open ? '#8a8f98' : '#f6465d',
+              fontStyle: open ? 'normal' : 'italic',
+            }}
+            title={
+              open
+                ? 'Chain data timestamp from last fetch'
+                : 'Market closed — chain frozen at last fetch; not live'
+            }
+          >
+            {open ? 'Last updated' : 'Frozen'}:{' '}
+            {new Date(chain.asOf * 1000).toLocaleTimeString('en-US', {
+              timeZone: 'America/New_York',
+              hour: 'numeric',
+              minute: '2-digit',
+              second: '2-digit',
+            })}{' '}
+            ET
+          </span>
+        )}
         {loading && (
           <span style={{ fontSize: 12, color: '#8a8f98' }}>Loading…</span>
         )}
@@ -197,8 +228,9 @@ export function OptionsPage({ engine }: Props) {
       {!chain && (
         <div style={{ padding: 24, color: '#8a8f98', fontSize: 13 }}>
           {!symbol && 'Select a symbol above to load its option chain.'}
-          {symbol && loading && `Loading chain for ${symbol}…`}
-          {symbol && error && `Could not load ${symbol}: ${error}`}
+          {symbol && !open && 'Market closed — option chains can be loaded when the market reopens.'}
+          {symbol && open && loading && `Loading chain for ${symbol}…`}
+          {symbol && open && error && `Could not load ${symbol}: ${error}`}
         </div>
       )}
       {chain && (
@@ -223,7 +255,7 @@ export function OptionsPage({ engine }: Props) {
         </div>
       )}
 
-      <PositionsOptions chain={chain} engine={engine} />
+      <PositionsOptions chain={chain} engine={engine} marketOpen={open} />
     </div>
   );
 }
