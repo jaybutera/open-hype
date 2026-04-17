@@ -3,6 +3,7 @@ import type { Leg, OptionContract } from '../types.ts';
 import {
   buildPayoffCurve,
   contractIntrinsic,
+  expirationExtrema,
   expirationPnl,
   findBreakevens,
   todayPnl,
@@ -250,5 +251,120 @@ describe('buildPayoffCurve', () => {
     const c3 = buildPayoffCurve([leg()], 400, { qtyScalar: 3, samples: 21, nowSec: NOW });
     expect(c3.yMin).toBeCloseTo(c1.yMin * 3, 4);
     expect(c3.yMax).toBeCloseTo(c1.yMax * 3, 4);
+  });
+});
+
+describe('expirationExtrema', () => {
+  it('empty legs → both extrema zero and bounded', () => {
+    const e = expirationExtrema([]);
+    expect(e.maxProfit.value).toBe(0);
+    expect(e.maxProfit.bounded).toBe(true);
+    expect(e.maxLoss.value).toBe(0);
+    expect(e.maxLoss.bounded).toBe(true);
+  });
+
+  it('long call: loss bounded at -premium, profit unbounded', () => {
+    const e = expirationExtrema([leg()]); // mid 10.5 at K=400
+    expect(e.maxLoss.bounded).toBe(true);
+    expect(e.maxLoss.value).toBeCloseTo(-10.5 * 100, 4);
+    expect(e.maxLoss.atPrice).toBeLessThanOrEqual(400);
+    expect(e.maxProfit.bounded).toBe(false);
+  });
+
+  it('short call: profit bounded at +premium, loss unbounded', () => {
+    const e = expirationExtrema([leg({ side: 'sell' })]);
+    expect(e.maxProfit.bounded).toBe(true);
+    expect(e.maxProfit.value).toBeCloseTo(10.5 * 100, 4);
+    expect(e.maxLoss.bounded).toBe(false);
+  });
+
+  it('long put: profit bounded at strike, loss bounded at -premium', () => {
+    const e = expirationExtrema([leg({}, { type: 'put', strike: 400 })]);
+    expect(e.maxProfit.bounded).toBe(true);
+    // At S=0, intrinsic = 400, premium = 10.5, so profit = 389.5 per share × 100
+    expect(e.maxProfit.value).toBeCloseTo(389.5 * 100, 4);
+    expect(e.maxProfit.atPrice).toBe(0);
+    expect(e.maxLoss.bounded).toBe(true);
+    expect(e.maxLoss.value).toBeCloseTo(-10.5 * 100, 4);
+  });
+
+  it('short put: profit bounded at +premium, loss bounded (ends at S=0)', () => {
+    const e = expirationExtrema([leg({ side: 'sell' }, { type: 'put', strike: 400 })]);
+    expect(e.maxProfit.bounded).toBe(true);
+    expect(e.maxProfit.value).toBeCloseTo(10.5 * 100, 4);
+    expect(e.maxLoss.bounded).toBe(true);
+    expect(e.maxLoss.value).toBeCloseTo(-389.5 * 100, 4);
+    expect(e.maxLoss.atPrice).toBe(0);
+  });
+
+  it('long call vertical debit spread: both sides bounded', () => {
+    // Long 400C @ 10.5, short 410C @ 5 — debit 5.5, width 10, max profit 4.5
+    const long = leg({}, { strike: 400, bid: 10, ask: 11 });
+    const short = leg({ side: 'sell' }, { strike: 410, bid: 4, ask: 6 });
+    const e = expirationExtrema([long, short]);
+    expect(e.maxProfit.bounded).toBe(true);
+    expect(e.maxProfit.value).toBeCloseTo(4.5 * 100, 4);
+    expect(e.maxLoss.bounded).toBe(true);
+    expect(e.maxLoss.value).toBeCloseTo(-5.5 * 100, 4);
+  });
+
+  it('iron condor: both sides bounded (defined risk, defined reward)', () => {
+    // Short put 390 @ 3, long put 380 @ 1, short call 420 @ 3, long call 430 @ 1
+    // Net credit per share = 3 - 1 + 3 - 1 = 4
+    // Max profit = 4 × 100 = $400 (between 390 and 420)
+    // Max loss = (width=10) - credit=4 = 6 per share = -$600 (below 380 or above 430)
+    const shortPut = leg(
+      { side: 'sell' },
+      { type: 'put', strike: 390, bid: 2.5, ask: 3.5, symbol: 'X:P390' },
+    );
+    const longPut = leg(
+      { side: 'buy' },
+      { type: 'put', strike: 380, bid: 0.5, ask: 1.5, symbol: 'X:P380' },
+    );
+    const shortCall = leg(
+      { side: 'sell' },
+      { type: 'call', strike: 420, bid: 2.5, ask: 3.5, symbol: 'X:C420' },
+    );
+    const longCall = leg(
+      { side: 'buy' },
+      { type: 'call', strike: 430, bid: 0.5, ask: 1.5, symbol: 'X:C430' },
+    );
+    const e = expirationExtrema([shortPut, longPut, shortCall, longCall]);
+    expect(e.maxProfit.bounded).toBe(true);
+    expect(e.maxProfit.value).toBeCloseTo(4 * 100, 4);
+    expect(e.maxLoss.bounded).toBe(true);
+    expect(e.maxLoss.value).toBeCloseTo(-6 * 100, 4);
+  });
+
+  it('long straddle: loss bounded at -total premium, profit unbounded on both sides', () => {
+    const call = leg({}, { type: 'call', strike: 400, bid: 10, ask: 11, symbol: 'X:C' }); // mid 10.5
+    const put = leg({}, { type: 'put', strike: 400, bid: 9, ask: 10, symbol: 'X:P' }); // mid 9.5
+    const e = expirationExtrema([call, put]);
+    expect(e.maxProfit.bounded).toBe(false); // unbounded on the call side
+    expect(e.maxLoss.bounded).toBe(true);
+    expect(e.maxLoss.value).toBeCloseTo(-(10.5 + 9.5) * 100, 4);
+    expect(e.maxLoss.atPrice).toBe(400);
+  });
+
+  it('scales linearly with qtyScalar', () => {
+    const e1 = expirationExtrema([leg()], 1);
+    const e2 = expirationExtrema([leg()], 2);
+    expect(e2.maxLoss.value).toBeCloseTo(e1.maxLoss.value * 2, 4);
+  });
+
+  it('short straddle: profit bounded at +total premium, loss unbounded', () => {
+    const call = leg({ side: 'sell' }, { type: 'call', strike: 400, bid: 10, ask: 11, symbol: 'X:C' });
+    const put = leg({ side: 'sell' }, { type: 'put', strike: 400, bid: 9, ask: 10, symbol: 'X:P' });
+    const e = expirationExtrema([call, put]);
+    expect(e.maxProfit.bounded).toBe(true);
+    expect(e.maxProfit.value).toBeCloseTo((10.5 + 9.5) * 100, 4);
+    expect(e.maxLoss.bounded).toBe(false);
+  });
+
+  it('naked short call has unbounded loss, extremum at far right probe', () => {
+    const e = expirationExtrema([leg({ side: 'sell' })]);
+    expect(e.maxLoss.bounded).toBe(false);
+    // The reported atPrice should be the far-right probe (2*K+1 = 801)
+    expect(e.maxLoss.atPrice).toBeGreaterThan(400);
   });
 });

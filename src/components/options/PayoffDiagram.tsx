@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { Leg } from '../../services/options/types.ts';
-import { buildPayoffCurve } from '../../services/options/payoff.ts';
+import { buildPayoffCurve, expirationExtrema } from '../../services/options/payoff.ts';
 
 interface Props {
   legs: Leg[];
@@ -38,6 +38,8 @@ export function PayoffDiagram({
     () => buildPayoffCurve(legs, underlyingPrice, { qtyScalar, nowSec, samples: 121 }),
     [legs, underlyingPrice, qtyScalar, nowSec],
   );
+
+  const extrema = useMemo(() => expirationExtrema(legs, qtyScalar), [legs, qtyScalar]);
 
   if (legs.length === 0 || (curve.yMin === 0 && curve.yMax === 0)) {
     return null;
@@ -143,6 +145,44 @@ export function PayoffDiagram({
       {/* Expiration curve (solid) */}
       <path d={pathExp} fill="none" stroke={COL_TEXT} strokeWidth={1.5} />
 
+      {/* Max profit / max loss horizontal annotations (bounded only) */}
+      {extrema.maxProfit.bounded && extrema.maxProfit.value > 0 && (() => {
+        const y = yScale(extrema.maxProfit.value);
+        if (y < padT || y > padT + plotH) return null;
+        return (
+          <g>
+            <line
+              x1={padL} x2={width - padR} y1={y} y2={y}
+              stroke={COL_SELL} strokeDasharray="4 3" strokeWidth={1} opacity={0.7}
+            />
+            <text
+              x={width - padR - 2} y={y - 2}
+              fontSize={9} fill={COL_SELL} textAnchor="end" fontWeight={600}
+            >
+              Max +{fmtMoney(extrema.maxProfit.value)}
+            </text>
+          </g>
+        );
+      })()}
+      {extrema.maxLoss.bounded && extrema.maxLoss.value < 0 && (() => {
+        const y = yScale(extrema.maxLoss.value);
+        if (y < padT || y > padT + plotH) return null;
+        return (
+          <g>
+            <line
+              x1={padL} x2={width - padR} y1={y} y2={y}
+              stroke={COL_BUY} strokeDasharray="4 3" strokeWidth={1} opacity={0.7}
+            />
+            <text
+              x={width - padR - 2} y={y + 9}
+              fontSize={9} fill={COL_BUY} textAnchor="end" fontWeight={600}
+            >
+              Max {fmtMoney(extrema.maxLoss.value)}
+            </text>
+          </g>
+        );
+      })()}
+
       {/* Y-axis labels (min / 0 / max) */}
       <text x={padL - 4} y={padT + 8} fontSize={9} fill={COL_TEXT} textAnchor="end">
         {fmtMoney(yMax)}
@@ -181,6 +221,17 @@ export function PayoffDiagram({
         <line x1={30} x2={40} y1={4} y2={4} stroke={COL_TEXT} strokeWidth={1} strokeDasharray="3 3" />
         <text x={42} y={7} fontSize={9} fill={COL_TEXT}>Today</text>
       </g>
+
+      {/* Unbounded-risk callouts, top-right */}
+      {(!extrema.maxProfit.bounded || !extrema.maxLoss.bounded) && (
+        <text
+          x={width - padR - 2} y={padT + 9}
+          fontSize={9} fill={!extrema.maxLoss.bounded ? COL_BUY : COL_SELL}
+          textAnchor="end" fontWeight={700}
+        >
+          {!extrema.maxLoss.bounded ? 'Unlimited loss' : 'Unlimited profit'}
+        </text>
+      )}
     </svg>
   );
 }

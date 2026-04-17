@@ -162,3 +162,96 @@ export function buildPayoffCurve(
   const breakevens = findBreakevens(samples);
   return { samples, xMin, xMax, yMin, yMax, breakevens };
 }
+
+export interface PayoffExtrema {
+  /**
+   * Max profit in dollars at expiration. `bounded` indicates whether the
+   * payoff is capped on the upside — if unbounded (e.g. long call), `value` is
+   * still the best value observed at the high-side tail but should be shown as
+   * "Unlimited" to the user.
+   */
+  maxProfit: { value: number; bounded: boolean; atPrice: number };
+  /** Max loss (negative or zero) in dollars at expiration. Same bounded semantics. */
+  maxLoss: { value: number; bounded: boolean; atPrice: number };
+}
+
+/**
+ * Slope of the signed per-share expiration payoff as S → +∞ (right tail).
+ * At very high underlying prices: every put is worthless, every call has
+ * intrinsic S-K, so each call contributes `+qty × sign` to the slope.
+ *
+ * Only the right tail is tracked — S is physically floored at 0, so the left
+ * "tail" is really just the S=0 boundary, which is enumerated explicitly in
+ * the candidate list.
+ */
+function rightTailSlope(legs: Leg[], qtyScalar: number = 1): number {
+  let s = 0;
+  for (const leg of legs) {
+    if (leg.contract.type !== 'call') continue;
+    const sign = leg.side === 'buy' ? 1 : -1;
+    s += sign * leg.qty * qtyScalar;
+  }
+  return s * CONTRACT_MULTIPLIER;
+}
+
+/**
+ * Maximum profit / maximum loss for a basket of option legs at expiration.
+ * Uses the piecewise-linear nature of option payoffs: extrema occur at one of
+ * {S=0, each strike, S→∞}. Samples the payoff at each candidate price and
+ * reports the best/worst. The `bounded` flag uses the right-tail slope — the
+ * only side that can actually diverge, since S is floored at 0.
+ *
+ * Returns `{maxProfit: {value: 0, bounded: true, atPrice: 0}, maxLoss: same}`
+ * for empty legs.
+ */
+export function expirationExtrema(
+  legs: Leg[],
+  qtyScalar: number = 1,
+): PayoffExtrema {
+  if (legs.length === 0) {
+    return {
+      maxProfit: { value: 0, bounded: true, atPrice: 0 },
+      maxLoss: { value: 0, bounded: true, atPrice: 0 },
+    };
+  }
+
+  const strikes = legs.map((l) => l.contract.strike);
+  const candidates = new Set<number>();
+  candidates.add(0);
+  for (const k of strikes) candidates.add(k);
+  // A far-right probe — anchors the evaluation so we can read the right-tail
+  // value at a concrete sample. The exact distance doesn't matter for a
+  // bounded payoff (slope is 0 there), and for an unbounded payoff we only
+  // use the slope — not the probed value — to label as "Unlimited".
+  const maxStrike = Math.max(...strikes, 0);
+  candidates.add(maxStrike * 2 + 1);
+
+  const sorted = Array.from(candidates).sort((a, b) => a - b);
+  let bestProfit = -Infinity;
+  let bestProfitAt = sorted[0];
+  let worstLoss = Infinity;
+  let worstLossAt = sorted[0];
+  for (const S of sorted) {
+    const v = expirationPnl(legs, S, qtyScalar);
+    if (v > bestProfit) {
+      bestProfit = v;
+      bestProfitAt = S;
+    }
+    if (v < worstLoss) {
+      worstLoss = v;
+      worstLossAt = S;
+    }
+  }
+
+  // Only the right tail can actually diverge — S is physically floored at 0
+  // (stock prices can't go negative), so a "left-unbounded" payoff is really
+  // just bounded at S=0 and already enumerated above.
+  const rightSlope = rightTailSlope(legs, qtyScalar);
+  const profitBounded = rightSlope <= 0;
+  const lossBounded = rightSlope >= 0;
+
+  return {
+    maxProfit: { value: bestProfit, bounded: profitBounded, atPrice: bestProfitAt },
+    maxLoss: { value: worstLoss, bounded: lossBounded, atPrice: worstLossAt },
+  };
+}
