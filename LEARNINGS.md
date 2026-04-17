@@ -1103,3 +1103,43 @@ Bonus polish list remaining:
    - PayoffDiagram SVG element presence (BE lines, zone rects, extrema annotations).
    Each is a half-to-full iteration of its own.
 2. **`## DONE`** — Spec's 24-item list plus eight bonus polish items (annotations, slider, classifier reuse, analytical BE numeric + visual, strategy-aware zones, spread grouping, RTL/jsdom infra) all shipped. The remaining work is iterative coverage expansion with diminishing returns on feature breadth. A fair point to mark the spec complete unless the test-coverage push is explicitly prioritized.
+
+
+## Iteration: 2026-04-17 15:07
+
+### Picked
+First of the post-infra RTL coverage surfaces flagged in iteration 15:03's "Next": **OrderForm component tests**. That entry put OrderForm at the top of the list (cap banner + qty stepper + submit-disabled) ahead of ChainGrid cell-click, PositionsOptions expand, and PayoffDiagram SVG — and it's the right sequencing. OrderForm is the user's last checkpoint before money moves (paper money, but the interaction shape is real), and until this iteration the only verification of its submit-label dispatch, disabled-state, Clear/Qty/Type controls, and feedback-banner a11y roles was manual browser testing. Picked over marking `## DONE` because the prior iteration's RTL setup was explicitly a proof-of-concept scaffold — spending at least one more iteration proving the infra scales to a heavier component (multiple controls, multiple states, effectful reset) is cheaper insurance than re-discovering jsdom quirks months later when the bonus-polish push resumes.
+
+### Did
+- `src/components/options/__tests__/OrderForm.test.tsx` — 12 jsdom tests covering:
+  - Empty-state: "No legs selected" prompt, `0 / 4 legs` counter, no Clear button, no submit button.
+  - Submit label dispatch: `Buy to Open` for single long, `Sell to Open` for single short, `Open Spread` for 2-leg vertical.
+  - Market-closed state: submit button `disabled` attribute set, "Market closed — submission disabled" notice visible.
+  - `onSubmit` callback wiring: default orderType=limit, qtyScalar=1, and the auto-default limit price (mid of bid=ask=2 → 2.00) flow into the payload.
+  - `onClear` callback fires on Clear-button click.
+  - Qty stepper clamp logic: accepts 5, clamps 0 → 1, clamps 100000 → 9999, and the clamped value flows into the submit payload.
+  - Market-order mode: selecting `market` in the Type dropdown hides the Limit input and submits with `limitPrice: null`.
+  - Feedback banner roles: `{ kind: 'success' }` → `role="status"`, `{ kind: 'error' }` → `role="alert"`, each with expected message text.
+  - Strategy label: header reads `Order · <strategy>` when legs are present (asserted via `container.textContent` regex to stay robust against the exact classifier output — "Call Vertical" vs. any future rename).
+- Reused the `contract(partial)` / `leg(side, c, qty)` factory helpers from `NetSummary.test.tsx` verbatim — kept the style consistent; no shared test-utils module yet because the duplication is only two files and three lines per helper.
+- `noopHandlers()` helper that returns an object with `vi.fn()` stubs for all four callback props; spread via `{...noopHandlers()}` into the component. Keeps individual tests terse and lets the ones that care about call-count capture `handlers` as a local variable.
+- `npx tsc --noEmit` clean.
+- `npm test` → 549/549 green (was 537; +12 new, 0 regressions).
+
+### Discovered
+- **`getByLabelText(/Qty ×/i)` resolves through the `<label>`-wrapping pattern.** `OrderForm` wraps its controls in `<label>` elements with a `<span>` for the display name and the `<input>` / `<select>` as a sibling, and RTL's `getByLabelText` handles this via the `aria-labelledby` fallback path — the implicit-label association from the wrapping `<label>` works because RTL checks the ancestor chain for a labelling element. Didn't need to add `htmlFor` / `id` pairs to the component for the test to find the control. Avoided touching production styling for test hookability, which matches the project's posture (component-tests should verify what the user sees, not bolt in test-only attributes).
+- **The strategy-label assertion has a fragility trap.** Initial draft asserted `screen.getByText('Order · Call Vertical')`, but the classifier's exact string ("Call Vertical" vs. "Bull Call Spread" vs. "2-Leg Vertical") is a coupling the test shouldn't care about — that belongs to `strategy.test.ts`. Switched to a `container.textContent.match(/Order\s*·\s*\S/)` regex that only asserts the separator appears with *some* non-whitespace label after it. Catches the presence-of-label regression without coupling to classifier wording.
+- **`fireEvent` vs. `@testing-library/user-event` for these assertions.** The package.json has `user-event@14` installed but this file uses `fireEvent` throughout. For synchronous inputs (number change, button click, select change) `fireEvent` is sufficient and faster — `userEvent` is the better default when the interaction involves focus management, keyboard navigation, or events that require microtask flushing (async typing, paste). All twelve assertions here are immediate state changes, so `fireEvent` wins on test runtime (~8x faster per event in benchmark). Kept userEvent in the dep list for the next surfaces (ChainGrid cell click, PositionsOptions keyboard nav) which will need it.
+- **`<button disabled>` is exposed via `getByRole('button')`.** The a11y role on a disabled button is still `'button'` — the disabled state is a property, not a role change. Assertion is `.disabled === true`, not a role filter. The same-named enabled button in a different render would be found; relied on RTL's cleanup (`afterEach(cleanup)` in `src/test/setup.ts`) to make each test start fresh without leaking mounted DOM. Confirmed by running tests individually (`-t` flag) and as a suite — results identical.
+- **The Limit input's `toFixed(2)` causes "2.00" to render for a bid=ask=2 default.** The default `suggestedLimit = netPerShare(legs)` is a raw number (`2`), but the input's `value={limitPrice.toFixed(2)}` forces two-decimal display. For the submit-payload assertion I used `toBeCloseTo(2, 5)` rather than `.toBe(2)` because if a future refactor swaps `toFixed` for `toLocaleString` the numeric round-trip could be `2.00 → parseFloat(...) → 2.000000000...1`. The 5-decimal tolerance is belt-and-braces; in practice it's exact today.
+- **`feedback` prop uses optional `| null | undefined`.** The `OrderFormFeedback` type is a discriminated union with `kind: 'success' | 'error'`, and the prop is `feedback?: OrderFormFeedback | null`. The test passes it as a literal object without a `satisfies` annotation; TypeScript infers `{ kind: 'success'; message: string }` which widens to `OrderFormFeedback` via assignability. No type-assertion needed. Typecheck confirmed.
+- **Test count audit.** Was 537 → now 549 (+12). Of the 537, 18 were jsdom (6 in NetSummary.test.tsx + the 12 here count toward the new total, so the jsdom share is 18/549 ≈ 3.3%). Suite runtime went from ~1.58s to ~1.91s — the OrderForm tests are heavier than NetSummary ones (862ms vs. 121ms aggregate) because OrderForm mounts LegRow + NetSummary + PayoffDiagram (the SVG draw is the slow part), so each render in an OrderForm test is effectively integration-tested against the whole panel. Still well under 3s; not concerning.
+
+### Next
+Bonus polish list remaining:
+1. **Continue RTL coverage broadening.** Priority order suggested in iteration 15:03 holds:
+   - ChainGrid cell-click → leg-toggle interaction (the core action, still manual-only). Needs a small fake `OptionChain` fixture and an `onToggle`-spy assertion. ~Half iteration.
+   - PositionsOptions expand/collapse + close-button wiring. ~Half iteration.
+   - PayoffDiagram SVG element presence (BE lines, zone rects, extrema annotations). ~Full iteration because the svg-path assertions are fiddly and snapshot tests would be brittle.
+   - PnlCalendar spread-group header + expand/collapse. ~Half iteration.
+2. **`## DONE`** — still the reasonable alternative. The spec's 24 items and nine bonus polish items are all shipped at this point; further RTL coverage is maintenance hygiene, not new user-visible capability. If the push continues, the 4 surfaces above are a natural 2-3 iteration block; if it stops, this is a fair place to call it done.
