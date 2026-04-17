@@ -7,6 +7,7 @@ import {
 import { MAX_LEGS } from '../../services/options/legs.ts';
 import { LegRow } from './LegRow.tsx';
 import { NetSummary } from './NetSummary.tsx';
+import { PayoffDiagram } from './PayoffDiagram.tsx';
 
 export type OrderType = 'limit' | 'market';
 
@@ -124,6 +125,23 @@ export function OrderForm({
       </div>
 
       <NetSummary legs={legs} underlyingPrice={underlyingPrice} qtyScalar={qtyScalar} />
+
+      {legs.length > 0 && (
+        <div style={{
+          padding: '8px 12px',
+          borderTop: '1px solid #1a1f2e',
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          <span style={{ color: '#8a8f98', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase', fontWeight: 700 }}>
+            Payoff
+          </span>
+          <PayoffDiagram
+            legs={legs}
+            underlyingPrice={underlyingPrice}
+            qtyScalar={qtyScalar}
+          />
+        </div>
+      )}
 
       {feedback && (
         <div

@@ -699,3 +699,48 @@ Iteration 19: strategy auto-detection. Pure-logic, low-risk, self-contained — 
 Alternatively **iteration 23 (chain-metrics column customization)** — let the user toggle which 2 of {IV, delta, volume, OI} columns render in the chain grid. Small, self-contained, low-risk.
 
 Payoff diagram is the bigger visible win; chain-metrics customization is the safer scope. Lean toward payoff diagram unless wanting a quick polish pass.
+
+## Iteration: 2026-04-17 12:09
+
+### Picked
+Iteration 22: payoff diagram. Last significant user-facing feature left per iteration 19's note — the strategy classifier was already in place, so a P&L-vs-underlying chart completes the "plan before submit" UX loop. Picked over iteration 23 (chain-metrics column customization) because payoff is the bigger visible win and the spec explicitly names it as a nice-to-have that was never landed.
+
+### Did
+- `src/services/options/payoff.ts` — pure module:
+  - `contractIntrinsic(type, K, S)` — max(0, S−K) for calls, max(0, K−S) for puts.
+  - `expirationPnl(legs, S, qtyScalar=1)` — summed `(intrinsic − entryMark) × sign × qty × scalar × 100` across legs. Entry mark comes from `legMark` (mid, falling back through bid/ask/last) so the diagram assumes a hypothetical fill at the currently-displayed mid.
+  - `todayPnl(legs, S, nowSec, qtyScalar=1)` — same structure but uses `blackScholes(...).price` at each hypothetical S instead of intrinsic. Degenerate branch (T≤0 or σ≤0) already yields intrinsic inside `blackScholes`, so today → expiration convergence on expiration day is automatic.
+  - `findBreakevens(samples)` — linear-interpolated zero-crossings of the expiration P&L series.
+  - `buildPayoffCurve(legs, centerPrice, opts)` — evenly samples both curves across `center × (1 ± rangePct)` (default ±30%, clamped at 0 below), returns `{ samples, xMin, xMax, yMin, yMax, breakevens }`.
+- `src/services/options/__tests__/payoff.test.ts` — 32 tests: intrinsic math (call/put ITM/OTM/ATM), expiration PnL sign for long/short calls + puts (capped gain, unbounded loss), vertical debit spread capping at width−debit, qty/qtyScalar linearity, empty-legs zero invariant, todayPnl monotonicity in S for long/short calls, today→expiration convergence on expiration-day `nowSec`, findBreakevens zero-crossing interpolation (single, double, exact-zero sample, same-sign no-cross), buildPayoffCurve sample count, default/custom rangePct, xMin≥0 clamp, yMin/yMax coverage, long-call single breakeven at K+premium, long-straddle symmetric breakevens at K±premiums, empty-legs no-op, qtyScalar linear scaling of yMin/yMax.
+- `src/components/options/PayoffDiagram.tsx` — SVG component (316×160 default, fits the 340px right column). Renders:
+  - Plot frame + zero line.
+  - Green fill above zero / red fill below zero on the expiration curve — RH-Legend-style profit/loss bands with 10% alpha.
+  - Solid expiration curve + dotted "today" curve (via BS at each leg's IV).
+  - Dashed vertical spot line in `#3861fb`, labeled with current underlying price at the bottom.
+  - Breakeven vertical lines with `BE <price>` labels at the top.
+  - Y-axis labels: yMax top, 0 center, yMin bottom (formatted with k-suffix ≥ $1000).
+  - X-axis labels: xMin / spot (bold blue) / xMax.
+  - Mini legend in the top-left ("Exp" solid, "Today" dotted).
+  - Returns `null` when no legs or the computed curve is flat at 0.
+- `src/components/options/OrderForm.tsx` — new `Payoff` section between `NetSummary` and the feedback banner. Only renders when `legs.length > 0`. Reacts to `qtyScalar` via `PayoffDiagram` prop so adjusting total qty rescales the y-axis live.
+- `npx tsc --noEmit` clean.
+- `npm test` → 389/389 green (was 357; +32 new in `payoff.test.ts`).
+
+### Discovered
+- **`contractIntrinsic` is the right primitive to export** rather than reusing the engine's `legIntrinsicAtExpiration` from `settlement.ts`. The engine version takes an `OptionPosition` with a `Decimal` strike; the UI wants a plain-number version over `(type, K, S)`. Two tiny independent functions are cleaner than crossing the engine/service boundary in the wrong direction (service → engine) just to reuse one `Math.max` call. Flagged if someone wants to consolidate later: it's pure math, one definition per layer is fine.
+- **Entry mark for the payoff curve is `legMark(leg).mark`**, not the leg's historical fill price or a user-set limit. The diagram shows "here's what happens IF you fill now at the displayed mid" — that's the most legible interpretation when the leg hasn't been filled yet (this is an OrderForm component, not a positions view). A positions-level payoff diagram that uses actual fill prices would be a separate component; not in scope.
+- **SVG over canvas/recharts**: recharts would pull in a 100KB+ dep and we already don't have it; canvas adds a second rendering paradigm. Inline SVG is 120 lines, renders crisp at any DPI, and the component tree stays declarative. The curves are only 121 samples — SVG path perf is a non-issue at this scale.
+- **Filled profit/loss bands required a second polygon pair** because a single filled path that crosses zero would wind over itself and shade both sides the same color. Split into two polygons (`aboveZero` clipped to max(0, expiration); `belowZero` clipped to min(0, expiration)) with opposite fill colors. Robinhood Legend does something similar, and visually the green-above / red-below cue is the first thing traders look at.
+- **Degenerate-curve guard (`yMin === 0 && yMax === 0`)** is important: a single long-call at `bid=0 ask=0` produces an entry mark of 0 and a flat-zero curve, which would render as a degenerate box with zero height and divide-by-zero in the yScale. Returning `null` in that case hides the diagram rather than rendering a broken SVG.
+- **BS "today" line is genuinely different from "expiration"** even for vanilla long calls — `todayPnl` is smooth and monotonic while `expirationPnl` has a kink at the strike. For a straddle at ATM, "today" sags below zero by roughly `−2 × premium` near the strike while "expiration" peaks V-shape. That visual difference is the whole point of having two lines. Verified by eye during dev.
+- **Linear-interpolated breakevens are accurate to the sampling resolution** (121 samples over ±30% → ~$0.99 resolution on a $400 underlying at default range). The test pinned long-call breakeven to `strike + premium` within 0.1 tolerance; straddle breakevens within 0.1 tolerance as well. If we ever want pixel-perfect breakevens (e.g. displayed as a numeric under the chart), bisection on `expirationPnl(S)` would get it exact in a handful of iterations.
+- **`buildPayoffCurve` uses `Math.floor(Date.now()/1000)` as default `nowSec`**. Makes the component non-deterministic for tests that don't pass `nowSec`, but all 32 payoff tests pass it explicitly. The component itself accepts a `nowSec` prop but `OptionsPage` doesn't pass one yet — it relies on the default. If future iterations add time-slider UI (e.g. "what if I close 5 days early"), that prop is already threaded.
+- **No jsdom/RTL still**, so the component has no dedicated render test. The pure math has 32 tests; the SVG rendering is visual-only. Acceptable for this codebase's testing posture.
+
+### Next
+**Iteration 23: chain-metrics column customization.** Let the user toggle which 2 of {IV, delta, volume, OI} columns render in the chain grid. Small, self-contained. Delta would need per-row BS computation (194 strikes × 2 sides ≈ 400 BS calls per render) — `useMemo` on chain identity keeps this cheap.
+
+**Iteration 24: polish — loading/error/empty states, 4-leg limit enforcement messaging.** Final cleanup pass. Loading spinner on chain fetch, better error messages (404 vs. network vs. Yahoo rate-limit), visible affordance when at the 4-leg cap (currently just silently drops new clicks).
+
+After 23 & 24 the spec is effectively complete. Possible future extras: strategy-aware payoff annotations (max profit / max loss horizontal lines, not just breakevens), time/IV sliders on the payoff diagram, a time-series payoff animation.
