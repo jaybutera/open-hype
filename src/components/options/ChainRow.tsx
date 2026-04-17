@@ -1,5 +1,9 @@
 import type { Leg, OptionContract } from '../../services/options/types.ts';
 import { hasLeg } from '../../services/options/legs.ts';
+import {
+  type ChainMetricKey,
+  formatMetricValue,
+} from '../../services/options/chainMetrics.ts';
 
 interface Props {
   strike: number;
@@ -9,25 +13,13 @@ interface Props {
   legs: Leg[];
   onCellClick: (contract: OptionContract, side: 'buy' | 'sell') => void;
   atCapacity: boolean;
+  metrics: [ChainMetricKey, ChainMetricKey];
+  nowSec?: number;
 }
 
 function fmtPrice(n: number): string {
   if (!Number.isFinite(n) || n === 0) return '—';
   return n.toFixed(2);
-}
-
-function fmtIv(iv: number): string {
-  if (!Number.isFinite(iv) || iv <= 0) return '—';
-  if (iv > 5) return `${(iv * 100).toFixed(0)}%*`;
-  return `${(iv * 100).toFixed(1)}%`;
-}
-
-function fmtInt(n: number): string {
-  if (!Number.isFinite(n) || n < 0) return '—';
-  if (n === 0) return '0';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(Math.round(n));
 }
 
 const ROW_BORDER = '1px solid #1a1f2e';
@@ -78,6 +70,8 @@ export function ChainRow({
   legs,
   onCellClick,
   atCapacity,
+  metrics,
+  nowSec,
 }: Props) {
   const callItm = call?.inTheMoney ?? strike < underlyingPrice;
   const putItm = put?.inTheMoney ?? strike > underlyingPrice;
@@ -92,6 +86,9 @@ export function ChainRow({
   const putBidInteractive = !!put && put.bid > 0 && (!atCapacity || putBidSelected || putAskSelected);
   const putAskInteractive = !!put && put.ask > 0 && (!atCapacity || putAskSelected || putBidSelected);
 
+  const metricCtx = { underlyingPrice, nowSec };
+  const [metricA, metricB] = metrics;
+
   return (
     <tr
       style={{
@@ -102,10 +99,10 @@ export function ChainRow({
     >
       {/* CALL side (left) */}
       <td style={{ ...RIGHT_ALIGN, background: callItm ? ITM_BG : 'transparent', color: '#8a8f98' }}>
-        {call ? fmtIv(call.iv) : ''}
+        {formatMetricValue(metricA, call, metricCtx)}
       </td>
       <td style={{ ...RIGHT_ALIGN, background: callItm ? ITM_BG : 'transparent', color: '#8a8f98' }}>
-        {call ? fmtInt(call.openInterest) : ''}
+        {formatMetricValue(metricB, call, metricCtx)}
       </td>
       <td
         style={tradeCellStyle({
@@ -181,10 +178,10 @@ export function ChainRow({
         {put ? fmtPrice(put.ask) : ''}
       </td>
       <td style={{ ...LEFT_ALIGN, background: putItm ? ITM_BG : 'transparent', color: '#8a8f98' }}>
-        {put ? fmtInt(put.openInterest) : ''}
+        {formatMetricValue(metricB, put, metricCtx)}
       </td>
       <td style={{ ...LEFT_ALIGN, background: putItm ? ITM_BG : 'transparent', color: '#8a8f98' }}>
-        {put ? fmtIv(put.iv) : ''}
+        {formatMetricValue(metricA, put, metricCtx)}
       </td>
     </tr>
   );

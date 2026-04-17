@@ -1,6 +1,14 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Leg, OptionChain, OptionContract } from '../../services/options/types.ts';
 import { MAX_LEGS } from '../../services/options/legs.ts';
+import {
+  ALL_METRICS,
+  CHAIN_METRICS,
+  type ChainMetricKey,
+  loadChainMetrics,
+  saveChainMetrics,
+  toggleMetric,
+} from '../../services/options/chainMetrics.ts';
 import { ChainRow } from './ChainRow.tsx';
 
 interface Props {
@@ -44,9 +52,22 @@ const HEADER_CELL: React.CSSProperties = {
   borderBottom: '1px solid #2a2f3e',
 };
 
+function metricHeaderLabel(key: ChainMetricKey): string {
+  return CHAIN_METRICS[key].label;
+}
+
 export function ChainGrid({ chain, legs, onCellClick }: Props) {
   const rows = useMemo(() => buildStrikeRows(chain), [chain]);
   const atCapacity = legs.length >= MAX_LEGS;
+  const [metrics, setMetrics] = useState<[ChainMetricKey, ChainMetricKey]>(() => loadChainMetrics());
+
+  useEffect(() => {
+    saveChainMetrics(metrics);
+  }, [metrics]);
+
+  const onToggleMetric = useCallback((key: ChainMetricKey) => {
+    setMetrics((prev) => toggleMetric(prev, key));
+  }, []);
 
   if (rows.length === 0) {
     return (
@@ -62,7 +83,7 @@ export function ChainGrid({ chain, legs, onCellClick }: Props) {
         style={{
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'baseline',
+          alignItems: 'center',
           padding: '4px 0 8px 0',
           fontSize: 11,
           color: '#8a8f98',
@@ -72,6 +93,7 @@ export function ChainGrid({ chain, legs, onCellClick }: Props) {
         }}
       >
         <span>Calls</span>
+        <MetricPicker metrics={metrics} onToggle={onToggleMetric} />
         <span>Puts</span>
       </div>
       <table
@@ -95,15 +117,15 @@ export function ChainGrid({ chain, legs, onCellClick }: Props) {
         </colgroup>
         <thead>
           <tr>
-            <th style={{ ...HEADER_CELL, textAlign: 'right' }}>IV</th>
-            <th style={{ ...HEADER_CELL, textAlign: 'right' }}>OI</th>
+            <th style={{ ...HEADER_CELL, textAlign: 'right' }}>{metricHeaderLabel(metrics[0])}</th>
+            <th style={{ ...HEADER_CELL, textAlign: 'right' }}>{metricHeaderLabel(metrics[1])}</th>
             <th style={{ ...HEADER_CELL, textAlign: 'right', color: '#0ecb81' }}>Bid</th>
             <th style={{ ...HEADER_CELL, textAlign: 'right', color: '#f6465d' }}>Ask</th>
             <th style={{ ...HEADER_CELL, textAlign: 'center', color: '#e1e4e8' }}>Strike</th>
             <th style={{ ...HEADER_CELL, textAlign: 'left', color: '#0ecb81' }}>Bid</th>
             <th style={{ ...HEADER_CELL, textAlign: 'left', color: '#f6465d' }}>Ask</th>
-            <th style={{ ...HEADER_CELL, textAlign: 'left' }}>OI</th>
-            <th style={{ ...HEADER_CELL, textAlign: 'left' }}>IV</th>
+            <th style={{ ...HEADER_CELL, textAlign: 'left' }}>{metricHeaderLabel(metrics[1])}</th>
+            <th style={{ ...HEADER_CELL, textAlign: 'left' }}>{metricHeaderLabel(metrics[0])}</th>
           </tr>
         </thead>
         <tbody>
@@ -117,10 +139,52 @@ export function ChainGrid({ chain, legs, onCellClick }: Props) {
               legs={legs}
               onCellClick={onCellClick}
               atCapacity={atCapacity}
+              metrics={metrics}
+              nowSec={chain.asOf}
             />
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+interface PickerProps {
+  metrics: [ChainMetricKey, ChainMetricKey];
+  onToggle: (key: ChainMetricKey) => void;
+}
+
+function MetricPicker({ metrics, onToggle }: PickerProps) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, textTransform: 'none', letterSpacing: 0 }}>
+      <span style={{ fontSize: 10, color: '#5a5f68', marginRight: 4, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+        Columns
+      </span>
+      {ALL_METRICS.map((k) => {
+        const active = metrics.includes(k);
+        return (
+          <button
+            key={k}
+            type="button"
+            onClick={() => onToggle(k)}
+            title={CHAIN_METRICS[k].description}
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              padding: '3px 8px',
+              background: active ? 'rgba(56,97,251,0.18)' : 'transparent',
+              color: active ? '#e1e4e8' : '#8a8f98',
+              border: `1px solid ${active ? '#3861fb' : '#2a2f3e'}`,
+              cursor: 'pointer',
+              letterSpacing: 0.5,
+              textTransform: 'uppercase',
+              borderRadius: 0,
+            }}
+          >
+            {CHAIN_METRICS[k].label}
+          </button>
+        );
+      })}
     </div>
   );
 }
