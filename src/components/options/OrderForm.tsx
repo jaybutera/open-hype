@@ -44,6 +44,10 @@ export function OrderForm({
   const [qtyScalar, setQtyScalar] = useState(1);
   // null = auto-default to net mid. User-typed number takes precedence.
   const [limitOverride, setLimitOverride] = useState<number | null>(null);
+  // 0 = "today" (real now); 1 = nearest leg expiration. The slider scrubs the
+  // BS "today" curve forward in time so the user can see how the position
+  // evolves under pure theta decay (S held constant per the diagram's x-axis).
+  const [decayProgress, setDecayProgress] = useState(0);
 
   const perShare = useMemo(() => netPerShare(legs), [legs]);
   const suggestedLimit = perShare;
@@ -54,6 +58,23 @@ export function OrderForm({
   useEffect(() => {
     setLimitOverride(null);
   }, [legs.length]);
+
+  // Reset the decay slider when the leg set changes — a new strategy starts
+  // back at "today" so the user isn't carrying over a half-decayed view.
+  useEffect(() => {
+    setDecayProgress(0);
+  }, [legs.length]);
+
+  const decay = useMemo(() => {
+    if (legs.length === 0) return null;
+    const nowReal = Math.floor(Date.now() / 1000);
+    const nearestExp = Math.min(...legs.map((l) => l.contract.expiration));
+    const span = Math.max(0, nearestExp - nowReal);
+    const nowSec = nowReal + Math.round(span * decayProgress);
+    const daysFromNow = (nowSec - nowReal) / 86400;
+    const daysToExp = Math.max(0, (nearestExp - nowSec) / 86400);
+    return { nowSec, span, daysFromNow, daysToExp };
+  }, [legs, decayProgress]);
 
   const totalCost = limitPrice * CONTRACT_MULTIPLIER * qtyScalar;
   const isDebit = limitPrice > 0;
@@ -132,14 +153,60 @@ export function OrderForm({
           borderTop: '1px solid #1a1f2e',
           display: 'flex', flexDirection: 'column', gap: 4,
         }}>
-          <span style={{ color: '#8a8f98', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase', fontWeight: 700 }}>
-            Payoff
-          </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <span style={{ color: '#8a8f98', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase', fontWeight: 700 }}>
+              Payoff
+            </span>
+            {decay && (
+              <span style={{ fontSize: 10, color: '#8a8f98', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                {decayProgress === 0
+                  ? 'Today'
+                  : decayProgress >= 1
+                    ? 'Expiration'
+                    : `+${decay.daysFromNow.toFixed(decay.daysFromNow < 1 ? 2 : decay.daysFromNow < 10 ? 1 : 0)}d  ·  ${decay.daysToExp.toFixed(decay.daysToExp < 1 ? 2 : decay.daysToExp < 10 ? 1 : 0)}d to exp`}
+              </span>
+            )}
+          </div>
           <PayoffDiagram
             legs={legs}
             underlyingPrice={underlyingPrice}
             qtyScalar={qtyScalar}
+            nowSec={decay?.nowSec}
           />
+          {decay && decay.span > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 9, color: '#8a8f98', minWidth: 28 }}>Now</span>
+              <input
+                type="range"
+                min={0}
+                max={1000}
+                value={Math.round(decayProgress * 1000)}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (!Number.isFinite(n)) return;
+                  setDecayProgress(Math.min(1, Math.max(0, n / 1000)));
+                }}
+                aria-label="Time decay slider"
+                title="Drag to advance time toward expiration"
+                style={{ flex: 1, accentColor: '#3861fb', cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: 9, color: '#8a8f98', minWidth: 22, textAlign: 'right' }}>Exp</span>
+              {decayProgress > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDecayProgress(0)}
+                  title="Reset to today"
+                  style={{
+                    background: 'transparent', border: '1px solid #2a2f3e',
+                    color: '#8a8f98', padding: '0 5px', fontSize: 10,
+                    cursor: 'pointer', fontFamily: 'inherit', lineHeight: '14px',
+                  }}
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 

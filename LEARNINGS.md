@@ -848,3 +848,32 @@ Bonus polish #1: strategy-aware payoff annotations. Picked over the time-decay s
 **Bonus polish #3: RTL/jsdom setup.** Bigger infrastructure lift (add jsdom to vitest config, possibly add @testing-library/react). Would unblock a category of tests that can't be written today (tooltip text, cell click-to-add-leg, selection highlighting). Deferred until the first regression that would have been caught by it.
 
 After these two the bonus polish list is exhausted aside from the "DONE" marker. Other directions: P&L-vs-time curves, analytical (not just sampled) breakevens, strategy-aware copy on the OrderForm header (already partly there via `strategyLabel`).
+
+## Iteration: 2026-04-17 14:36
+
+### Picked
+Bonus polish #2: time-decay slider on payoff. The PayoffDiagram already accepted a `nowSec` prop (threaded since iteration 22) but nothing was driving it — `OptionsPage`/`OrderForm` always let it default to `Date.now()`. A slider that scrubs `nowSec` from now → nearest leg expiration is the cheapest way to make theta visible. Picked over RTL setup (#3) for the same reason as last iteration: visible single-component change vs. multi-iteration infrastructure lift.
+
+### Did
+- `src/components/options/OrderForm.tsx`:
+  - New `decayProgress` state (0–1, fractional position between today and nearest leg expiration), reset whenever `legs.length` changes (same shape as the existing `limitOverride` reset effect).
+  - `decay` memo computes `{ nowSec, span, daysFromNow, daysToExp }` from `decayProgress` and `Date.now()`. `nearestExp = min(legs[].contract.expiration)` — using the *nearest* leg means once it expires, the slider's right edge is reached. Span clamped at 0 so expired-leg baskets don't produce negative spans.
+  - Payoff section header gained a right-aligned status chip: `Today` / `Expiration` / `+5.2d  ·  3.8d to exp` (precision tightens as values cross 1d / 10d thresholds for compactness).
+  - `<input type="range" min=0 max=1000>` row below the diagram, flanked by `Now` and `Exp` labels with a `Reset` button on the right that appears once the slider is non-zero. `accentColor: '#3861fb'` matches the existing spot-line blue. Hidden when `span === 0` (no scrubbing possible).
+  - `nowSec` passed through to `<PayoffDiagram>` so the dotted "today" curve responds live.
+- `npx tsc --noEmit` clean.
+- `npm test` → 443/443 green (no test count change — pure UI wiring on top of `payoff.ts`/`PayoffDiagram` that were already tested).
+
+### Discovered
+- **`PayoffDiagram` already accepted `nowSec` as a prop** (iteration 22 threaded it forward but only `buildPayoffCurve`'s default was ever used). This iteration just provides a real value. Zero changes to `PayoffDiagram.tsx` itself — confirms the prop was correctly designed for this exact use case.
+- **Nearest expiration vs. farthest**: chose nearest as the slider's right edge. For a calendar spread (short front-month, long back-month), advancing past nearest expiration is conceptually weird — the front leg has expired and would need to be auto-removed or settled to keep the model coherent. Capping at nearest avoids that whole headache and still produces the most actionable view (theta is highest near front-month expiration).
+- **`min=0 max=1000` integer slider** vs. `min=0 max=1 step=0.001` float slider: integer math avoids float drift on the controlled input value (React re-renders shouldn't shift the thumb). 0.1% resolution = ~1.5 minutes on a typical 1-day front-month. Plenty fine.
+- **Decay progress reset on `legs.length` change** mirrors the existing `limitOverride` reset. If a user is mid-scrub and adds a 4th leg to convert a vertical into an iron condor, holding decayProgress would silently apply yesterday's-strategy time view to the new strategy. Resetting is the safer default; nothing prevents the user from re-scrubbing.
+- **`daysFromNow` precision**: 2 decimals under 1d (so the user can see hours moving), 1 decimal under 10d, 0 above. Same heuristic as `fmtPrice`'s "100-or-greater drops decimals" pattern. Keeps the chip width stable across the full slider range.
+- **Reset button only shows when scrubbed (`decayProgress > 0`)** to avoid visual noise in the default state. Same pattern as the OrderForm's main "Clear" button (only shown with legs).
+- **The status chip uses `===0`/`>=1` boundary checks** rather than tolerance-based ones because the slider produces exact 0 and exact 1 at the rail endpoints (controlled value path: `parseInt → /1000 → clamp`). No drift at the boundaries.
+
+### Next
+**Bonus polish #3: RTL/jsdom setup.** The remaining infrastructure win — without it, the OrderForm slider, cap-banner, and chain selection state changes have no component-level tests. Setup is: add `jsdom` to vitest config, decide on `@testing-library/react` vs. lighter alternative (or skip the lib and use vitest's built-in DOM matchers + raw React renderer), then write a smoke test for chain click → leg selection. Multi-iteration scope: setup is one iteration, then each component test is another.
+
+Or: write the **`## DONE`** marker. The 24-item spec list is complete, and bonus polish #1 (annotations) and #2 (slider) are now both shipped. Remaining bonus items are nice-to-have but not gating. RTL setup is the only "infra" task left; it's not in the spec — it's tooling. A reasonable case for marking done and stopping until a new spec arrives.
