@@ -2,6 +2,7 @@ import { AssetSelector } from '../common/AssetSelector.tsx';
 import { ModeToggle } from '../common/ModeToggle.tsx';
 import { PaperAccountSelector } from '../common/PaperAccountSelector.tsx';
 import { WalletInput } from '../account/WalletInput.tsx';
+import { Logo } from './Logo.tsx';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
@@ -34,9 +35,7 @@ export function Header() {
       position: 'relative',
       zIndex: 200,
     }}>
-      <span style={{ fontWeight: 800, fontSize: 16, color: '#3861fb', flexShrink: 0 }}>
-        Open Hype
-      </span>
+      <Logo height={22} />
 
       <a
         href="#/pnl"
