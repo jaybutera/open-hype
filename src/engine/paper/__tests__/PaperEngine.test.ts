@@ -829,19 +829,37 @@ describe('openOptionLegs', () => {
     expect(updates[0].optionPositions).toHaveLength(2);
   });
 
-  it('availableBalance accounts for option short-leg margin', () => {
+  it('option short-leg margin does not block perp margin (separate pools)', () => {
     const short = mkLeg({
       side: 'sell',
       contract: mkContract({ bid: 2, ask: 2 }),
     });
     engine.openOptionLegs([short]);
-    // After short: balance = 10000 + 200 = 10200. Margin reserved = 2*100*1*5 = 1000.
-    // Perp entry with $9201 margin should fit (10200 - 1000 = 9200 available) — should FAIL at 9201.
-    const rejected = engine.placeOrder({
-      coin: 'BTC', side: 'buy', price: '92010', size: '1',
+    // After short: balance = 10000 + 200 = 10200. Perp pool ignores the
+    // option's short-leg reservation, so the full balance is available
+    // for perp margin. A $10199 perp margin should still fit.
+    const ok = engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: '101990', size: '1',
       reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
     });
-    expect(rejected.success).toBe(false);
+    expect(ok.success).toBe(true);
+  });
+
+  it('option open is blocked when perp margin has tied up the balance', () => {
+    // Tie up most of the balance in a perp position
+    engine.placeOrder({
+      coin: 'BTC', side: 'buy', price: '95000', size: '1',
+      reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+    });
+    engine.onPriceUpdate('BTC', '95000');
+    // Position margin = 95000/10 = 9500, balance still 10000, available for options = 500.
+    // Try to open a short option leg requiring 1000 reservation — should fail.
+    const short = mkLeg({
+      side: 'sell',
+      contract: mkContract({ bid: 2, ask: 2 }),
+    });
+    const r = engine.openOptionLegs([short]);
+    expect(r.success).toBe(false);
   });
 
   it('counters survive a JSON round-trip so new legs do not collide', () => {

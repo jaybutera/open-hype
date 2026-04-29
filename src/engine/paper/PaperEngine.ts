@@ -364,12 +364,34 @@ export class PaperEngine {
     this.openOrders = this.openOrders.filter(o => o.id !== orderId);
   }
 
+  /**
+   * Available balance for PERP margin checks. Hyperliquid only has perps —
+   * options are a separate paper-trading sandbox in this app, so their
+   * cash-secured reservations do not consume perp margin capacity.
+   */
   private availableBalance(): Decimal {
     let totalMargin = new Decimal(0);
     for (const pos of this.positions.values()) {
       totalMargin = totalMargin.add(pos.marginUsed);
     }
     // Reserve margin for pending entry orders (non-reduceOnly, non-TP/SL)
+    for (const o of this.openOrders) {
+      if (!o.reduceOnly && !o.tpsl) {
+        totalMargin = totalMargin.add(o.size.mul(o.price).div(this.leverage));
+      }
+    }
+    return this.balance.sub(totalMargin);
+  }
+
+  /**
+   * Available balance for OPTIONS cash-secured checks. Includes perp margin
+   * usage so an account fully tied up in perps can't also write options.
+   */
+  private availableForOptions(): Decimal {
+    let totalMargin = new Decimal(0);
+    for (const pos of this.positions.values()) {
+      totalMargin = totalMargin.add(pos.marginUsed);
+    }
     for (const o of this.openOrders) {
       if (!o.reduceOnly && !o.tpsl) {
         totalMargin = totalMargin.add(o.size.mul(o.price).div(this.leverage));
@@ -529,7 +551,7 @@ export class PaperEngine {
     }
 
     const cost = computeOpenLegsCost(priced.map(p => ({ szi: p.szi, entryPx: p.entryPx })));
-    const available = this.availableBalance();
+    const available = this.availableForOptions();
     if (cost.cashRequired.gt(available)) {
       return {
         success: false,
