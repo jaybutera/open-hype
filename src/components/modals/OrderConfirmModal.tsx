@@ -11,7 +11,8 @@ interface Props {
 
 export function OrderConfirmModal({ engine }: Props) {
   const { draftOrder, showConfirm, clearDraft } = useChartStore();
-  const currentAsset = useMarketStore(s => s.currentAsset);
+  const activePane = useMarketStore(s => s.panes[s.activePaneId] ?? s.panes.primary);
+  const currentAsset = activePane?.asset ?? 'BTC';
   const leverage = useSettingsStore(s => s.leverage);
   const [sizeUsdc, setSizeUsdc] = useState('1000');
   const [error, setError] = useState<string | null>(null);

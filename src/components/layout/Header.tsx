@@ -10,7 +10,10 @@ export function Header() {
   const mode = useSettingsStore(s => s.mode);
   const favorites = useSettingsStore(s => s.favorites);
   const paperBalance = useAccountStore(s => s.paperBalance);
-  const currentAsset = useMarketStore(s => s.currentAsset);
+  const activePane = useMarketStore(s => s.panes[s.activePaneId] ?? s.panes.primary);
+  const currentAsset = activePane?.asset ?? 'BTC';
+  const splitView = useMarketStore(s => s.splitView);
+  const toggleSplitView = useMarketStore(s => s.toggleSplitView);
   const allMids = useMarketStore(s => s.allMids);
   const setAsset = useMarketStore(s => s.setAsset);
   const loadCandles = useMarketStore(s => s.loadCandles);
@@ -58,6 +61,21 @@ export function Header() {
       >
         Options
       </a>
+
+      <button
+        onClick={toggleSplitView}
+        style={{
+          fontSize: 12, fontWeight: 700,
+          color: splitView ? '#fff' : '#e1e4e8',
+          background: splitView ? '#3861fb' : '#1a1f2e',
+          padding: '4px 12px', cursor: 'pointer',
+          border: `1px solid ${splitView ? '#3861fb' : '#2a2f3e'}`,
+          borderRadius: 0, flexShrink: 0,
+        }}
+        title="Toggle split chart view"
+      >
+        {splitView ? 'Split: ON' : 'Split'}
+      </button>
 
       <AssetSelector />
 

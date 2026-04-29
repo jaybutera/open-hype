@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Side } from '../types/order.ts';
 import { useSettingsStore } from './useSettingsStore.ts';
+import { useMarketStore, type PaneId } from './useMarketStore.ts';
 
 export interface TradeSetup {
   id: string;
@@ -13,11 +14,17 @@ export interface TradeSetup {
   potentialPnl: number;
   potentialLoss: number;
   rr: number;
+  /** Pane the setup was drawn on — controls which chart renders the box */
+  paneId: PaneId;
+  /** Asset snapshotted at draw-time — execution targets this regardless of active pane */
+  asset: string;
 }
 
 interface PendingSetup {
   side: Side;
   clicks: number[];
+  paneId: PaneId;
+  asset: string;
 }
 
 interface TradeSetupStore {
@@ -40,7 +47,7 @@ function resolveClicks(side: Side, clicks: number[]): { entry: number; sl: numbe
   return { tp: sorted[0], entry: sorted[1], sl: sorted[2] };
 }
 
-function calcSetup(side: Side, entry: number, sl: number, tp: number, riskUsdc: number): TradeSetup {
+function calcSetup(side: Side, entry: number, sl: number, tp: number, riskUsdc: number, paneId: PaneId, asset: string): TradeSetup {
   const riskPerUnit = Math.abs(entry - sl);
   const assetSize = riskPerUnit > 0 ? riskUsdc / riskPerUnit : 0;
   const potentialPnl = assetSize * Math.abs(tp - entry);
@@ -58,6 +65,8 @@ function calcSetup(side: Side, entry: number, sl: number, tp: number, riskUsdc: 
     potentialPnl,
     potentialLoss,
     rr,
+    paneId,
+    asset,
   };
 }
 
@@ -74,7 +83,12 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
   activeSetups: [],
   pendingSetup: null,
 
-  startSetup: (side) => set({ pendingSetup: { side, clicks: [] } }),
+  startSetup: (side) => {
+    const market = useMarketStore.getState();
+    const paneId = market.activePaneId;
+    const pane = market.panes[paneId] ?? market.panes.primary!;
+    set({ pendingSetup: { side, clicks: [], paneId, asset: pane.asset } });
+  },
 
   addClick: (price) => {
     const pending = get().pendingSetup;
@@ -86,10 +100,10 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
       return null;
     }
 
-    // 3 clicks collected — resolve and create setup
+    // 3 clicks collected — resolve and create setup, frozen to the originating pane/asset
     const { entry, sl, tp } = resolveClicks(pending.side, clicks);
     const riskUsdc = parseFloat(useSettingsStore.getState().riskUsdc) || 0;
-    const setup = calcSetup(pending.side, entry, sl, tp, riskUsdc);
+    const setup = calcSetup(pending.side, entry, sl, tp, riskUsdc, pending.paneId, pending.asset);
 
     set(s => ({
       pendingSetup: null,

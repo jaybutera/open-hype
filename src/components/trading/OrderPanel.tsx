@@ -29,7 +29,8 @@ function usdcToAssetSize(usdc: string, price: string): string {
 }
 
 export function OrderPanel({ engine }: Props) {
-  const currentAsset = useMarketStore(s => s.currentAsset);
+  const activePane = useMarketStore(s => s.panes[s.activePaneId] ?? s.panes.primary);
+  const currentAsset = activePane?.asset ?? 'BTC';
   const allMids = useMarketStore(s => s.allMids);
   const leverage = useSettingsStore(s => s.leverage);
   const setLeverage = useSettingsStore(s => s.setLeverage);
@@ -86,11 +87,12 @@ export function OrderPanel({ engine }: Props) {
     }
 
     const closeSide: Side = setup.side === 'buy' ? 'sell' : 'buy';
+    const setupAsset = setup.asset ?? currentAsset;
 
     const errors: string[] = [];
 
     const r1 = engine.placeOrder({
-      coin: currentAsset,
+      coin: setupAsset,
       side: setup.side,
       price: setup.entryPrice.toFixed(2),
       size: sizeStr,
@@ -105,7 +107,7 @@ export function OrderPanel({ engine }: Props) {
     const entryOid = r1.oid as string;
 
     const r2 = engine.placeOrder({
-      coin: currentAsset,
+      coin: setupAsset,
       side: closeSide,
       price: setup.tpPrice.toFixed(2),
       size: sizeStr,
@@ -116,7 +118,7 @@ export function OrderPanel({ engine }: Props) {
     if (!r2.success) errors.push(`TP: ${r2.error}`);
 
     const r3 = engine.placeOrder({
-      coin: currentAsset,
+      coin: setupAsset,
       side: closeSide,
       price: setup.slPrice.toFixed(2),
       size: sizeStr,
@@ -292,7 +294,7 @@ export function OrderPanel({ engine }: Props) {
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ fontWeight: 700, color: setup.side === 'buy' ? '#0ecb81' : '#f6465d' }}>
-              {setup.side === 'buy' ? 'LONG' : 'SHORT'} Setup
+              {setup.side === 'buy' ? 'LONG' : 'SHORT'} {setup.asset ?? currentAsset}
             </span>
             <span style={{ color: '#8a8f98' }}>R:R {setup.rr.toFixed(1)}</span>
           </div>

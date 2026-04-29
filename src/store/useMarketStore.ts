@@ -8,45 +8,68 @@ export interface CategorizedAsset extends AssetMeta {
   category: AssetCategory;
 }
 
+export type PaneId = 'primary' | 'secondary';
+
+export interface ChartPane {
+  asset: string;
+  assetIndex: number;
+  interval: CandleInterval;
+  candles: CandleData[];
+  loading: boolean;
+}
+
 interface MarketStore {
   meta: Meta | null;
   xyzMeta: Meta | null;
   assetCtxs: AssetCtx[];
   xyzAssetCtxs: AssetCtx[];
-  currentAsset: string;
-  currentAssetIndex: number;
   allMids: Record<string, string>;
-  candles: CandleData[];
-  interval: CandleInterval;
-  loading: boolean;
+
+  panes: Record<PaneId, ChartPane | undefined>;
+  activePaneId: PaneId;
+  splitView: boolean;
 
   /** All assets from both perps and xyz, with category tag */
   allAssets: () => CategorizedAsset[];
   assetCategory: (coin: string) => AssetCategory;
+  getPane: (id: PaneId) => ChartPane | undefined;
+  getActivePane: () => ChartPane;
 
-  setAsset: (coin: string) => void;
-  setInterval: (interval: CandleInterval) => void;
+  setActivePane: (id: PaneId) => void;
+  toggleSplitView: () => void;
+
+  setAsset: (coin: string, paneId?: PaneId) => void;
+  setInterval: (interval: CandleInterval, paneId?: PaneId) => void;
   updateMid: (coin: string, mid: string) => void;
   batchUpdateMids: (mids: Record<string, string>) => void;
-  appendCandle: (candle: CandleData) => void;
-  setCandles: (candles: CandleData[]) => void;
+  appendCandle: (candle: CandleData, interval: CandleInterval) => void;
   loadMeta: () => Promise<void>;
-  loadCandles: () => Promise<void>;
-  loadMoreCandles: () => Promise<void>;
+  loadCandles: (paneId?: PaneId) => Promise<void>;
+  loadMoreCandles: (paneId?: PaneId) => Promise<void>;
   loadAllMids: () => Promise<void>;
 }
+
+const DEFAULT_PANE: ChartPane = {
+  asset: 'BTC',
+  assetIndex: 0,
+  interval: '5m',
+  candles: [],
+  loading: false,
+};
 
 export const useMarketStore = create<MarketStore>((set, get) => ({
   meta: null,
   xyzMeta: null,
   assetCtxs: [],
   xyzAssetCtxs: [],
-  currentAsset: 'BTC',
-  currentAssetIndex: 0,
   allMids: {},
-  candles: [],
-  interval: '5m',
-  loading: false,
+
+  panes: {
+    primary: { ...DEFAULT_PANE },
+    secondary: undefined,
+  },
+  activePaneId: 'primary',
+  splitView: false,
 
   allAssets: () => {
     const perps: CategorizedAsset[] = (get().meta?.universe ?? [])
@@ -62,13 +85,74 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
     return coin.startsWith('xyz:') ? 'xyz' : 'perps';
   },
 
-  setAsset: (coin: string) => {
-    const all = get().allAssets();
-    const idx = all.findIndex(a => a.name === coin);
-    set({ currentAsset: coin, currentAssetIndex: idx >= 0 ? idx : 0, candles: [] });
+  getPane: (id) => get().panes[id],
+
+  getActivePane: () => {
+    const { panes, activePaneId } = get();
+    return panes[activePaneId] ?? panes.primary!;
   },
 
-  setInterval: (interval) => set({ interval, candles: [] }),
+  setActivePane: (id) => {
+    const pane = get().panes[id];
+    if (!pane) return;
+    set({ activePaneId: id });
+  },
+
+  toggleSplitView: () => set((s) => {
+    if (s.splitView) {
+      // Closing split view — drop secondary pane, force active back to primary
+      return {
+        splitView: false,
+        activePaneId: 'primary',
+        panes: { primary: s.panes.primary, secondary: undefined },
+      };
+    }
+    // Opening split view — seed secondary from primary if not already present
+    const seed: ChartPane = s.panes.secondary ?? {
+      ...DEFAULT_PANE,
+      asset: s.panes.primary?.asset === 'ETH' ? 'BTC' : 'ETH',
+      interval: s.panes.primary?.interval ?? '5m',
+    };
+    const all = get().allAssets();
+    const idx = all.findIndex(a => a.name === seed.asset);
+    return {
+      splitView: true,
+      panes: {
+        primary: s.panes.primary,
+        secondary: { ...seed, assetIndex: idx >= 0 ? idx : 0, candles: [] },
+      },
+    };
+  }),
+
+  setAsset: (coin, paneId) => {
+    const id = paneId ?? get().activePaneId;
+    const all = get().allAssets();
+    const idx = all.findIndex(a => a.name === coin);
+    set((s) => {
+      const existing = s.panes[id];
+      if (!existing) return s;
+      return {
+        panes: {
+          ...s.panes,
+          [id]: { ...existing, asset: coin, assetIndex: idx >= 0 ? idx : 0, candles: [] },
+        },
+      };
+    });
+  },
+
+  setInterval: (interval, paneId) => {
+    const id = paneId ?? get().activePaneId;
+    set((s) => {
+      const existing = s.panes[id];
+      if (!existing) return s;
+      return {
+        panes: {
+          ...s.panes,
+          [id]: { ...existing, interval, candles: [] },
+        },
+      };
+    });
+  },
 
   updateMid: (coin, mid) => {
     get().allMids[coin] = mid;
@@ -78,20 +162,25 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
     allMids: { ...s.allMids, ...mids },
   })),
 
-  appendCandle: (candle) => set((s) => {
-    // Ignore candles for a different asset
-    if (candle.s !== s.currentAsset) return s;
-    const candles = [...s.candles];
-    const last = candles[candles.length - 1];
-    if (last && last.t === candle.t) {
-      candles[candles.length - 1] = candle;
-    } else {
-      candles.push(candle);
+  appendCandle: (candle, interval) => set((s) => {
+    const next = { ...s.panes };
+    let changed = false;
+    for (const id of ['primary', 'secondary'] as PaneId[]) {
+      const pane = next[id];
+      if (!pane) continue;
+      if (pane.asset !== candle.s || pane.interval !== interval) continue;
+      const candles = [...pane.candles];
+      const last = candles[candles.length - 1];
+      if (last && last.t === candle.t) {
+        candles[candles.length - 1] = candle;
+      } else {
+        candles.push(candle);
+      }
+      next[id] = { ...pane, candles };
+      changed = true;
     }
-    return { candles };
+    return changed ? { panes: next } : s;
   }),
-
-  setCandles: (candles) => set({ candles }),
 
   loadMeta: async () => {
     const [perpResults, xyzResults] = await Promise.all([
@@ -100,35 +189,60 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
     ]);
     const [meta, assetCtxs] = perpResults;
     const [xyzMeta, xyzAssetCtxs] = xyzResults;
-    const idx = meta.universe.findIndex(a => a.name === get().currentAsset);
-    set({ meta, assetCtxs, xyzMeta, xyzAssetCtxs, currentAssetIndex: idx >= 0 ? idx : 0 });
+    set((s) => {
+      const next = { ...s.panes };
+      for (const id of ['primary', 'secondary'] as PaneId[]) {
+        const pane = next[id];
+        if (!pane) continue;
+        const idx = meta.universe.findIndex(a => a.name === pane.asset);
+        next[id] = { ...pane, assetIndex: idx >= 0 ? idx : 0 };
+      }
+      return { meta, assetCtxs, xyzMeta, xyzAssetCtxs, panes: next };
+    });
   },
 
-  loadCandles: async () => {
-    const { currentAsset, interval } = get();
-    set({ loading: true });
+  loadCandles: async (paneId) => {
+    const id = paneId ?? get().activePaneId;
+    const pane = get().panes[id];
+    if (!pane) return;
+    const { asset, interval } = pane;
+    set((s) => {
+      const existing = s.panes[id];
+      if (!existing) return s;
+      return { panes: { ...s.panes, [id]: { ...existing, loading: true } } };
+    });
     const now = Date.now();
     const intervalMs = intervalToMs(interval);
     const startTime = now - intervalMs * 300;
-    const candles = await fetchCandles(currentAsset, interval, startTime, now);
-    // Only apply if we're still on the same asset (user may have switched during fetch)
-    if (get().currentAsset === currentAsset) {
-      set({ candles, loading: false });
-    }
+    const candles = await fetchCandles(asset, interval, startTime, now);
+    // Only apply if still on the same asset/interval (user may have switched mid-fetch)
+    set((s) => {
+      const cur = s.panes[id];
+      if (!cur || cur.asset !== asset || cur.interval !== interval) return s;
+      return { panes: { ...s.panes, [id]: { ...cur, candles, loading: false } } };
+    });
   },
 
-  loadMoreCandles: async () => {
-    const { currentAsset, interval, candles, loading } = get();
+  loadMoreCandles: async (paneId) => {
+    const id = paneId ?? get().activePaneId;
+    const pane = get().panes[id];
+    if (!pane) return;
+    const { asset, interval, candles, loading } = pane;
     if (loading || candles.length === 0) return;
-    set({ loading: true });
+    set((s) => {
+      const existing = s.panes[id];
+      if (!existing) return s;
+      return { panes: { ...s.panes, [id]: { ...existing, loading: true } } };
+    });
     const intervalMs = intervalToMs(interval);
     const earliest = Math.min(...candles.map(c => c.t));
-    const endTime = earliest;
     const startTime = earliest - intervalMs * 300;
-    const older = await fetchCandles(currentAsset, interval, startTime, endTime);
-    if (get().currentAsset === currentAsset) {
-      set({ candles: [...older, ...get().candles], loading: false });
-    }
+    const older = await fetchCandles(asset, interval, startTime, earliest);
+    set((s) => {
+      const cur = s.panes[id];
+      if (!cur || cur.asset !== asset || cur.interval !== interval) return s;
+      return { panes: { ...s.panes, [id]: { ...cur, candles: [...older, ...cur.candles], loading: false } } };
+    });
   },
 
   loadAllMids: async () => {

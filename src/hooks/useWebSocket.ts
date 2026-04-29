@@ -1,12 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { ws } from '../services/ws/connection.ts';
 import { useMarketStore } from '../store/useMarketStore.ts';
 import type { PaperEngine } from '../engine/paper/PaperEngine.ts';
-import type { CandleData } from '../types/market.ts';
+import type { CandleData, CandleInterval } from '../types/market.ts';
 
 export function useWebSocket(engine: PaperEngine): void {
-  const currentAsset = useMarketStore(s => s.currentAsset);
-  const interval = useMarketStore(s => s.interval);
+  const panes = useMarketStore(s => s.panes);
   const appendCandle = useMarketStore(s => s.appendCandle);
   const connectedRef = useRef(false);
 
@@ -30,14 +29,17 @@ export function useWebSocket(engine: PaperEngine): void {
       useMarketStore.getState().batchUpdateMids(msg.mids);
 
       // Forward price updates for all coins with positions or open orders
-      // so TP/SL triggers even when viewing a different coin
       const positions = engine.getPositions();
       const orders = engine.getOpenOrders();
       const activeCoins = new Set<string>();
       for (const p of positions) activeCoins.add(p.coin);
       for (const o of orders) activeCoins.add(o.coin);
-      // Always include the currently viewed coin for PnL updates
-      activeCoins.add(useMarketStore.getState().currentAsset);
+      // Include every pane's asset so PnL stays live
+      const ps = useMarketStore.getState().panes;
+      for (const id of ['primary', 'secondary'] as const) {
+        const pane = ps[id];
+        if (pane) activeCoins.add(pane.asset);
+      }
 
       for (const coin of activeCoins) {
         const mid = msg.mids[coin];
@@ -58,7 +60,11 @@ export function useWebSocket(engine: PaperEngine): void {
       const activeCoins = new Set<string>();
       for (const p of positions) activeCoins.add(p.coin);
       for (const o of orders) activeCoins.add(o.coin);
-      activeCoins.add(useMarketStore.getState().currentAsset);
+      const ps = useMarketStore.getState().panes;
+      for (const id of ['primary', 'secondary'] as const) {
+        const pane = ps[id];
+        if (pane) activeCoins.add(pane.asset);
+      }
 
       for (const coin of activeCoins) {
         const mid = msg.mids[coin];
@@ -67,17 +73,33 @@ export function useWebSocket(engine: PaperEngine): void {
     });
   }, [engine]);
 
-  // Subscribe to candles for current asset
+  // Subscribe to candles for the union of all panes' (asset, interval) pairs.
+  // Memoize the key list so we only re-subscribe when the set actually changes,
+  // not on every unrelated pane state update (e.g. candle arrays).
+  const candleKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const id of ['primary', 'secondary'] as const) {
+      const pane = panes[id];
+      if (pane) keys.add(`${pane.asset}|${pane.interval}`);
+    }
+    return Array.from(keys);
+  }, [panes.primary?.asset, panes.primary?.interval, panes.secondary?.asset, panes.secondary?.interval]);
+
   useEffect(() => {
-    const coin = currentAsset;
-    return ws.subscribe('candle', { coin, interval }, (data) => {
-      const candle = data as CandleData;
-      if (candle && candle.t !== undefined && candle.s === coin) {
-        appendCandle(candle);
+    const unsubs: Array<() => void> = [];
+    for (const key of candleKeys) {
+      const [coin, interval] = key.split('|') as [string, CandleInterval];
+      const unsub = ws.subscribe('candle', { coin, interval }, (data) => {
+        const candle = data as CandleData;
+        if (!candle || candle.t === undefined || candle.s !== coin) return;
+        appendCandle(candle, interval);
         // Forward candle high/low to paper engine for TP/SL trigger checking.
-        // Mid price alone can miss wicks that cross trigger levels.
         engine.onCandleUpdate(coin, candle.h, candle.l);
-      }
-    });
-  }, [currentAsset, interval, appendCandle]);
+      });
+      unsubs.push(unsub);
+    }
+    return () => {
+      for (const u of unsubs) u();
+    };
+  }, [candleKeys.join(','), appendCandle, engine]);
 }

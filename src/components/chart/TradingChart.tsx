@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type Time, type IPriceLine, LineStyle } from 'lightweight-charts';
-import { useMarketStore } from '../../store/useMarketStore.ts';
+import { useMarketStore, type PaneId } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useChartStore, type DraftOrder } from '../../store/useChartStore.ts';
@@ -33,18 +33,15 @@ function nyOffsetSec(utcSec: number): number {
   return off;
 }
 
-/** Cache the offset — it only changes twice a year */
 let _cachedOffset: number | null = null;
 let _cachedOffsetExpiry = 0;
 export function getNyOffset(utcSec: number): number {
   if (_cachedOffset !== null && utcSec < _cachedOffsetExpiry) return _cachedOffset;
   _cachedOffset = nyOffsetSec(utcSec);
-  // Re-check every hour in case of DST transition
   _cachedOffsetExpiry = utcSec + 3600;
   return _cachedOffset;
 }
 
-/** Shift a UTC unix timestamp so lightweight-charts displays it as NY time */
 export function utcToChartTime(utcSec: number): number {
   return utcSec + getNyOffset(utcSec);
 }
@@ -53,9 +50,10 @@ const INTERVALS: CandleInterval[] = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
 interface Props {
   engine: PaperEngine;
+  paneId?: PaneId;
 }
 
-export function TradingChart({ engine }: Props) {
+export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -69,10 +67,14 @@ export function TradingChart({ engine }: Props) {
   const [fibFirstClick, setFibFirstClick] = useState<{ price: number; time: number } | null>(null);
   const [fibs, setFibs] = useState<FibRetracement[]>([]);
 
-  const candles = useMarketStore(s => s.candles);
-  const currentAsset = useMarketStore(s => s.currentAsset);
+  const pane = useMarketStore(s => s.panes[paneId]);
+  const activePaneId = useMarketStore(s => s.activePaneId);
+  const setActivePane = useMarketStore(s => s.setActivePane);
+  const splitView = useMarketStore(s => s.splitView);
+  const candles = pane?.candles ?? [];
+  const currentAsset = pane?.asset ?? 'BTC';
+  const interval = pane?.interval ?? '5m';
   const allMids = useMarketStore(s => s.allMids);
-  const interval = useMarketStore(s => s.interval);
   const setInterval = useMarketStore(s => s.setInterval);
   const loadCandles = useMarketStore(s => s.loadCandles);
   const loadMoreCandles = useMarketStore(s => s.loadMoreCandles);
@@ -90,12 +92,17 @@ export function TradingChart({ engine }: Props) {
   const removeSetup = useTradeSetupStore(s => s.removeSetup);
   const clearPending = useTradeSetupStore(s => s.clearPending);
 
+  const isActive = activePaneId === paneId;
+
+  // Setups belonging to this pane
+  const paneSetups = activeSetups.filter(s => (s.paneId ?? 'primary') === paneId);
+  const paneOrders = paperOrders.filter(o => o.coin === currentAsset);
+
   // Create chart — only once
   useEffect(() => {
     const container = chartContainerRef.current;
     if (!container) return;
 
-    // Clear any leftover children from StrictMode double-mount
     container.innerHTML = '';
 
     const chart = createChart(container, {
@@ -126,12 +133,10 @@ export function TradingChart({ engine }: Props) {
     chartRef.current = chart;
     seriesRef.current = series;
 
-    // Attach session killzone overlay
     const sessionPrim = new SessionPrimitive();
     series.attachPrimitive(sessionPrim);
     sessionPrimitiveRef.current = sessionPrim;
 
-    // Attach fib retracement overlay
     const fibPrim = new FibPrimitive();
     series.attachPrimitive(fibPrim);
     fibPrimitiveRef.current = fibPrim;
@@ -162,7 +167,6 @@ export function TradingChart({ engine }: Props) {
   useEffect(() => {
     if (!seriesRef.current || candles.length === 0) return;
 
-    // Deduplicate by time and sort ascending
     const seen = new Set<number>();
     const data: CandlestickData[] = [];
     for (const c of candles) {
@@ -185,7 +189,6 @@ export function TradingChart({ engine }: Props) {
       console.warn('Chart setData error:', e);
     }
 
-    // Feed candle data to session overlay for high/low calculation
     sessionPrimitiveRef.current?.setCandleData(data);
   }, [candles]);
 
@@ -197,22 +200,20 @@ export function TradingChart({ engine }: Props) {
     const handler = () => {
       const range = chart.timeScale().getVisibleLogicalRange();
       if (!range) return;
-      // When the left edge of the visible range is near/past the first bar, load more
       if (range.from < 5) {
-        loadMoreCandles();
+        loadMoreCandles(paneId);
       }
     };
 
     chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
     return () => chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
-  }, [loadMoreCandles]);
+  }, [loadMoreCandles, paneId]);
 
   // Draw order / position / draft price lines
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
 
-    // Remove old lines
     for (const line of priceLinesRef.current) {
       try { series.removePriceLine(line); } catch {}
     }
@@ -225,7 +226,6 @@ export function TradingChart({ engine }: Props) {
         const upnl = pos.unrealizedPnl.toNumber();
         const upnlStr = upnl >= 0 ? `+$${upnl.toFixed(2)}` : `-$${Math.abs(upnl).toFixed(2)}`;
         try {
-          // Entry price line
           priceLinesRef.current.push(series.createPriceLine({
             price: pos.entryPx.toNumber(),
             color: isLong ? '#0ecb81' : '#f6465d',
@@ -235,7 +235,6 @@ export function TradingChart({ engine }: Props) {
             title: `${isLong ? 'LONG' : 'SHORT'} ${pos.szi.abs().toString()} @ ${pos.entryPx.toFixed(1)}  ${upnlStr}`,
           }));
 
-          // Liquidation price line
           const liqPx = engine.getLiquidationPrice(pos.coin);
           if (liqPx) {
             priceLinesRef.current.push(series.createPriceLine({
@@ -249,11 +248,10 @@ export function TradingChart({ engine }: Props) {
           }
         } catch {}
       }
-
-      // Paper orders are rendered as draggable OrderLinePrimitives (managed separately below)
     }
 
-    if (draftOrder) {
+    // Only show draft order on the active pane (it belongs to the OrderPanel)
+    if (draftOrder && isActive) {
       try {
         priceLinesRef.current.push(series.createPriceLine({
           price: draftOrder.price,
@@ -266,7 +264,6 @@ export function TradingChart({ engine }: Props) {
       } catch {}
     }
 
-    // Draw fib first-click marker
     if (fibFirstClick !== null) {
       try {
         priceLinesRef.current.push(series.createPriceLine({
@@ -280,8 +277,8 @@ export function TradingChart({ engine }: Props) {
       } catch {}
     }
 
-    // Draw pending setup click markers
-    if (pendingSetup) {
+    // Pending setup click markers — only on the active pane (where it's being drawn)
+    if (pendingSetup && isActive) {
       const color = pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d';
       for (const clickPrice of pendingSetup.clicks) {
         try {
@@ -296,11 +293,15 @@ export function TradingChart({ engine }: Props) {
         } catch {}
       }
     }
-  }, [mode, paperPositions, draftOrder, pendingSetup, currentAsset, fibFirstClick]);
+  }, [mode, paperPositions, draftOrder, pendingSetup, currentAsset, fibFirstClick, isActive, engine]);
 
-  // Mouse down: handle trade box interactions first, then setup clicks, then shift+click orders
+  // Mouse down: pane becomes active, then handle trade box / setup / shift+click
   const handleChartClick = useCallback((e: React.MouseEvent) => {
     if (!seriesRef.current) return;
+
+    if (activePaneId !== paneId) {
+      setActivePane(paneId);
+    }
 
     const rect = chartContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -311,7 +312,6 @@ export function TradingChart({ engine }: Props) {
     if (price === null || price === undefined) return;
     const priceNum = Number(price);
 
-    // 1. Check trade box button clicks and drag starts
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
       if (prim.handleMouseDown(x, y)) {
         chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
@@ -319,7 +319,6 @@ export function TradingChart({ engine }: Props) {
       }
     }
 
-    // 1b. Check order line drag starts
     for (const prim of orderLinePrimitivesRef.current.values()) {
       if (prim.handleMouseDown(x, y)) {
         chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
@@ -327,7 +326,6 @@ export function TradingChart({ engine }: Props) {
       }
     }
 
-    // 1c. Fib retracement drawing mode
     if (fibMode && chartRef.current) {
       const clickTime = chartRef.current.timeScale().coordinateToTime(x);
       if (clickTime === null) return;
@@ -352,23 +350,21 @@ export function TradingChart({ engine }: Props) {
       return;
     }
 
-    // 2. If a setup is pending, feed clicks to it (no shift required)
     const pending = useTradeSetupStore.getState().pendingSetup;
     if (pending) {
       addClick(priceNum);
       return;
     }
 
-    // 3. Original shift+click logic
     if (!e.shiftKey) return;
 
     const mid = parseFloat(allMids[currentAsset] ?? '0');
+    void mid;
     const pos = paperPositions.find(p => p.coin === currentAsset);
 
     let draft: DraftOrder;
 
     if (pos && !pos.szi.isZero()) {
-      // Has position — shift+click places TP or SL
       const isLong = pos.szi.gt(0);
       const entryPx = pos.entryPx.toNumber();
       const isTp = isLong ? priceNum > entryPx : priceNum < entryPx;
@@ -380,12 +376,10 @@ export function TradingChart({ engine }: Props) {
         tpsl: isTp ? 'tp' : 'sl',
       };
     } else {
-      // No position — use the side selected in the order panel
       const { side } = useSettingsStore.getState();
       draft = { side, type: 'limit', price: priceNum };
     }
 
-    // If size is set in the panel, place immediately without modal
     const { sizeUsdc } = useSettingsStore.getState();
     if (sizeUsdc && parseFloat(sizeUsdc) > 0) {
       placeFromDraft(draft, sizeUsdc, priceNum);
@@ -393,13 +387,11 @@ export function TradingChart({ engine }: Props) {
       setDraftOrder(draft);
       setShowConfirm(true);
     }
-  }, [allMids, currentAsset, paperPositions, setDraftOrder, setShowConfirm, addClick, fibMode, fibFirstClick, fibs]);
+  }, [allMids, currentAsset, paperPositions, setDraftOrder, setShowConfirm, addClick, fibMode, fibFirstClick, fibs, activePaneId, paneId, setActivePane]);
 
   const placeFromDraft = useCallback((draft: DraftOrder, sizeUsdc: string, priceNum: number) => {
     const isReduceOnly = draft.type === 'tp' || draft.type === 'stop';
 
-    // For TP/SL, use the full position size so it closes entirely.
-    // Using sizeUsdc / triggerPrice would under-size the close order.
     let assetSize: string;
     if (isReduceOnly) {
       const pos = engine.getPosition(currentAsset);
@@ -431,15 +423,14 @@ export function TradingChart({ engine }: Props) {
     });
   }, [engine, currentAsset]);
 
-  // Manage trade box primitives (attach/detach/update)
+  // Manage trade box primitives — only ones belonging to this pane
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
 
     const primMap = tradeBoxPrimitivesRef.current;
-    const activeIds = new Set(activeSetups.map(s => s.id));
+    const activeIds = new Set(paneSetups.map(s => s.id));
 
-    // Remove primitives for setups that no longer exist
     for (const [id, prim] of primMap) {
       if (!activeIds.has(id)) {
         series.detachPrimitive(prim);
@@ -447,8 +438,7 @@ export function TradingChart({ engine }: Props) {
       }
     }
 
-    // Add or update primitives
-    for (const setup of activeSetups) {
+    for (const setup of paneSetups) {
       const existing = primMap.get(setup.id);
       if (existing) {
         existing.updateSetup(setup);
@@ -465,9 +455,8 @@ export function TradingChart({ engine }: Props) {
         primMap.set(setup.id, prim);
       }
     }
-  }, [activeSetups, removeSetup, updateSetup]);
+  }, [paneSetups, removeSetup, updateSetup]);
 
-  // Callback: when an order line drag finishes, cancel old order and re-place at new price
   const handleOrderDragDone = useCallback((orderId: string, newPrice: number) => {
     const ord = paperOrders.find(o => o.id === orderId);
     if (!ord) return;
@@ -495,17 +484,14 @@ export function TradingChart({ engine }: Props) {
     });
   }, [engine, paperOrders]);
 
-  // Manage order line primitives (attach/detach/update)
+  // Manage order line primitives — only orders for this pane's asset
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
 
     const primMap = orderLinePrimitivesRef.current;
-    const currentOrderIds = new Set(
-      paperOrders.filter(o => o.coin === currentAsset).map(o => o.id)
-    );
+    const currentOrderIds = new Set(paneOrders.map(o => o.id));
 
-    // Remove primitives for orders that no longer exist or are wrong asset
     for (const [id, prim] of primMap) {
       if (!currentOrderIds.has(id)) {
         series.detachPrimitive(prim);
@@ -513,9 +499,7 @@ export function TradingChart({ engine }: Props) {
       }
     }
 
-    // Add or update
-    for (const ord of paperOrders) {
-      if (ord.coin !== currentAsset) continue;
+    for (const ord of paneOrders) {
       const existing = primMap.get(ord.id);
       if (existing) {
         existing.updateOrder(ord);
@@ -526,7 +510,7 @@ export function TradingChart({ engine }: Props) {
         primMap.set(ord.id, prim);
       }
     }
-  }, [paperOrders, currentAsset, handleOrderDragDone]);
+  }, [paneOrders, handleOrderDragDone]);
 
   const handleChartMouseMove = useCallback((e: React.MouseEvent) => {
     if (!seriesRef.current) return;
@@ -538,24 +522,20 @@ export function TradingChart({ engine }: Props) {
     if (price === null || price === undefined) return;
     const priceNum = Number(price);
 
-    // Check trade box drags first
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
       if (prim.handleMouseMove(priceNum)) return;
     }
 
-    // Check order line drags
     for (const prim of orderLinePrimitivesRef.current.values()) {
       if (prim.handleMouseMove(priceNum)) return;
     }
 
-    // Original draft order drag
     const { draftOrder: draft, isDragging } = useChartStore.getState();
     if (!isDragging || !draft) return;
     setDraftOrder({ ...draft, price: priceNum });
   }, [setDraftOrder]);
 
   const handleChartMouseUp = useCallback(() => {
-    // Release trade box drags
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
       if (prim.handleMouseUp()) {
         chartRef.current?.applyOptions({ handleScroll: true, handleScale: true });
@@ -563,7 +543,6 @@ export function TradingChart({ engine }: Props) {
       }
     }
 
-    // Release order line drags (fires cancel+re-place via callback)
     for (const prim of orderLinePrimitivesRef.current.values()) {
       if (prim.handleMouseUp()) {
         chartRef.current?.applyOptions({ handleScroll: true, handleScale: true });
@@ -571,7 +550,6 @@ export function TradingChart({ engine }: Props) {
       }
     }
 
-    // Original draft order release
     const draft = useChartStore.getState().draftOrder;
     if (draft) {
       setDragging(false);
@@ -579,13 +557,12 @@ export function TradingChart({ engine }: Props) {
     }
   }, [setDragging, setShowConfirm]);
 
-  // Toggle session overlay
   useEffect(() => {
     sessionPrimitiveRef.current?.setEnabled(sessionsOn);
   }, [sessionsOn]);
 
-  // ESC cancels pending trade setup
   useEffect(() => {
+    if (!isActive) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         clearPending();
@@ -595,15 +572,36 @@ export function TradingChart({ engine }: Props) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [clearPending]);
+  }, [clearPending, isActive]);
+
+  // Border highlight when split view is on so user can see the active pane
+  const borderColor = splitView && isActive ? '#3861fb' : 'transparent';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: 4, padding: '6px 8px', background: '#0d1117' }}>
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      border: `1px solid ${borderColor}`,
+      boxSizing: 'border-box',
+    }}>
+      <div style={{ display: 'flex', gap: 4, padding: '6px 8px', background: '#0d1117', alignItems: 'center' }}>
+        {splitView && (
+          <span style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: isActive ? '#3861fb' : '#555',
+            padding: '2px 6px',
+            border: `1px solid ${isActive ? '#3861fb' : '#2a2f3e'}`,
+            marginRight: 4,
+          }}>
+            {currentAsset}
+          </span>
+        )}
         {INTERVALS.map(iv => (
           <button
             key={iv}
-            onClick={() => { setInterval(iv); loadCandles(); }}
+            onClick={() => { setInterval(iv, paneId); loadCandles(paneId); }}
             style={{
               padding: '4px 10px',
               fontSize: 12,
@@ -662,10 +660,10 @@ export function TradingChart({ engine }: Props) {
             Clear Fibs
           </button>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: fibMode ? '#e1e4e8' : pendingSetup ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: fibMode ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
           {fibMode
             ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')
-            : pendingSetup
+            : (pendingSetup && isActive)
             ? `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup (${pendingSetup.clicks.length}/3) — ESC to cancel`
             : 'Shift+Click: place order (or TP/SL if position open)'}
         </span>

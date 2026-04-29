@@ -3,7 +3,8 @@ import { useMarketStore, type AssetCategory, type CategorizedAsset } from '../..
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 
 export function AssetSelector() {
-  const currentAsset = useMarketStore(s => s.currentAsset);
+  const activePane = useMarketStore(s => s.panes[s.activePaneId] ?? s.panes.primary);
+  const currentAsset = activePane?.asset ?? 'BTC';
   const allMids = useMarketStore(s => s.allMids);
   const setAsset = useMarketStore(s => s.setAsset);
   const loadCandles = useMarketStore(s => s.loadCandles);
