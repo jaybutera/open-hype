@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import Decimal from 'decimal.js';
 import { useAccountStore } from '../../store/useAccountStore.ts';
-import type { OptionChain } from '../../services/options/types.ts';
+import type { OptionChain, OptionContract } from '../../services/options/types.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import {
   deserializeOptionPosition,
@@ -13,17 +13,28 @@ import {
 import {
   detectSimpleStrategy,
   spreadCurrentMark,
+  spreadCurrentMarkFromQuotes,
   spreadEntryBasis,
   spreadNearestDte,
   spreadFarthestDte,
   spreadNetGreeksFromChain,
+  spreadNetGreeksFromQuotes,
   spreadUnrealizedPnl,
+  spreadUnrealizedPnlFromQuotes,
 } from '../../engine/paper/options/spreadSummary.ts';
 
 interface Props {
   chain: OptionChain | null;
   engine: PaperEngine;
   marketOpen: boolean;
+  /**
+   * Cross-underlying live quote cache. When provided, every spread is priced
+   * from this map regardless of which symbol's chain is currently loaded —
+   * the active `chain` prop then only powers the close action's quote source.
+   */
+  quotes?: Map<string, OptionContract>;
+  /** Per-underlying spot price for Greeks. Required for non-zero Greeks. */
+  underlyingPrices?: Map<string, number>;
 }
 
 type CloseFeedback = { spreadId: string; kind: 'success' | 'error'; message: string };
@@ -73,16 +84,28 @@ interface SpreadRowProps {
   onToggle: () => void;
   onClose: () => void;
   feedback: CloseFeedback | null;
+  quotes?: Map<string, OptionContract>;
+  underlyingPrices?: Map<string, number>;
 }
 
-function SpreadRow({ legs, chain, marketOpen, expanded, onToggle, onClose, feedback }: SpreadRowProps) {
+function SpreadRow({
+  legs, chain, marketOpen, expanded, onToggle, onClose, feedback,
+  quotes, underlyingPrices,
+}: SpreadRowProps) {
   const firstLeg = legs[0];
   const underlying = firstLeg.underlying;
+  const useQuotes = !!quotes;
   const chainMatches = chain && chain.underlying.toUpperCase() === underlying.toUpperCase();
   const entry = spreadEntryBasis(legs);
-  const mark = spreadCurrentMark(legs, chain);
-  const pnl = spreadUnrealizedPnl(legs, chain);
-  const greeks = spreadNetGreeksFromChain(legs, chain);
+  const mark = useQuotes
+    ? spreadCurrentMarkFromQuotes(legs, quotes!)
+    : spreadCurrentMark(legs, chain);
+  const pnl = useQuotes
+    ? spreadUnrealizedPnlFromQuotes(legs, quotes!)
+    : spreadUnrealizedPnl(legs, chain);
+  const greeks = useQuotes
+    ? spreadNetGreeksFromQuotes(legs, quotes!, underlyingPrices ?? new Map())
+    : spreadNetGreeksFromChain(legs, chain);
   const nearest = spreadNearestDte(legs);
   const farthest = spreadFarthestDte(legs);
   const strategy = detectSimpleStrategy(legs);
@@ -93,15 +116,21 @@ function SpreadRow({ legs, chain, marketOpen, expanded, onToggle, onClose, feedb
   const pnlNum = pnl.toNumber();
   const pnlColor = pnlNum > 0 ? '#0ecb81' : pnlNum < 0 ? '#f6465d' : '#8a8f98';
   const dteLabel = nearest === farthest ? fmtDte(nearest) : `${fmtDte(nearest)} → ${fmtDte(farthest)}`;
+  const allLegsPriced = mark.legsPriced === legs.length;
+  const showLiveValues = useQuotes ? mark.legsPriced > 0 : chainMatches && mark.legsPriced > 0;
 
-  const canClose = marketOpen && chainMatches && mark.legsPriced === legs.length;
+  // Closing requires a fresh quote for every leg. With a quote cache, that's
+  // any source — chain or cache. Without one, we fall back to chain-match.
+  const canClose = marketOpen && allLegsPriced && (useQuotes || !!chainMatches);
   const closeTitle = !marketOpen
     ? 'Market closed — closing disabled until the market reopens'
-    : !chainMatches
-      ? `Load ${underlying}'s chain to enable closing`
-      : mark.legsPriced < legs.length
-        ? 'Chain is missing quotes for one or more legs'
-        : 'Close all legs at current mid';
+    : !allLegsPriced
+      ? useQuotes
+        ? 'Waiting for quotes for one or more legs'
+        : !chainMatches
+          ? `Load ${underlying}'s chain to enable closing`
+          : 'Chain is missing quotes for one or more legs'
+      : 'Close all legs at current mid';
 
   return (
     <div style={{ borderBottom: '1px solid #1a1f2e' }}>
@@ -127,10 +156,10 @@ function SpreadRow({ legs, chain, marketOpen, expanded, onToggle, onClose, feedb
           {entryLabel} {fmtUsd(Math.abs(entryNum))}
         </span>
         <span style={{ color: '#e1e4e8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-          {chainMatches ? fmtUsd(Math.abs(mark.netMarkTotal.toNumber())) : '—'}
+          {showLiveValues ? fmtUsd(Math.abs(mark.netMarkTotal.toNumber())) : '—'}
         </span>
         <span style={{ color: pnlColor, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-          {chainMatches && mark.legsPriced > 0 ? fmtSigned(pnlNum) : '—'}
+          {showLiveValues ? fmtSigned(pnlNum) : '—'}
         </span>
         <span style={{ color: '#8a8f98' }}>{dteLabel}</span>
         <button
@@ -171,7 +200,7 @@ function SpreadRow({ legs, chain, marketOpen, expanded, onToggle, onClose, feedb
 
       {expanded && (
         <div style={{ padding: '8px 14px 12px', background: '#0a0d14' }}>
-          {chainMatches && (
+          {showLiveValues && (
             <div
               style={{
                 display: 'grid',
@@ -212,8 +241,13 @@ function SpreadRow({ legs, chain, marketOpen, expanded, onToggle, onClose, feedb
               const sideColor = long ? '#0ecb81' : '#f6465d';
               const cost = legCostBasis(l).toNumber();
               const qty = l.szi.abs().toNumber();
-              const pool = chainMatches && chain ? (l.type === 'call' ? chain.calls : chain.puts) : null;
-              const hit = pool ? pool.find((c) => c.symbol === l.contractSymbol) : null;
+              let hit: OptionContract | null = null;
+              if (useQuotes) {
+                hit = quotes!.get(l.contractSymbol) ?? null;
+              } else if (chainMatches && chain) {
+                const pool = l.type === 'call' ? chain.calls : chain.puts;
+                hit = pool.find((c) => c.symbol === l.contractSymbol) ?? null;
+              }
               const liveMid = hit && hit.bid > 0 && hit.ask > 0 ? (hit.bid + hit.ask) / 2 : null;
               const legPnl =
                 liveMid !== null ? legUnrealizedPnl(l, new Decimal(liveMid)).toNumber() : null;
@@ -249,9 +283,14 @@ function SpreadRow({ legs, chain, marketOpen, expanded, onToggle, onClose, feedb
               );
             })}
           </div>
-          {!chainMatches && (
+          {!useQuotes && !chainMatches && (
             <div style={{ marginTop: 6, color: '#8a8f98', fontSize: 11, fontStyle: 'italic' }}>
               Load {underlying}'s chain above to see live marks and unrealized PnL.
+            </div>
+          )}
+          {useQuotes && !showLiveValues && (
+            <div style={{ marginTop: 6, color: '#8a8f98', fontSize: 11, fontStyle: 'italic' }}>
+              Waiting for {underlying} quotes…
             </div>
           )}
         </div>
@@ -260,7 +299,7 @@ function SpreadRow({ legs, chain, marketOpen, expanded, onToggle, onClose, feedb
   );
 }
 
-export function PositionsOptions({ chain, engine, marketOpen }: Props) {
+export function PositionsOptions({ chain, engine, marketOpen, quotes, underlyingPrices }: Props) {
   const rawPositions = useAccountStore((s) => s.paperOptionPositions);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [feedback, setFeedback] = useState<CloseFeedback | null>(null);
@@ -306,11 +345,17 @@ export function PositionsOptions({ chain, engine, marketOpen }: Props) {
       setFeedback({ spreadId, kind: 'error', message: 'Market closed — closing disabled.' });
       return;
     }
-    if (!chain) {
+    // Prefer the multi-underlying quote cache when present so closing works
+    // for any spread regardless of which symbol's chain is currently loaded.
+    const contracts: OptionContract[] = quotes
+      ? Array.from(quotes.values())
+      : chain
+        ? [...chain.calls, ...chain.puts]
+        : [];
+    if (contracts.length === 0) {
       setFeedback({ spreadId, kind: 'error', message: 'Chain not loaded.' });
       return;
     }
-    const contracts = [...chain.calls, ...chain.puts];
     const result = engine.closeOptionSpread(spreadId, contracts, { fillModel: 'mid' });
     if (result.success) {
       const pnl = result.realizedPnl.toNumber();
@@ -373,6 +418,8 @@ export function PositionsOptions({ chain, engine, marketOpen }: Props) {
           onToggle={() => toggle(spreadId)}
           onClose={() => handleClose(spreadId)}
           feedback={feedback && feedback.spreadId === spreadId ? feedback : null}
+          quotes={quotes}
+          underlyingPrices={underlyingPrices}
         />
       ))}
     </div>

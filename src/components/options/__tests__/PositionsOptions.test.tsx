@@ -405,3 +405,93 @@ describe('PositionsOptions', () => {
     expect(within(container).queryByText(/Load T's chain above/i)).not.toBeInTheDocument();
   });
 });
+
+describe('PositionsOptions — multi-underlying quotes cache', () => {
+  it('renders live PnL for spreads on multiple underlyings without any chain loaded', () => {
+    // Two open positions on different underlyings.
+    useAccountStore.setState({
+      paperOptionPositions: [
+        legJSON({
+          id: 'l1', spreadId: 's1', type: 'put', strike: 380, szi: -1, entryPx: 18.10,
+          underlying: 'TSLA', contractSymbol: 'TSLA260529P00380000',
+        }),
+        legJSON({
+          id: 'l2', spreadId: 's2', type: 'call', strike: 18, szi: 1, entryPx: 11.31,
+          underlying: 'CIFR', contractSymbol: 'CIFR260514C00018000',
+        }),
+      ],
+    });
+
+    // A multi-underlying quote cache populated as the hook would have populated it.
+    const tslaPut = contract({
+      type: 'put', strike: 380, bid: 19.0, ask: 19.5,
+      symbol: 'TSLA260529P00380000', underlying: 'TSLA',
+    });
+    const cifrCall = contract({
+      type: 'call', strike: 18, bid: 12.0, ask: 12.4,
+      symbol: 'CIFR260514C00018000', underlying: 'CIFR',
+    });
+    const quotes = new Map<string, OptionContract>([
+      ['TSLA260529P00380000', tslaPut],
+      ['CIFR260514C00018000', cifrCall],
+    ]);
+    const underlyingPrices = new Map<string, number>([['TSLA', 376], ['CIFR', 17]]);
+
+    render(
+      <PositionsOptions
+        chain={null}
+        engine={fakeEngine()}
+        marketOpen={true}
+        quotes={quotes}
+        underlyingPrices={underlyingPrices}
+      />,
+    );
+
+    // Both spreads must show numeric PnL — no em-dashes in either row.
+    // TSLA short put: entryPx 18.10, mid (19.0+19.5)/2 = 19.25.
+    // szi = -1, PnL = -1 * (19.25 - 18.10) * 100 = -$115.00.
+    expect(screen.getByText('−$115.00')).toBeInTheDocument();
+    // CIFR long call: entryPx 11.31, mid 12.20.
+    // szi = +1, PnL = +1 * (12.20 - 11.31) * 100 = +$89.00.
+    expect(screen.getByText('+$89.00')).toBeInTheDocument();
+  });
+
+  it('enables Close for a spread whose underlying does not match the active chain when quotes are cached', () => {
+    useAccountStore.setState({
+      paperOptionPositions: [
+        legJSON({
+          id: 'l1', spreadId: 's1', type: 'call', strike: 18, szi: 1, entryPx: 11,
+          underlying: 'CIFR', contractSymbol: 'CIFR260514C00018000',
+        }),
+      ],
+    });
+    // Active chain is for TSLA — would have left CIFR uncloseable in the old flow.
+    const tslaChain = chainOf([contract({ type: 'call', strike: 100, bid: 3, ask: 3.1 })], [], 'TSLA');
+    const cifrCall = contract({
+      type: 'call', strike: 18, bid: 12, ask: 12.4,
+      symbol: 'CIFR260514C00018000', underlying: 'CIFR',
+    });
+    const quotes = new Map<string, OptionContract>([['CIFR260514C00018000', cifrCall]]);
+    const engine = fakeEngine();
+
+    render(
+      <PositionsOptions
+        chain={tslaChain}
+        engine={engine}
+        marketOpen={true}
+        quotes={quotes}
+        underlyingPrices={new Map([['CIFR', 17]])}
+      />,
+    );
+
+    const btn = screen.getByRole('button', { name: /close/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    fireEvent.click(btn);
+    expect(engine.closeOptionSpread).toHaveBeenCalledTimes(1);
+    // Engine should have been handed the cache contracts, not the TSLA chain's.
+    const [, contracts] = (
+      engine.closeOptionSpread as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls[0] as [string, OptionContract[], unknown];
+    expect(contracts.map((c) => c.symbol)).toEqual(['CIFR260514C00018000']);
+  });
+});

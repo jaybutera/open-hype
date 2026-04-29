@@ -28,17 +28,30 @@ export function spreadEntryBasis(legs: OptionPosition[]): Decimal {
   return legs.reduce<Decimal>((acc, l) => acc.add(legCostBasis(l)), new Decimal(0));
 }
 
-function findContractMark(chain: OptionChain, leg: OptionPosition): number | null {
-  if (chain.underlying.toUpperCase() !== leg.underlying.toUpperCase()) return null;
-  const pool: OptionContract[] = leg.type === 'call' ? chain.calls : chain.puts;
-  const hit = pool.find((c) => c.symbol === leg.contractSymbol);
-  if (!hit) return null;
-  const { bid, ask, last } = hit;
+function midOrFallback(c: OptionContract): number | null {
+  const { bid, ask, last } = c;
   if (bid > 0 && ask > 0) return (bid + ask) / 2;
   if (bid > 0) return bid;
   if (ask > 0) return ask;
   if (last > 0) return last;
   return null;
+}
+
+function findContractMark(chain: OptionChain, leg: OptionPosition): number | null {
+  if (chain.underlying.toUpperCase() !== leg.underlying.toUpperCase()) return null;
+  const pool: OptionContract[] = leg.type === 'call' ? chain.calls : chain.puts;
+  const hit = pool.find((c) => c.symbol === leg.contractSymbol);
+  if (!hit) return null;
+  return midOrFallback(hit);
+}
+
+function findContractMarkInQuotes(
+  quotes: Map<string, OptionContract>,
+  leg: OptionPosition,
+): number | null {
+  const hit = quotes.get(leg.contractSymbol);
+  if (!hit) return null;
+  return midOrFallback(hit);
 }
 
 /**
@@ -83,6 +96,87 @@ export function spreadUnrealizedPnl(
     pnl = pnl.add(legUnrealizedPnl(l, new Decimal(live)));
   }
   return pnl;
+}
+
+/**
+ * Quote-map variant of {@link spreadCurrentMark}. Prices each leg from a
+ * contract-symbol-keyed map of live quotes (multi-underlying, multi-expiration
+ * friendly) instead of a single chain. Falls back to entry price for legs
+ * without a quote so a partial cache still yields a usable mark.
+ */
+export function spreadCurrentMarkFromQuotes(
+  legs: OptionPosition[],
+  quotes: Map<string, OptionContract>,
+): SpreadMarkResult {
+  let legsPriced = 0;
+  let total = new Decimal(0);
+  for (const l of legs) {
+    const live = findContractMarkInQuotes(quotes, l);
+    const mark = live !== null ? new Decimal(live) : l.entryPx;
+    if (live !== null) legsPriced += 1;
+    total = total.add(l.szi.mul(mark));
+  }
+  return {
+    netMarkPerShare: total,
+    netMarkTotal: total.mul(CONTRACT_MULTIPLIER),
+    legsPriced,
+    legCount: legs.length,
+  };
+}
+
+/**
+ * Quote-map variant of {@link spreadUnrealizedPnl}. Only counts PnL for legs
+ * with a live quote — legs without a quote contribute 0 (rather than fabricating
+ * a value) so the displayed PnL stays conservative when the cache is partial.
+ */
+export function spreadUnrealizedPnlFromQuotes(
+  legs: OptionPosition[],
+  quotes: Map<string, OptionContract>,
+): Decimal {
+  let pnl = new Decimal(0);
+  for (const l of legs) {
+    const live = findContractMarkInQuotes(quotes, l);
+    if (live === null) continue;
+    pnl = pnl.add(legUnrealizedPnl(l, new Decimal(live)));
+  }
+  return pnl;
+}
+
+/**
+ * Quote-map variant of {@link spreadNetGreeksFromChain}. Uses per-leg IV from
+ * the matching quote when available, plus a per-underlying spot price map so
+ * spreads on different underlyings each get the right S in their BS Greeks.
+ */
+export function spreadNetGreeksFromQuotes(
+  legs: OptionPosition[],
+  quotes: Map<string, OptionContract>,
+  underlyingPrices: Map<string, number>,
+  nowUnixSeconds?: number,
+): Greeks {
+  const zero: Greeks = { price: 0, delta: 0, gamma: 0, vega: 0, theta: 0, rho: 0 };
+  return legs.reduce<Greeks>((acc, l) => {
+    const spot = underlyingPrices.get(l.underlying.toUpperCase()) ?? 0;
+    if (spot <= 0) return acc;
+    const hit = quotes.get(l.contractSymbol);
+    const iv = hit && hit.iv > 0 ? hit.iv : 0.3;
+    const T = yearsUntil(l.expiration, nowUnixSeconds);
+    const g = blackScholes({
+      underlyingPrice: spot,
+      strike: l.strike.toNumber(),
+      timeToExpiry: T,
+      volatility: iv,
+      type: l.type,
+    });
+    const k = l.szi.toNumber();
+    return {
+      price: acc.price + g.price * k,
+      delta: acc.delta + g.delta * k,
+      gamma: acc.gamma + g.gamma * k,
+      vega: acc.vega + g.vega * k,
+      theta: acc.theta + g.theta * k,
+      rho: acc.rho + g.rho * k,
+    };
+  }, zero);
 }
 
 /**

@@ -12,6 +12,7 @@ import { ExpirationTabs } from './ExpirationTabs.tsx';
 import { ChainGrid } from './ChainGrid.tsx';
 import { OrderForm } from './OrderForm.tsx';
 import { PositionsOptions } from './PositionsOptions.tsx';
+import { useOptionPositionQuotes } from './useOptionPositionQuotes.ts';
 
 const adapter = new YahooOptionsAdapter();
 
@@ -57,7 +58,8 @@ export function OptionsPage({ engine }: Props) {
   const [legs, setLegs] = useState<Leg[]>([]);
   const [feedback, setFeedback] = useState<SubmitFeedback | null>(null);
   const paperBalance = useAccountStore((s) => s.paperBalance);
-  const optionPositionCount = useAccountStore((s) => s.paperOptionPositions.length);
+  const optionPositions = useAccountStore((s) => s.paperOptionPositions);
+  const optionPositionCount = optionPositions.length;
 
   const handleCellClick = useCallback((contract: OptionContract, side: LegSide) => {
     setLegs((prev) => toggleLeg(prev, contract, side));
@@ -88,6 +90,23 @@ export function OptionsPage({ engine }: Props) {
 
   const open = isMarketOpen(now);
   const reopen = open ? null : nextOpen(now);
+
+  // Fetch quotes for every (underlying, expiration) tuple referenced by open
+  // positions, independently of the user's symbol-browsing state. Powers the
+  // PositionsOptions panel's live PnL across multi-underlying portfolios.
+  const positionQuotes = useOptionPositionQuotes(optionPositions, open, adapter);
+
+  // Auto-settle expired legs whenever the cache learns a new underlying price.
+  // Previously only the user-browsed chain triggered settlement, which left
+  // expired legs on un-browsed underlyings indefinitely.
+  useEffect(() => {
+    if (positionQuotes.underlyingPrices.size === 0) return;
+    const prices = new Map<string, Decimal>();
+    for (const [u, p] of positionQuotes.underlyingPrices) {
+      prices.set(u, new Decimal(p));
+    }
+    engine.settleExpired(prices);
+  }, [positionQuotes.underlyingPrices, engine]);
 
   // Fetch chain when symbol or selectedExp changes. Symbol change clears exp and
   // loads the nearest expiration (the one Yahoo returns by default). Subsequent
@@ -306,7 +325,13 @@ export function OptionsPage({ engine }: Props) {
         </div>
       )}
 
-      <PositionsOptions chain={chain} engine={engine} marketOpen={open} />
+      <PositionsOptions
+        chain={chain}
+        engine={engine}
+        marketOpen={open}
+        quotes={positionQuotes.contracts}
+        underlyingPrices={positionQuotes.underlyingPrices}
+      />
     </div>
   );
 }
