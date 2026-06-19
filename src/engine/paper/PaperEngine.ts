@@ -459,6 +459,11 @@ export class PaperEngine {
     return this.positions.get(coin) ?? null;
   }
 
+  /** Free balance available for new perp margin, at the current leverage. */
+  getAvailableBalance(): string {
+    return this.availableBalance().toString();
+  }
+
   /**
    * Market close a position at current mid price.
    */

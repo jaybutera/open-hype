@@ -32,6 +32,7 @@ export function OrderPanel({ engine }: Props) {
   const activePane = useMarketStore(s => s.panes[s.activePaneId] ?? s.panes.primary);
   const currentAsset = activePane?.asset ?? 'BTC';
   const allMids = useMarketStore(s => s.allMids);
+  const maxLeverageFor = useMarketStore(s => s.maxLeverageFor);
   const leverage = useSettingsStore(s => s.leverage);
   const setLeverage = useSettingsStore(s => s.setLeverage);
   const sizeUsdc = useSettingsStore(s => s.sizeUsdc);
@@ -65,6 +66,12 @@ export function OrderPanel({ engine }: Props) {
   const clearPending = useTradeSetupStore(s => s.clearPending);
 
   const mid = allMids[currentAsset] ?? '0';
+  const assetMaxLeverage = maxLeverageFor(currentAsset);
+
+  // Clamp leverage to the active asset's cap (e.g. switching from a 50x to a 10x asset).
+  useEffect(() => {
+    if (leverage > assetMaxLeverage) setLeverage(assetMaxLeverage);
+  }, [assetMaxLeverage, leverage, setLeverage]);
 
   const handleExecuteSetup = (id: string) => {
     const setup = useTradeSetupStore.getState().activeSetups.find(s => s.id === id);
@@ -88,6 +95,30 @@ export function OrderPanel({ engine }: Props) {
 
     const closeSide: Side = setup.side === 'buy' ? 'sell' : 'buy';
     const setupAsset = setup.asset ?? currentAsset;
+
+    // A risk-capped position with a tight stop can imply a large notional. The
+    // loss is still bounded at `risk`, but margin = notional / leverage may
+    // exceed available balance at the current leverage. Auto-bump leverage
+    // toward the asset's cap so the trade fits rather than failing outright.
+    const notional = assetSize * setup.entryPrice;
+    const available = parseFloat(engine.getAvailableBalance()) || 0;
+    const cap = maxLeverageFor(setupAsset);
+    if (available > 0 && notional / leverage > available) {
+      const neededLev = Math.ceil(notional / available);
+      if (neededLev > cap) {
+        setError(
+          `Position too large: notional $${notional.toFixed(0)} needs ${neededLev}x ` +
+          `but ${setupAsset} caps at ${cap}x (margin $${(notional / cap).toFixed(2)} > available $${available.toFixed(2)}). ` +
+          `Widen the stop or lower risk.`,
+        );
+        return;
+      }
+      const bumped = Math.min(cap, neededLev);
+      if (bumped !== leverage) {
+        setLeverage(bumped);
+        engine.setLeverage(bumped);
+      }
+    }
 
     const errors: string[] = [];
 
@@ -392,10 +423,10 @@ export function OrderPanel({ engine }: Props) {
 
       {/* Leverage */}
       <div>
-        <label style={labelStyle}>Leverage: {leverage}x</label>
+        <label style={labelStyle}>Leverage: {leverage}x <span style={{ color: '#555' }}>(max {assetMaxLeverage}x)</span></label>
         <input
           type="range"
-          min={1} max={50} value={leverage}
+          min={1} max={assetMaxLeverage} value={leverage}
           onChange={e => setLeverage(Number(e.target.value))}
           style={{ width: '100%', accentColor: '#3861fb' }}
         />

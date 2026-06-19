@@ -32,6 +32,8 @@ interface MarketStore {
   /** All assets from both perps and xyz, with category tag */
   allAssets: () => CategorizedAsset[];
   assetCategory: (coin: string) => AssetCategory;
+  /** Max leverage allowed by HL for a given asset (falls back to 1 if unknown). */
+  maxLeverageFor: (coin: string) => number;
   getPane: (id: PaneId) => ChartPane | undefined;
   getActivePane: () => ChartPane;
 
@@ -83,6 +85,11 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
 
   assetCategory: (coin: string) => {
     return coin.startsWith('xyz:') ? 'xyz' : 'perps';
+  },
+
+  maxLeverageFor: (coin) => {
+    const asset = get().allAssets().find(a => a.name === coin);
+    return asset?.maxLeverage ?? 1;
   },
 
   getPane: (id) => get().panes[id],

@@ -6,9 +6,10 @@ import type { Side } from '../../../types/order.ts';
 
 /**
  * Replicates the exact flow from OrderPanel.handleExecuteSetup:
- * reads risk from settings, computes size, places entry + TP + SL.
+ * reads risk from settings, computes size, auto-bumps leverage to fit the
+ * implied notional (capped at the asset's maxLeverage), places entry + TP + SL.
  */
-function executeSetup(engine: PaperEngine, setupId: string, coin: string) {
+function executeSetup(engine: PaperEngine, setupId: string, coin: string, maxLeverage = 50) {
   const setup = useTradeSetupStore.getState().activeSetups.find(s => s.id === setupId);
   if (!setup) throw new Error('Setup not found');
 
@@ -20,6 +21,18 @@ function executeSetup(engine: PaperEngine, setupId: string, coin: string) {
   const sizeStr = assetSize.toString();
 
   if (assetSize <= 0) throw new Error('Size is zero');
+
+  // Auto-bump leverage so the risk-capped notional fits in available margin.
+  const leverage = useSettingsStore.getState().leverage;
+  const notional = assetSize * setup.entryPrice;
+  const available = parseFloat(engine.getAvailableBalance()) || 0;
+  if (available > 0 && notional / leverage > available) {
+    const neededLev = Math.ceil(notional / available);
+    if (neededLev > maxLeverage) {
+      throw new Error(`Position too large: needs ${neededLev}x but caps at ${maxLeverage}x`);
+    }
+    engine.setLeverage(Math.min(maxLeverage, neededLev));
+  }
 
   const closeSide: Side = setup.side === 'buy' ? 'sell' : 'buy';
 
@@ -55,7 +68,7 @@ describe('trade setup execute flow', () => {
   beforeEach(() => {
     engine = new PaperEngine({ initialBalance: '10000', leverage: 10 });
     useTradeSetupStore.setState({ activeSetups: [], pendingSetup: null });
-    useSettingsStore.setState({ riskUsdc: '100' });
+    useSettingsStore.setState({ riskUsdc: '100', leverage: 10 });
   });
 
   it('creates setup with correct size from risk', () => {
@@ -148,14 +161,35 @@ describe('trade setup execute flow', () => {
     expect(engine.getPositions()).toHaveLength(0);
   });
 
-  it('tight stop: margin rejection at placement when risk sizing produces oversized position', () => {
-    engine = new PaperEngine({
-      initialBalance: '10000',
-      leverage: 10,
-    });
+  it('tight stop: auto-bumps leverage so a risk-capped position fits', () => {
+    engine = new PaperEngine({ initialBalance: '10000', leverage: 10 });
 
-    // $50 risk, $1 stop → 50 BTC = $2.5M notional = $250k margin
-    useSettingsStore.setState({ riskUsdc: '50' });
+    // $100 risk, $17 stop on a ~$30k asset → ~5.9 units = ~$178k notional.
+    // At 10x that needs ~$17.9k margin (> $10k) and fails; at the asset's cap
+    // it fits. This mirrors the reported screenshot.
+    useSettingsStore.setState({ riskUsdc: '100', leverage: 10 });
+    const store = useTradeSetupStore.getState();
+    store.startSetup('buy');
+    store.addClick(30317);  // SL
+    store.addClick(30334);  // entry
+    store.addClick(30442);  // TP
+
+    const setupId = useTradeSetupStore.getState().activeSetups[0].id;
+
+    // With a 25x cap the trade now succeeds instead of being rejected.
+    expect(() => executeSetup(engine, setupId, 'BTC', 25)).not.toThrow();
+    expect(engine.getOpenOrders()).toHaveLength(3);
+    // Leverage was bumped above the original 10x to make the notional fit.
+    const notional = (100 / 17) * 30334;
+    expect(parseFloat(engine.getAvailableBalance())).toBeGreaterThan(0);
+    expect(Math.ceil(notional / 10000)).toBeGreaterThan(10);
+  });
+
+  it('tight stop: errors when even the asset cap cannot hold the notional', () => {
+    engine = new PaperEngine({ initialBalance: '10000', leverage: 10 });
+
+    // $50 risk, $1 stop → 50 BTC = $2.5M notional. Needs ~250x; caps at 50x.
+    useSettingsStore.setState({ riskUsdc: '50', leverage: 10 });
     const store = useTradeSetupStore.getState();
     store.startSetup('buy');
     store.addClick(49999);  // SL
@@ -164,8 +198,7 @@ describe('trade setup execute flow', () => {
 
     const setupId = useTradeSetupStore.getState().activeSetups[0].id;
 
-    // Entry order is rejected at placement — executeSetup throws
-    expect(() => executeSetup(engine, setupId, 'BTC')).toThrow('Insufficient margin');
+    expect(() => executeSetup(engine, setupId, 'BTC', 50)).toThrow('Position too large');
     expect(engine.getOpenOrders()).toHaveLength(0);
   });
 
