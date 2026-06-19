@@ -222,6 +222,29 @@ describe('margin check at placement time', () => {
     expect(big.success).toBe(false);
     expect(big.error).toContain('Insufficient margin');
   });
+
+  it('reversal order is not rejected: opposite-direction size offsets the open position', () => {
+    // Open a short 1 BTC: 1 × 50000 / 10 = 5000 margin reserved, leaving ~5000 free.
+    placeLimitSell('BTC', '50000', '1');
+    engine.onPriceUpdate('BTC', '50000');
+    expect(engine.getPosition('BTC')!.szi.toString()).toBe('-1');
+
+    // A 1 BTC buy nets the short flat — it closes existing exposure rather than
+    // adding new exposure, so it needs ~0 fresh margin. Must NOT be rejected
+    // even though a naive 5000 requirement exceeds the ~5000 (minus fees) free.
+    const reversal = placeLimitBuy('BTC', '50000', '1');
+    expect(reversal.success).toBe(true);
+  });
+
+  it('over-flip beyond the offset still requires margin for the net-new exposure', () => {
+    // Short 1 BTC (5000 margin). A 1.5 BTC buy closes 1 and opens 0.5 long.
+    placeLimitSell('BTC', '50000', '1');
+    engine.onPriceUpdate('BTC', '50000');
+
+    // Only the 0.5 of new exposure needs margin: 0.5 × 50000 / 10 = 2500 < free → ok.
+    const flip = placeLimitBuy('BTC', '50000', '1.5');
+    expect(flip.success).toBe(true);
+  });
 });
 
 // ── TP/SL fill behavior ─────────────────────────────────────────────

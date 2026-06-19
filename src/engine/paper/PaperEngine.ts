@@ -166,7 +166,7 @@ export class PaperEngine {
 
     // Check margin at placement for non-reduceOnly orders
     if (!req.reduceOnly && !('trigger' in req.orderType && (req.orderType as any).trigger.tpsl)) {
-      const requiredMargin = size.mul(price).div(this.leverage);
+      const requiredMargin = this.marginToOpen(req.coin, req.side, size, price);
       const available = this.availableBalance();
       if (requiredMargin.gt(available)) {
         return { success: false, error: `Insufficient margin: need ${requiredMargin.toFixed(2)}, available ${available.toFixed(2)}` };
@@ -255,7 +255,7 @@ export class PaperEngine {
    * Called on candle updates. Checks trigger orders against the candle
    * high/low to catch wicks that the mid price might miss.
    */
-  onCandleUpdate(coin: string, high: string, low: string): void {
+  onCandleUpdate(coin: string, high: string, low: string, openTime?: number): void {
     const coinOrders = this.openOrders.filter(
       o => o.coin === coin && o.type === 'trigger',
     );
@@ -263,7 +263,7 @@ export class PaperEngine {
 
     const h = new Decimal(high);
     const l = new Decimal(low);
-    const fillResults = matchTriggersByCandle(coinOrders, h, l, this.openOrders);
+    const fillResults = matchTriggersByCandle(coinOrders, h, l, this.openOrders, openTime);
     if (fillResults.length === 0) return;
 
     for (const fill of fillResults) {
@@ -275,9 +275,11 @@ export class PaperEngine {
   private executeFill(fill: FillResult): void {
     const { order, fillPrice, isMaker } = fill;
 
-    // Margin check at fill time for new positions (not reduceOnly, not TP/SL)
+    // Margin check at fill time for new positions (not reduceOnly, not TP/SL).
+    // Only the size that opens new exposure needs margin — the part offsetting
+    // an opposite-direction position is closing it (mirrors placement check).
     if (!order.reduceOnly && !order.tpsl) {
-      const requiredMargin = fill.fillSize.mul(fillPrice).div(this.leverage);
+      const requiredMargin = this.marginToOpen(order.coin, order.side, fill.fillSize, fillPrice);
       // Available balance excluding THIS order's reserved margin (it's about to be removed)
       let usedMargin = new Decimal(0);
       for (const pos of this.positions.values()) {
@@ -356,12 +358,44 @@ export class PaperEngine {
       this.balance,
     ));
 
+    // Stamp parentFilledAt on any child orders so candle-based triggers ignore
+    // wicks from before the entry was live.
+    if (!order.tpsl && !order.reduceOnly) {
+      const filledAt = Date.now();
+      for (const o of this.openOrders) {
+        if (o.parentOid === order.id) o.parentFilledAt = filledAt;
+      }
+    }
+
     // Remove the filled order
     this.removeOrder(order.id);
   }
 
   private removeOrder(orderId: string): void {
     this.openOrders = this.openOrders.filter(o => o.id !== orderId);
+  }
+
+  /**
+   * Margin a new (non-reduceOnly) order actually needs to open. The portion
+   * of the order that offsets an existing opposite-direction position closes
+   * that exposure rather than adding new exposure — its margin is already
+   * reserved by the position and frees up on fill, so only the size beyond
+   * the close requires fresh margin.
+   *
+   * Example: short 1 BTC open, placing a 1 BTC buy nets the position flat and
+   * needs ~0 new margin, not a full second reservation.
+   */
+  private marginToOpen(coin: string, side: Side, size: Decimal, price: Decimal): Decimal {
+    const pos = this.positions.get(coin);
+    let openingSize = size;
+    if (pos && !pos.szi.isZero()) {
+      const opposite = (side === 'buy' && pos.szi.lt(0)) || (side === 'sell' && pos.szi.gt(0));
+      if (opposite) {
+        const closable = Decimal.min(size, pos.szi.abs());
+        openingSize = size.sub(closable);
+      }
+    }
+    return openingSize.mul(price).div(this.leverage);
   }
 
   /**

@@ -15,6 +15,8 @@ export interface PaperOrder {
   timestamp: number;
   /** If set, this order only activates after the parent order has filled. */
   parentOid?: string;
+  /** Set when the parent order fills, used to ignore wicks from before the entry. */
+  parentFilledAt?: number;
 }
 
 export interface FillResult {
@@ -83,6 +85,7 @@ export function matchTriggersByCandle(
   high: Decimal,
   low: Decimal,
   allOpenOrders?: PaperOrder[],
+  candleOpenTime?: number,
 ): FillResult[] {
   const fills: FillResult[] = [];
 
@@ -92,6 +95,13 @@ export function matchTriggersByCandle(
     if (order.parentOid && allOpenOrders) {
       if (allOpenOrders.some(o => o.id === order.parentOid)) continue;
     }
+    // Skip wicks from before the parent filled — the candle's high/low can include
+    // ranges traded before the entry was even live.
+    if (
+      order.parentFilledAt !== undefined &&
+      candleOpenTime !== undefined &&
+      order.parentFilledAt >= candleOpenTime
+    ) continue;
     if (!shouldTriggerFromCandle(order, high, low)) continue;
 
     fills.push({

@@ -242,4 +242,32 @@ describe('trade setup execute flow', () => {
     engine.onPriceUpdate('BTC', '48000');
     expect(engine.getPositions()).toHaveLength(0);
   });
+
+  it('SL does not fire from candle wicks that occurred before entry filled', () => {
+    useSettingsStore.setState({ riskUsdc: '100' });
+    const store = useTradeSetupStore.getState();
+    store.startSetup('buy');
+    store.addClick(48000);
+    store.addClick(50000);
+    store.addClick(54000);
+
+    const setupId = useTradeSetupStore.getState().activeSetups[0].id;
+    executeSetup(engine, setupId, 'BTC');
+
+    // Entry fills mid-candle.
+    engine.onPriceUpdate('BTC', '50000');
+    expect(engine.getPositions()).toHaveLength(1);
+
+    // The current candle's open time is before the entry filled, and its low
+    // wicks below the SL (the wick happened earlier in the candle, before we
+    // were in the trade). SL must NOT fire.
+    const candleOpenedBeforeFill = Date.now() - 60_000;
+    engine.onCandleUpdate('BTC', '51000', '47000', candleOpenedBeforeFill);
+    expect(engine.getPositions()).toHaveLength(1);
+
+    // A new candle opening *after* the fill, with a low at SL, should fire.
+    const candleAfterFill = Date.now() + 1000;
+    engine.onCandleUpdate('BTC', '50500', '48000', candleAfterFill);
+    expect(engine.getPositions()).toHaveLength(0);
+  });
 });

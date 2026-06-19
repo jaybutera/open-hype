@@ -94,7 +94,7 @@ export function useWebSocket(engine: PaperEngine): void {
         if (!candle || candle.t === undefined || candle.s !== coin) return;
         appendCandle(candle, interval);
         // Forward candle high/low to paper engine for TP/SL trigger checking.
-        engine.onCandleUpdate(coin, candle.h, candle.l);
+        engine.onCandleUpdate(coin, candle.h, candle.l, candle.t);
       });
       unsubs.push(unsub);
     }
