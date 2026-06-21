@@ -2,6 +2,7 @@ import { useEffect, useState, Component, type ReactNode } from 'react';
 import { AppLayout } from './components/layout/AppLayout.tsx';
 import { PnlCalendar } from './components/pnl/PnlCalendar.tsx';
 import { OptionsPage } from './components/options/OptionsPage.tsx';
+import { JournalPage } from './components/journal/JournalPage.tsx';
 import { useMarketStore } from './store/useMarketStore.ts';
 import { usePaperEngine } from './hooks/useEngine.ts';
 import { useWebSocket } from './hooks/useWebSocket.ts';
@@ -76,6 +77,10 @@ function AppInner() {
 
   if (hash === '#/options') {
     return <OptionsPage engine={engine} />;
+  }
+
+  if (hash === '#/journal') {
+    return <JournalPage />;
   }
 
   return <AppLayout engine={engine} />;

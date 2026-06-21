@@ -5,6 +5,7 @@ import {
   createDefaultAccount,
   type PaperAccount,
   type PaperAccountsData,
+  type JournalEntry,
 } from '../engine/paper/persistence.ts';
 
 interface PaperAccountsStore {
@@ -23,6 +24,14 @@ interface PaperAccountsStore {
     fills: PaperAccount['fills'];
     optionPositions?: PaperAccount['optionPositions'];
   }) => void;
+
+  addJournalEntry: (text: string, coin?: string) => void;
+  editJournalEntry: (id: string, text: string) => void;
+  deleteJournalEntry: (id: string) => void;
+}
+
+function journalId(): string {
+  return `j-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function persist(data: PaperAccountsData) {
@@ -88,6 +97,53 @@ export const usePaperAccountsStore = create<PaperAccountsStore>((set, get) => {
               fills: state.fills,
               ...(state.optionPositions !== undefined ? { optionPositions: state.optionPositions } : {}),
             }
+          : a
+      );
+      set({ accounts });
+      persist({ activeAccountId, accounts });
+    },
+
+    addJournalEntry: (text, coin) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const entry: JournalEntry = {
+        id: journalId(),
+        timestamp: Date.now(),
+        text: trimmed,
+        ...(coin ? { coin } : {}),
+      };
+      const { activeAccountId } = get();
+      const accounts = get().accounts.map(a =>
+        a.id === activeAccountId
+          ? { ...a, journalEntries: [...(a.journalEntries ?? []), entry] }
+          : a
+      );
+      set({ accounts });
+      persist({ activeAccountId, accounts });
+    },
+
+    editJournalEntry: (id, text) => {
+      const trimmed = text.trim();
+      const { activeAccountId } = get();
+      const accounts = get().accounts.map(a =>
+        a.id === activeAccountId
+          ? {
+              ...a,
+              journalEntries: (a.journalEntries ?? []).map(e =>
+                e.id === id ? { ...e, text: trimmed } : e
+              ),
+            }
+          : a
+      );
+      set({ accounts });
+      persist({ activeAccountId, accounts });
+    },
+
+    deleteJournalEntry: (id) => {
+      const { activeAccountId } = get();
+      const accounts = get().accounts.map(a =>
+        a.id === activeAccountId
+          ? { ...a, journalEntries: (a.journalEntries ?? []).filter(e => e.id !== id) }
           : a
       );
       set({ accounts });

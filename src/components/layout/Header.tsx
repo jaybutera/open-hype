@@ -61,6 +61,18 @@ export function Header() {
         Options
       </a>
 
+      <a
+        href="#/journal"
+        style={{
+          fontSize: 12, fontWeight: 600, color: '#8a8f98',
+          textDecoration: 'none', padding: '4px 10px',
+          background: 'transparent', border: '1px solid #2a2f3e',
+          borderRadius: 0, flexShrink: 0,
+        }}
+      >
+        Journal
+      </a>
+
       <button
         onClick={toggleSplitView}
         style={{

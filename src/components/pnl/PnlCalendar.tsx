@@ -161,6 +161,12 @@ export function PnlCalendar() {
         <span style={{ fontWeight: 800, fontSize: 16, color: '#3861fb' }}>
           PnL Calendar
         </span>
+        <a
+          href="#/journal"
+          style={{ color: '#3861fb', textDecoration: 'none', fontWeight: 600, fontSize: 14 }}
+        >
+          Journal &rarr;
+        </a>
         <span style={{ fontSize: 12, color: '#8a8f98' }}>
           {account.name}
         </span>

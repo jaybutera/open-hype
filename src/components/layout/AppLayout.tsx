@@ -4,6 +4,7 @@ import { TradingChart } from '../chart/TradingChart.tsx';
 import { OrderPanel } from '../trading/OrderPanel.tsx';
 import { PositionTable } from '../positions/PositionTable.tsx';
 import { OrderConfirmModal } from '../modals/OrderConfirmModal.tsx';
+import { JournalCapture } from '../journal/JournalCapture.tsx';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 
@@ -45,6 +46,7 @@ export function AppLayout({ engine }: Props) {
       <PositionTable engine={engine} />
 
       <OrderConfirmModal engine={engine} />
+      <JournalCapture />
     </div>
   );
 }

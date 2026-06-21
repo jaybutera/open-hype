@@ -5,6 +5,13 @@ import type { OptionPositionJSON } from './options/OptionPosition.ts';
 
 const STORAGE_KEY = 'hl-paper-accounts';
 
+export interface JournalEntry {
+  id: string;
+  timestamp: number; // ms, when the note was written
+  text: string;
+  coin?: string; // chart symbol being viewed at capture time
+}
+
 export interface PaperAccount {
   id: string;
   name: string;
@@ -15,6 +22,7 @@ export interface PaperAccount {
   openOrders: PaperOrder[];
   fills: LedgerEntry[];
   optionPositions?: OptionPositionJSON[];
+  journalEntries?: JournalEntry[];
 }
 
 export interface PaperAccountsData {
@@ -37,6 +45,7 @@ export function createDefaultAccount(): PaperAccount {
     openOrders: [],
     fills: [],
     optionPositions: [],
+    journalEntries: [],
   };
 }
 
