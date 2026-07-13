@@ -26,10 +26,11 @@ export function createLedgerEntry(
   fee: Decimal,
   realizedPnl: Decimal,
   balanceAfter: Decimal,
+  timestamp: number = Date.now(),
 ): LedgerEntry {
   return {
     id: `paper-${nextId++}`,
-    timestamp: Date.now(),
+    timestamp,
     coin,
     side,
     size: size.toString(),
@@ -50,10 +51,11 @@ export function createOptionLedgerEntry(params: {
   realizedPnl: Decimal;
   balanceAfter: Decimal;
   spreadId: string;
+  timestamp?: number;
 }): LedgerEntry {
   return {
     id: `paper-${nextId++}`,
-    timestamp: Date.now(),
+    timestamp: params.timestamp ?? Date.now(),
     coin: params.contractSymbol,
     side: params.side,
     size: params.qty.toString(),

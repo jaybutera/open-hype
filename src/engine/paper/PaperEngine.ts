@@ -32,6 +32,8 @@ export interface PaperEngineConfig {
   takerRate?: string;
   onUpdate?: (state: PaperState) => void;
   onRejection?: (reason: string, order: PaperOrder) => void;
+  /** Clock for order/fill timestamps. Replay mode injects historical time. */
+  now?: () => number;
 }
 
 /** Rehydrate Decimal fields from JSON-serialized account data */
@@ -78,6 +80,7 @@ export class PaperEngine {
   private takerRate: string;
   private onUpdate: ((state: PaperState) => void) | null;
   private onRejection: ((reason: string, order: PaperOrder) => void) | null = null;
+  private now: () => number;
 
   constructor(config: PaperEngineConfig = {}) {
     this.balance = new Decimal(config.initialBalance ?? '10000');
@@ -86,6 +89,7 @@ export class PaperEngine {
     this.takerRate = config.takerRate ?? TAKER_FEE_RATE;
     this.onUpdate = config.onUpdate ?? null;
     this.onRejection = config.onRejection ?? null;
+    this.now = config.now ?? Date.now;
     orderCounter = 0;
     optionLegCounter = 0;
     spreadCounter = 0;
@@ -182,7 +186,7 @@ export class PaperEngine {
       size,
       reduceOnly: req.reduceOnly,
       type: isLimit ? 'limit' : 'trigger',
-      timestamp: Date.now(),
+      timestamp: this.now(),
     };
 
     if (isTrigger) {
@@ -356,12 +360,13 @@ export class PaperEngine {
       fee,
       result.realizedPnl,
       this.balance,
+      this.now(),
     ));
 
     // Stamp parentFilledAt on any child orders so candle-based triggers ignore
     // wicks from before the entry was live.
     if (!order.tpsl && !order.reduceOnly) {
-      const filledAt = Date.now();
+      const filledAt = this.now();
       for (const o of this.openOrders) {
         if (o.parentOid === order.id) o.parentFilledAt = filledAt;
       }
@@ -491,7 +496,7 @@ export class PaperEngine {
       this.openOrders = this.openOrders.filter(o => !(o.coin === coin && o.reduceOnly));
     }
 
-    this.fills.push(createLedgerEntry(coin, side, size, price, fee, result.realizedPnl, this.balance));
+    this.fills.push(createLedgerEntry(coin, side, size, price, fee, result.realizedPnl, this.balance, this.now()));
     this.emitUpdate();
     return { success: true, filled: { totalSz: size.toString(), avgPx: midPrice } };
   }

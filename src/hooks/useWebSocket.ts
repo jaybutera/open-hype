@@ -1,12 +1,16 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { ws } from '../services/ws/connection.ts';
 import { useMarketStore } from '../store/useMarketStore.ts';
+import { useReplayStore } from '../store/useReplayStore.ts';
 import type { PaperEngine } from '../engine/paper/PaperEngine.ts';
 import type { CandleData, CandleInterval } from '../types/market.ts';
 
 export function useWebSocket(engine: PaperEngine): void {
   const panes = useMarketStore(s => s.panes);
   const appendCandle = useMarketStore(s => s.appendCandle);
+  // While replay is active the local recording drives mids/candles/engine —
+  // skip all live subscriptions so real-time data can't bleed into the replay.
+  const replayActive = useReplayStore(s => s.active);
   const connectedRef = useRef(false);
 
   // Connect once
@@ -23,6 +27,7 @@ export function useWebSocket(engine: PaperEngine): void {
 
   // Subscribe to perps allMids
   useEffect(() => {
+    if (replayActive) return;
     return ws.subscribe('allMids', {}, (data) => {
       const msg = data as { mids: Record<string, string> };
       if (!msg.mids) return;
@@ -46,10 +51,11 @@ export function useWebSocket(engine: PaperEngine): void {
         if (mid) engine.onPriceUpdate(coin, mid);
       }
     });
-  }, [engine]);
+  }, [engine, replayActive]);
 
   // Subscribe to xyz allMids
   useEffect(() => {
+    if (replayActive) return;
     return ws.subscribe('allMids', { dex: 'xyz' }, (data) => {
       const msg = data as { mids: Record<string, string> };
       if (!msg.mids) return;
@@ -71,7 +77,7 @@ export function useWebSocket(engine: PaperEngine): void {
         if (mid) engine.onPriceUpdate(coin, mid);
       }
     });
-  }, [engine]);
+  }, [engine, replayActive]);
 
   // Subscribe to candles for the union of all panes' (asset, interval) pairs.
   // Memoize the key list so we only re-subscribe when the set actually changes,
@@ -86,6 +92,7 @@ export function useWebSocket(engine: PaperEngine): void {
   }, [panes.primary?.asset, panes.primary?.interval, panes.secondary?.asset, panes.secondary?.interval]);
 
   useEffect(() => {
+    if (replayActive) return;
     const unsubs: Array<() => void> = [];
     for (const key of candleKeys) {
       const [coin, interval] = key.split('|') as [string, CandleInterval];
@@ -101,5 +108,5 @@ export function useWebSocket(engine: PaperEngine): void {
     return () => {
       for (const u of unsubs) u();
     };
-  }, [candleKeys.join(','), appendCandle, engine]);
+  }, [candleKeys.join(','), appendCandle, engine, replayActive]);
 }

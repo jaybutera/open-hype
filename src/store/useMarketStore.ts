@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Meta, AssetMeta, AssetCtx, CandleData, CandleInterval } from '../types/market.ts';
 import { fetchMetaAndAssetCtxs, fetchCandles, fetchAllMids } from '../services/api/info.ts';
+import { getReplayCandleSource } from '../services/replay/source.ts';
 
 export type AssetCategory = 'perps' | 'xyz';
 
@@ -218,10 +219,16 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       if (!existing) return s;
       return { panes: { ...s.panes, [id]: { ...existing, loading: true } } };
     });
-    const now = Date.now();
-    const intervalMs = intervalToMs(interval);
-    const startTime = now - intervalMs * 300;
-    const candles = await fetchCandles(asset, interval, startTime, now);
+    const replay = getReplayCandleSource();
+    let candles: CandleData[];
+    if (replay) {
+      candles = await replay.loadInitial(asset, interval).catch(() => []);
+    } else {
+      const now = Date.now();
+      const intervalMs = intervalToMs(interval);
+      const startTime = now - intervalMs * 300;
+      candles = await fetchCandles(asset, interval, startTime, now);
+    }
     // Only apply if still on the same asset/interval (user may have switched mid-fetch)
     set((s) => {
       const cur = s.panes[id];
@@ -241,10 +248,16 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       if (!existing) return s;
       return { panes: { ...s.panes, [id]: { ...existing, loading: true } } };
     });
-    const intervalMs = intervalToMs(interval);
+    const replay = getReplayCandleSource();
     const earliest = Math.min(...candles.map(c => c.t));
-    const startTime = earliest - intervalMs * 300;
-    const older = await fetchCandles(asset, interval, startTime, earliest);
+    let older: CandleData[];
+    if (replay) {
+      older = await replay.loadMore(asset, interval, earliest).catch(() => []);
+    } else {
+      const intervalMs = intervalToMs(interval);
+      const startTime = earliest - intervalMs * 300;
+      older = await fetchCandles(asset, interval, startTime, earliest);
+    }
     set((s) => {
       const cur = s.panes[id];
       if (!cur || cur.asset !== asset || cur.interval !== interval) return s;

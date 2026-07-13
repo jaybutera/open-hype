@@ -7,6 +7,7 @@ import {
   type PaperAccountsData,
   type JournalEntry,
 } from '../engine/paper/persistence.ts';
+import { appNow } from '../services/replay/clock.ts';
 
 interface PaperAccountsStore {
   accounts: PaperAccount[];
@@ -108,7 +109,7 @@ export const usePaperAccountsStore = create<PaperAccountsStore>((set, get) => {
       if (!trimmed) return;
       const entry: JournalEntry = {
         id: journalId(),
-        timestamp: Date.now(),
+        timestamp: appNow(),
         text: trimmed,
         ...(coin ? { coin } : {}),
       };

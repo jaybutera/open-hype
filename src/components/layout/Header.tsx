@@ -6,6 +6,7 @@ import { Logo } from './Logo.tsx';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
+import { useReplayStore } from '../../store/useReplayStore.ts';
 
 export function Header() {
   const mode = useSettingsStore(s => s.mode);
@@ -18,6 +19,10 @@ export function Header() {
   const allMids = useMarketStore(s => s.allMids);
   const setAsset = useMarketStore(s => s.setAsset);
   const loadCandles = useMarketStore(s => s.loadCandles);
+  const replayActive = useReplayStore(s => s.active);
+  const replaySetup = useReplayStore(s => s.showSetup);
+  const setShowSetup = useReplayStore(s => s.setShowSetup);
+  const exitReplay = useReplayStore(s => s.exitReplay);
 
   const handleFavClick = (coin: string) => {
     setAsset(coin);
@@ -86,6 +91,21 @@ export function Header() {
         title="Toggle split chart view"
       >
         {splitView ? 'Split: ON' : 'Split'}
+      </button>
+
+      <button
+        onClick={() => replayActive ? exitReplay() : setShowSetup(!replaySetup)}
+        style={{
+          fontSize: 12, fontWeight: 700,
+          color: replayActive ? '#0d1117' : '#e1e4e8',
+          background: replayActive ? '#f0b90b' : '#1a1f2e',
+          padding: '4px 12px', cursor: 'pointer',
+          border: `1px solid ${replayActive || replaySetup ? '#f0b90b' : '#2a2f3e'}`,
+          borderRadius: 0, flexShrink: 0,
+        }}
+        title={replayActive ? 'End replay' : 'Replay recorded history'}
+      >
+        {replayActive ? 'Replay: ON' : 'Replay'}
       </button>
 
       <AssetSelector />

@@ -5,6 +5,7 @@ import { usePaperAccountsStore } from '../store/usePaperAccountsStore.ts';
 import { useFeeStore } from '../store/useFeeStore.ts';
 import { useWalletStore } from '../store/useWalletStore.ts';
 import { PaperEngine } from '../engine/paper/PaperEngine.ts';
+import { appNow } from '../services/replay/clock.ts';
 
 function createEngineForAccount(
   acct: ReturnType<typeof usePaperAccountsStore.getState>['accounts'][0],
@@ -21,6 +22,7 @@ function createEngineForAccount(
     takerRate,
     onUpdate,
     onRejection,
+    now: appNow,
   });
   if (acct.fills.length > 0 || acct.positions.length > 0 || acct.openOrders.length > 0 || acct.balance !== acct.initialBalance) {
     engine.loadState(acct);

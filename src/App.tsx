@@ -4,6 +4,7 @@ import { PnlCalendar } from './components/pnl/PnlCalendar.tsx';
 import { OptionsPage } from './components/options/OptionsPage.tsx';
 import { JournalPage } from './components/journal/JournalPage.tsx';
 import { useMarketStore } from './store/useMarketStore.ts';
+import { useReplayStore } from './store/useReplayStore.ts';
 import { usePaperEngine } from './hooks/useEngine.ts';
 import { useWebSocket } from './hooks/useWebSocket.ts';
 
@@ -48,6 +49,11 @@ function AppInner() {
   const hash = useHashRoute();
 
   useWebSocket(engine);
+
+  // Replay mode drives this engine with historical candles when active.
+  useEffect(() => {
+    useReplayStore.getState().registerEngine(engine);
+  }, [engine]);
 
   useEffect(() => {
     const init = async () => {
