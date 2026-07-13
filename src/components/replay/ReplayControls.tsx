@@ -43,6 +43,7 @@ export function ReplayControls() {
   const speed = useReplayStore(s => s.speed);
   const buffering = useReplayStore(s => s.buffering);
   const atEnd = useReplayStore(s => s.atEnd);
+  const tickResolution = useReplayStore(s => s.tickResolution);
   const loadAssets = useReplayStore(s => s.loadAssets);
   const setShowSetup = useReplayStore(s => s.setShowSetup);
   const enterReplay = useReplayStore(s => s.enterReplay);
@@ -72,12 +73,23 @@ export function ReplayControls() {
     };
   }, [assets, activeAsset]);
 
-  // Default the picker to 24h before the end of the recording.
+  // Tick coverage for the active asset, when it has any. Far narrower than the
+  // 1m range, so the setup bar advertises it explicitly.
+  const tickBounds = useMemo(() => {
+    const ticks = assets.find(a => a.coin === activeAsset)?.ticks;
+    return ticks ? { min: ticks.firstTs, max: ticks.lastTs } : null;
+  }, [assets, activeAsset]);
+
+  // Default the picker into the tick window when there is one, else 24h before
+  // the end of the recording.
   useEffect(() => {
     if (bounds && !pickerValue) {
-      setPickerValue(utcToNyInput(Math.max(bounds.min, bounds.max - 86_400_000)));
+      const dflt = tickBounds
+        ? Math.max(tickBounds.min, tickBounds.max - 86_400_000)
+        : Math.max(bounds.min, bounds.max - 86_400_000);
+      setPickerValue(utcToNyInput(dflt));
     }
-  }, [bounds, pickerValue]);
+  }, [bounds, tickBounds, pickerValue]);
 
   if (!active && !showSetup) return null;
 
@@ -92,6 +104,8 @@ export function ReplayControls() {
     const start = pickerValue ? nyInputToUtc(pickerValue) : null;
     const valid = start !== null && bounds !== null
       && start >= bounds.min && start <= bounds.max;
+    const startHasTicks = start !== null && tickBounds !== null
+      && start >= tickBounds.min && start < tickBounds.max;
     return (
       <div style={barStyle}>
         <span style={{ fontSize: 12, fontWeight: 700, color: AMBER, flexShrink: 0 }}>REPLAY SETUP</span>
@@ -120,6 +134,20 @@ export function ReplayControls() {
                 ? `${activeAsset}: ${fmtNy(bounds.min)} → ${fmtNy(bounds.max)}`
                 : `no recording for ${activeAsset} — recorded: ${assets.map(a => a.coin).join(', ')}`}
             </span>
+            {tickBounds && (
+              <span
+                title={startHasTicks
+                  ? 'Replay will use recorded BBO ticks — real intra-candle fills'
+                  : `Outside the tick window, replay falls back to 1m bars. Ticks: ${fmtNy(tickBounds.min)} → ${fmtNy(tickBounds.max)}`}
+                style={{
+                  fontSize: 10, fontWeight: 700, letterSpacing: 0.4, padding: '2px 6px',
+                  border: `1px solid ${startHasTicks ? '#0ecb81' : '#3a3f4e'}`,
+                  color: startHasTicks ? '#0ecb81' : '#8a8f98',
+                }}
+              >
+                {startHasTicks ? 'TICK' : `1M · ticks ${fmtNy(tickBounds.min)}→${fmtNy(tickBounds.max)}`}
+              </span>
+            )}
             <button
               disabled={!valid || starting}
               onClick={async () => {
@@ -151,6 +179,19 @@ export function ReplayControls() {
       <span style={{ fontSize: 12, fontWeight: 700, color: AMBER, flexShrink: 0 }}>● REPLAY</span>
       <span style={{ fontSize: 13, fontWeight: 600, color: '#e1e4e8', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
         {fmtNy(cursor)} NY
+      </span>
+
+      <span
+        title={tickResolution
+          ? 'Recorded BBO ticks are driving fills — real intra-candle price path'
+          : 'No ticks recorded here — fills use 1m bar high/low, so intra-candle order is approximate'}
+        style={{
+          fontSize: 10, fontWeight: 700, letterSpacing: 0.4, flexShrink: 0,
+          padding: '2px 6px', border: `1px solid ${tickResolution ? '#0ecb81' : '#3a3f4e'}`,
+          color: tickResolution ? '#0ecb81' : '#8a8f98',
+        }}
+      >
+        {tickResolution ? 'TICK' : '1M'}
       </span>
 
       <button onClick={() => void stepForward()} style={btnStyle} title={`Advance one ${activeInterval} candle`}>

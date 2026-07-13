@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import type { CandleData, CandleInterval } from '../types/market.ts';
 import type { PaperEngine } from '../engine/paper/PaperEngine.ts';
-import { fetchReplayAssets, fetchReplayCandles, type ReplayAssetInfo } from '../services/replay/api.ts';
+import {
+  fetchReplayAssets,
+  fetchReplayCandles,
+  fetchReplayTicks,
+  type ReplayAssetInfo,
+  type Tick,
+} from '../services/replay/api.ts';
 import { aggregate1m, bucketStart, intervalToMs, mergeIntoInterval } from '../services/replay/aggregate.ts';
 import { setReplayCandleSource } from '../services/replay/source.ts';
 import { setReplayClock } from '../services/replay/clock.ts';
@@ -9,8 +15,11 @@ import { useMarketStore, type PaneId } from './useMarketStore.ts';
 import { useSettingsStore } from './useSettingsStore.ts';
 
 const MINUTE = 60_000;
+const HOUR = 3_600_000;
 /** Fetch granularity when extending a coin buffer (2 weeks of 1m). */
 const CHUNK_MS = 14 * 86_400_000;
+/** Fetch granularity for ticks — they're ~24k quotes/hour, so pull an hour at a time. */
+const TICK_CHUNK_MS = HOUR;
 /** History depth for initial chart loads, in interval candles. */
 const HISTORY_CANDLES = 300;
 /** Playback speeds, in 1m candles per second. */
@@ -23,18 +32,26 @@ interface CoinBuffer {
   to: number;
 }
 
+interface TickBuffer {
+  /** Sorted BBO quotes covering [from, to). */
+  ticks: Tick[];
+  from: number;
+  to: number;
+}
+
 const buffers = new Map<string, CoinBuffer>();
+const tickBuffers = new Map<string, TickBuffer>();
 let playTimer: ReturnType<typeof setInterval> | null = null;
 let advancing = false; // reentrancy guard for async advance
 let stepping = false; // reentrancy guard for stepForward
 let carry = 0; // fractional candles owed by the play timer
 
-/** First index in sorted candles with t >= target. */
-function lowerBound(candles: CandleData[], target: number): number {
-  let lo = 0, hi = candles.length;
+/** First index in a sorted, time-stamped array with t >= target. */
+function lowerBound(rows: readonly { t: number }[], target: number): number {
+  let lo = 0, hi = rows.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (candles[mid].t < target) lo = mid + 1;
+    if (rows[mid].t < target) lo = mid + 1;
     else hi = mid;
   }
   return lo;
@@ -45,6 +62,16 @@ async function fetchRange(coin: string, from: number, to: number): Promise<Candl
   const out: CandleData[] = [];
   for (let cur = from; cur < to; cur += CHUNK_MS) {
     const chunk = await fetchReplayCandles(coin, cur, Math.min(cur + CHUNK_MS, to));
+    out.push(...chunk);
+  }
+  return out;
+}
+
+/** Fetch BBO quotes for [from, to) in hour chunks (server caps the range at 24h). */
+async function fetchTickRange(coin: string, from: number, to: number): Promise<Tick[]> {
+  const out: Tick[] = [];
+  for (let cur = from; cur < to; cur += TICK_CHUNK_MS) {
+    const chunk = await fetchReplayTicks(coin, cur, Math.min(cur + TICK_CHUNK_MS, to));
     out.push(...chunk);
   }
   return out;
@@ -62,6 +89,8 @@ interface ReplayStore {
   speed: number;
   buffering: boolean;
   atEnd: boolean;
+  /** True when the active pane's asset is being driven by real BBO ticks. */
+  tickResolution: boolean;
 
   registerEngine: (engine: PaperEngine) => void;
   loadAssets: () => Promise<void>;
@@ -70,6 +99,8 @@ interface ReplayStore {
   exitReplay: () => void;
   /** Advance until the active pane's current interval candle completes. */
   stepForward: () => Promise<void>;
+  /** Advance exactly n recorded minutes. */
+  advanceMinutes: (n: number) => Promise<void>;
   togglePlay: () => void;
   setSpeed: (n: number) => void;
 }
@@ -121,6 +152,52 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
     return buf.candles.slice(lowerBound(buf.candles, from), lowerBound(buf.candles, to));
   }
 
+  /** True when this coin has recorded BBO ticks covering tMs. */
+  function hasTicksAt(coin: string, tMs: number): boolean {
+    const cov = coverage(coin)?.ticks;
+    return cov !== undefined && tMs >= cov.firstTs && tMs < cov.lastTs;
+  }
+
+  /**
+   * Extend a coin's tick buffer to cover [from, to), clamped to the recorded
+   * tick range. Ticks are dense, so the buffer only ever holds a sliding window
+   * — anything older than `from` is dropped.
+   */
+  async function ensureTicks(coin: string, from: number, to: number): Promise<void> {
+    const cov = coverage(coin)?.ticks;
+    if (!cov) return;
+    from = Math.max(from, cov.firstTs);
+    to = Math.min(to, cov.lastTs);
+    if (from >= to) return;
+
+    const buf = tickBuffers.get(coin);
+    // Contiguous forward extension is the common case (playback); anything else
+    // (seek, first load) refetches the window outright.
+    if (buf && from >= buf.from && from <= buf.to && to > buf.to) {
+      const prevTo = buf.to;
+      const fetched = await fetchTickRange(coin, prevTo, to);
+      const cur = tickBuffers.get(coin);
+      if (cur && cur.to === prevTo) {
+        const kept = cur.ticks.slice(lowerBound(cur.ticks, from));
+        cur.ticks = [...kept, ...fetched.filter(tk => tk.t >= prevTo)];
+        cur.from = from;
+        cur.to = to;
+      }
+      return;
+    }
+    if (buf && from >= buf.from && to <= buf.to) return; // already covered
+
+    const ticks = await fetchTickRange(coin, from, to);
+    tickBuffers.set(coin, { ticks, from, to });
+  }
+
+  /** BBO quotes with from <= t < to (buffer must already cover the range). */
+  function sliceTicks(coin: string, from: number, to: number): Tick[] {
+    const buf = tickBuffers.get(coin);
+    if (!buf) return [];
+    return buf.ticks.slice(lowerBound(buf.ticks, from), lowerBound(buf.ticks, to));
+  }
+
   /** Open time of the first recorded candle with t >= fromMs, or null. */
   async function findNextCandleTime(coin: string, fromMs: number): Promise<number | null> {
     const cov = coverage(coin);
@@ -156,6 +233,11 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
    * Reveal the next recorded minute across all relevant coins: bump the
    * clock, update mids, feed the paper engine, and merge the 1m candles
    * into each pane's interval series. Returns false at end of data.
+   *
+   * Where BBO ticks exist for the minute, the engine is driven quote by quote
+   * in true chronological order, so orders fill against the real intra-minute
+   * price path. Coins without ticks fall back to the 1m bar: high/low for
+   * trigger matching, close for the mid.
    */
   async function advanceOneMinute(): Promise<boolean> {
     const coins = relevantCoins();
@@ -166,19 +248,62 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
       if (t !== null && (nextT === null || t < nextT)) nextT = t;
     }
     if (nextT === null) return false;
+    const minuteEnd = nextT + MINUTE;
 
     const minuteCandles = new Map<string, CandleData>();
     for (const coin of coins) {
-      const c = slice(coin, nextT, nextT + MINUTE)[0];
+      const c = slice(coin, nextT, minuteEnd)[0];
       if (c) minuteCandles.set(coin, c);
     }
 
-    // Clock first, so fills stamped during matching carry the candle's close time.
-    set({ cursor: nextT + MINUTE });
+    // Pull ticks for every coin that has them for this minute. Prefetch a
+    // window ahead so playback isn't fetching an hour shard every 60 steps.
+    const tickCoins = coins.filter(c => hasTicksAt(c, nextT));
+    await Promise.all(
+      tickCoins.map(c => ensureTicks(c, nextT, nextT + TICK_CHUNK_MS)),
+    );
+
+    // Interleave every coin's quotes into one chronological stream, so a
+    // multi-coin replay preserves cross-asset ordering too.
+    const stream: Array<{ t: number; coin: string; mid: number }> = [];
+    const tickedCoins = new Set<string>();
+    for (const coin of tickCoins) {
+      const ticks = sliceTicks(coin, nextT, minuteEnd);
+      if (ticks.length === 0) continue;
+      tickedCoins.add(coin);
+      for (const tk of ticks) {
+        stream.push({ t: tk.t, coin, mid: (tk.bid + tk.ask) / 2 });
+      }
+    }
+    stream.sort((a, b) => a.t - b.t);
 
     const market = useMarketStore.getState();
+
+    if (stream.length > 0 && engine) {
+      // Walk the real price path. The clock advances with each quote, so fills
+      // are stamped at the instant they'd actually have happened.
+      for (const q of stream) {
+        set({ cursor: q.t + 1 });
+        engine.onPriceUpdate(q.coin, String(q.mid));
+      }
+    }
+
+    // Clock to end of minute; fills stamped after this carry the candle close.
+    set({ cursor: minuteEnd });
+
+    // Coins with no ticks this minute still need bar-driven matching.
+    if (engine) {
+      for (const [coin, c] of minuteCandles) {
+        if (tickedCoins.has(coin)) continue;
+        engine.onCandleUpdate(coin, c.h, c.l, c.t);
+        engine.onPriceUpdate(coin, c.c);
+      }
+    }
+
+    // Mids: last quote of the minute where we had ticks, else the bar close.
     const mids: Record<string, string> = {};
     for (const [coin, c] of minuteCandles) mids[coin] = c.c;
+    for (const q of stream) mids[q.coin] = String(q.mid); // stream is sorted; last wins
     market.batchUpdateMids(mids);
 
     // Merge into each pane's interval series (per unique asset+interval pair).
@@ -195,12 +320,10 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
       market.appendCandle(mergeIntoInterval(last, c, pane.interval), pane.interval);
     }
 
-    if (engine) {
-      for (const [coin, c] of minuteCandles) {
-        engine.onCandleUpdate(coin, c.h, c.l, c.t);
-        engine.onPriceUpdate(coin, c.c);
-      }
-    }
+    const activeAsset = market.getActivePane().asset;
+    const onTicks = tickedCoins.has(activeAsset);
+    if (get().tickResolution !== onTicks) set({ tickResolution: onTicks });
+
     return true;
   }
 
@@ -276,6 +399,7 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
     speed: 10,
     buffering: false,
     atEnd: false,
+    tickResolution: false,
 
     registerEngine: (e) => { engine = e; },
 
@@ -293,8 +417,9 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
     enterReplay: async (startTs) => {
       stopTimer();
       buffers.clear();
+      tickBuffers.clear();
       const cursor = bucketStart(startTs, MINUTE);
-      set({ active: true, showSetup: false, cursor, playing: false, atEnd: false });
+      set({ active: true, showSetup: false, cursor, playing: false, atEnd: false, tickResolution: false });
       setReplayClock(() => get().cursor - 1);
       setReplayCandleSource(candleSource);
       // Replay only makes sense against the paper engine.
@@ -322,7 +447,8 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
       setReplayClock(null);
       setReplayCandleSource(null);
       buffers.clear();
-      set({ active: false, playing: false, atEnd: false, buffering: false });
+      tickBuffers.clear();
+      set({ active: false, playing: false, atEnd: false, buffering: false, tickResolution: false });
       const market = useMarketStore.getState();
       for (const id of ['primary', 'secondary'] as PaneId[]) {
         if (market.panes[id]) void market.loadCandles(id);
@@ -367,6 +493,11 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
       } finally {
         stepping = false;
       }
+    },
+
+    advanceMinutes: async (n) => {
+      if (!get().active) return;
+      await advance(n);
     },
 
     togglePlay: () => {
