@@ -1,5 +1,7 @@
-export const API_BASE = 'https://api.hyperliquid.xyz';
-export const WS_URL = 'wss://api.hyperliquid.xyz/ws';
+import { NETWORK_URLS } from '../services/hl/network.ts';
+
+export const API_BASE = NETWORK_URLS.api;
+export const WS_URL = NETWORK_URLS.ws;
 
 export const DEFAULT_LEVERAGE = 10;
 export const DEFAULT_INITIAL_BALANCE = '10000';

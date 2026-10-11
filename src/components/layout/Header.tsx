@@ -1,7 +1,10 @@
 import { AssetSelector } from '../common/AssetSelector.tsx';
 import { ModeToggle } from '../common/ModeToggle.tsx';
 import { PaperAccountSelector } from '../common/PaperAccountSelector.tsx';
-import { WalletInput } from '../account/WalletInput.tsx';
+import { WalletConnect } from '../account/WalletConnect.tsx';
+import { NetworkToggle } from '../common/NetworkToggle.tsx';
+import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
+import { useWalletStore } from '../../store/useWalletStore.ts';
 import { Logo } from './Logo.tsx';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
@@ -12,6 +15,10 @@ export function Header() {
   const mode = useSettingsStore(s => s.mode);
   const favorites = useSettingsStore(s => s.favorites);
   const paperBalance = useAccountStore(s => s.paperBalance);
+  const liveAddress = useWalletStore(s => s.address);
+  const liveValue = useLiveAccountStore(s => s.accountValue);
+  const liveWithdrawable = useLiveAccountStore(s => s.withdrawable);
+  const liveSyncError = useLiveAccountStore(s => s.syncError);
   const activePane = useMarketStore(s => s.panes[s.activePaneId] ?? s.panes.primary);
   const currentAsset = activePane?.asset ?? 'BTC';
   const splitView = useMarketStore(s => s.splitView);
@@ -147,8 +154,23 @@ export function Header() {
         </>
       )}
 
+      {mode === 'live' && (
+        <>
+          <NetworkToggle />
+          {liveAddress && (
+            <span
+              data-testid="live-balance"
+              title={liveSyncError ? `Sync error: ${liveSyncError}` : `Withdrawable $${liveWithdrawable.toFixed(2)}`}
+              style={{ fontSize: 13, color: liveSyncError ? '#f6465d' : '#0ecb81', fontWeight: 600, flexShrink: 0 }}
+            >
+              LIVE ${liveValue.toFixed(2)}
+            </span>
+          )}
+        </>
+      )}
+
       <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
-        <WalletInput />
+        <WalletConnect />
       </div>
     </header>
   );

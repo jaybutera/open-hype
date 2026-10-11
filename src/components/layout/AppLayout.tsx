@@ -3,6 +3,8 @@ import { Header } from './Header.tsx';
 import { TradingChart } from '../chart/TradingChart.tsx';
 import { OrderPanel } from '../trading/OrderPanel.tsx';
 import { PositionTable } from '../positions/PositionTable.tsx';
+import { LivePositionTable } from '../positions/LivePositionTable.tsx';
+import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { OrderConfirmModal } from '../modals/OrderConfirmModal.tsx';
 import { JournalCapture } from '../journal/JournalCapture.tsx';
 import { ReplayControls } from '../replay/ReplayControls.tsx';
@@ -14,6 +16,7 @@ interface Props {
 }
 
 export function AppLayout({ engine }: Props) {
+  const mode = useSettingsStore(s => s.mode);
   const splitView = useMarketStore(s => s.splitView);
   const secondaryPane = useMarketStore(s => s.panes.secondary);
   const loadCandles = useMarketStore(s => s.loadCandles);
@@ -45,7 +48,7 @@ export function AppLayout({ engine }: Props) {
         <OrderPanel engine={engine} />
       </div>
 
-      <PositionTable engine={engine} />
+      {mode === 'live' ? <LivePositionTable /> : <PositionTable engine={engine} />}
 
       <OrderConfirmModal engine={engine} />
       <JournalCapture />

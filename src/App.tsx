@@ -7,6 +7,7 @@ import { useMarketStore } from './store/useMarketStore.ts';
 import { useReplayStore } from './store/useReplayStore.ts';
 import { usePaperEngine } from './hooks/useEngine.ts';
 import { useWebSocket } from './hooks/useWebSocket.ts';
+import { useLiveAccountSync } from './hooks/useLiveAccountSync.ts';
 
 function useHashRoute() {
   const [hash, setHash] = useState(window.location.hash);
@@ -49,6 +50,7 @@ function AppInner() {
   const hash = useHashRoute();
 
   useWebSocket(engine);
+  useLiveAccountSync();
 
   // Replay mode drives this engine with historical candles when active.
   useEffect(() => {

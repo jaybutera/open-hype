@@ -5,6 +5,9 @@ import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { OrderType, Side } from '../../types/order.ts';
+import { useWalletStore } from '../../store/useWalletStore.ts';
+import { prepareOrder, submitPrepared, type LiveOrderInput, type PreparedOrder } from '../../services/hl/liveTrader.ts';
+import { LiveOrderConfirm } from './LiveOrderConfirm.tsx';
 
 interface Props {
   engine: PaperEngine;
@@ -46,6 +49,12 @@ export function OrderPanel({ engine }: Props) {
   const [slPrice, setSlPrice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const mode = useSettingsStore(s => s.mode);
+  const tradingStatus = useWalletStore(s => s.tradingStatus);
+  const walletAddress = useWalletStore(s => s.address);
+  const isLive = mode === 'live';
+  const [pendingLive, setPendingLive] = useState<{ order: PreparedOrder; setupId?: string } | null>(null);
+  const [liveBusy, setLiveBusy] = useState(false);
   const lastRejection = useAccountStore(s => s.lastRejection);
   const setRejection = useAccountStore(s => s.setRejection);
 
@@ -73,6 +82,33 @@ export function OrderPanel({ engine }: Props) {
     if (leverage > assetMaxLeverage) setLeverage(assetMaxLeverage);
   }, [assetMaxLeverage, leverage, setLeverage]);
 
+  // A staged live order belongs to the asset/mode it was built for.
+  useEffect(() => { setPendingLive(null); }, [currentAsset, mode, walletAddress]);
+
+  const stageLive = async (input: LiveOrderInput, setupId?: string) => {
+    setError(null);
+    setSuccess(null);
+    if (tradingStatus !== 'ready') {
+      setError(walletAddress ? 'Enable trading in the wallet menu first' : 'Connect a wallet first');
+      return;
+    }
+    try {
+      setPendingLive({ order: await prepareOrder(input), setupId });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const confirmLive = async () => {
+    if (!pendingLive) return;
+    setLiveBusy(true);
+    const r = await submitPrepared(pendingLive.order);
+    setLiveBusy(false);
+    if (r.ok && pendingLive.setupId) removeSetup(pendingLive.setupId);
+    setPendingLive(null);
+    if (r.ok) setSuccess(r.message); else setError(r.message);
+  };
+
   const handleExecuteSetup = (id: string) => {
     const setup = useTradeSetupStore.getState().activeSetups.find(s => s.id === id);
     if (!setup) {
@@ -95,6 +131,14 @@ export function OrderPanel({ engine }: Props) {
 
     const closeSide: Side = setup.side === 'buy' ? 'sell' : 'buy';
     const setupAsset = setup.asset ?? currentAsset;
+
+    if (isLive) {
+      void stageLive({
+        coin: setupAsset, side: setup.side, size: assetSize, kind: 'limit', price: setup.entryPrice,
+        tp: setup.tpPrice, sl: setup.slPrice, leverage,
+      }, id);
+      return;
+    }
 
     // A risk-capped position with a tight stop can imply a large notional. The
     // loss is still bounded at `risk`, but margin = notional / leverage may
@@ -183,6 +227,15 @@ export function OrderPanel({ engine }: Props) {
     const assetSize = usdcToAssetSize(sizeUsdc, orderPrice);
     if (parseFloat(assetSize) <= 0) {
       setError('Invalid size');
+      return;
+    }
+
+    if (isLive) {
+      void stageLive({
+        coin: currentAsset, side, size: assetSize, kind: orderType,
+        price: orderType === 'limit' ? price : undefined, reduceOnly,
+        tp: tpPrice || undefined, sl: slPrice || undefined, leverage,
+      });
       return;
     }
 
@@ -448,13 +501,22 @@ export function OrderPanel({ engine }: Props) {
       </div>
 
       {/* Submit */}
-      <button
-        className={isBuy ? 'btn-long' : 'btn-short'}
-        onClick={handleSubmit}
-        style={{ padding: '12px', fontWeight: 700, fontSize: 15 }}
-      >
-        {isBuy ? 'Buy/Long' : 'Sell/Short'} {currentAsset}
-      </button>
+      {pendingLive ? (
+        <LiveOrderConfirm order={pendingLive.order} busy={liveBusy} onConfirm={() => void confirmLive()} onCancel={() => setPendingLive(null)} />
+      ) : (
+        <button
+          className={isBuy ? 'btn-long' : 'btn-short'}
+          onClick={handleSubmit}
+          style={{ padding: '12px', fontWeight: 700, fontSize: 15 }}
+        >
+          {isLive ? 'Review ' : ''}{isBuy ? 'Buy/Long' : 'Sell/Short'} {currentAsset}
+        </button>
+      )}
+      {isLive && tradingStatus !== 'ready' && (
+        <div style={{ fontSize: 11, color: '#f0b90b' }}>
+          {walletAddress ? 'Live: enable trading in the wallet menu to place orders' : 'Live: connect a wallet to place orders'}
+        </div>
+      )}
 
       {error && <div style={{ color: '#f6465d', fontSize: 12 }}>{error}</div>}
       {success && <div style={{ color: '#0ecb81', fontSize: 12 }}>{success}</div>}

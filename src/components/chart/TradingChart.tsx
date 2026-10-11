@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type Time, type IPriceLine, LineStyle } from 'lightweight-charts';
 import { useMarketStore, type PaneId } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
+import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useChartStore, type DraftOrder } from '../../store/useChartStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
@@ -81,6 +82,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const mode = useSettingsStore(s => s.mode);
   const paperPositions = useAccountStore(s => s.paperPositions);
   const paperOrders = useAccountStore(s => s.paperOrders);
+  const livePositions = useLiveAccountStore(s => s.positions);
+  const liveOrders = useLiveAccountStore(s => s.openOrders);
   const draftOrder = useChartStore(s => s.draftOrder);
   const setDraftOrder = useChartStore(s => s.setDraftOrder);
   const setShowConfirm = useChartStore(s => s.setShowConfirm);
@@ -96,7 +99,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
 
   // Setups belonging to this pane
   const paneSetups = activeSetups.filter(s => (s.paneId ?? 'primary') === paneId);
-  const paneOrders = paperOrders.filter(o => o.coin === currentAsset);
+  // Draggable order lines edit paper orders only; live orders are drawn as plain price lines.
+  const paneOrders = mode === 'paper' ? paperOrders.filter(o => o.coin === currentAsset) : [];
 
   // Create chart — only once
   useEffect(() => {
@@ -250,6 +254,50 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       }
     }
 
+    if (mode === 'live') {
+      for (const pos of livePositions) {
+        if (pos.coin !== currentAsset) continue;
+        const isLong = pos.szi > 0;
+        const upnl = pos.unrealizedPnl;
+        const upnlStr = upnl >= 0 ? `+$${upnl.toFixed(2)}` : `-$${Math.abs(upnl).toFixed(2)}`;
+        try {
+          priceLinesRef.current.push(series.createPriceLine({
+            price: pos.entryPx,
+            color: isLong ? '#0ecb81' : '#f6465d',
+            lineWidth: 2,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: `LIVE ${isLong ? 'LONG' : 'SHORT'} ${Math.abs(pos.szi)} @ ${pos.entryPx}  ${upnlStr}`,
+          }));
+          if (pos.liquidationPx) {
+            priceLinesRef.current.push(series.createPriceLine({
+              price: pos.liquidationPx,
+              color: '#ff4444',
+              lineWidth: 1,
+              lineStyle: LineStyle.SparseDotted,
+              axisLabelVisible: true,
+              title: 'LIQ',
+            }));
+          }
+        } catch {}
+      }
+      for (const o of liveOrders) {
+        if (o.coin !== currentAsset) continue;
+        const px = parseFloat(o.isTrigger ? o.triggerPx : o.limitPx);
+        if (!(px > 0)) continue;
+        try {
+          priceLinesRef.current.push(series.createPriceLine({
+            price: px,
+            color: o.side === 'buy' ? '#0ecb81' : '#f6465d',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `${o.orderType} ${o.side.toUpperCase()} ${o.sz}`,
+          }));
+        } catch {}
+      }
+    }
+
     // Only show draft order on the active pane (it belongs to the OrderPanel)
     if (draftOrder && isActive) {
       try {
@@ -293,7 +341,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         } catch {}
       }
     }
-  }, [mode, paperPositions, draftOrder, pendingSetup, currentAsset, fibFirstClick, isActive, engine]);
+  }, [mode, paperPositions, livePositions, liveOrders, draftOrder, pendingSetup, currentAsset, fibFirstClick, isActive, engine]);
 
   // Mouse down: pane becomes active, then handle trade box / setup / shift+click
   const handleChartClick = useCallback((e: React.MouseEvent) => {
@@ -360,13 +408,17 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
 
     const mid = parseFloat(allMids[currentAsset] ?? '0');
     void mid;
-    const pos = paperPositions.find(p => p.coin === currentAsset);
+    const { mode: currentMode } = useSettingsStore.getState();
+    const livePos = useLiveAccountStore.getState().positions.find(p => p.coin === currentAsset);
+    const paperPos = paperPositions.find(p => p.coin === currentAsset);
+    const pos = currentMode === 'live'
+      ? (livePos ? { isLong: livePos.szi > 0, entryPx: livePos.entryPx } : null)
+      : (paperPos && !paperPos.szi.isZero() ? { isLong: paperPos.szi.gt(0), entryPx: paperPos.entryPx.toNumber() } : null);
 
     let draft: DraftOrder;
 
-    if (pos && !pos.szi.isZero()) {
-      const isLong = pos.szi.gt(0);
-      const entryPx = pos.entryPx.toNumber();
+    if (pos) {
+      const { isLong, entryPx } = pos;
       const isTp = isLong ? priceNum > entryPx : priceNum < entryPx;
 
       draft = {
@@ -381,7 +433,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     }
 
     const { sizeUsdc } = useSettingsStore.getState();
-    if (sizeUsdc && parseFloat(sizeUsdc) > 0) {
+    // Live orders always go through the confirm modal; only paper orders skip it.
+    if (currentMode === 'paper' && sizeUsdc && parseFloat(sizeUsdc) > 0) {
       placeFromDraft(draft, sizeUsdc, priceNum);
     } else {
       setDraftOrder(draft);
