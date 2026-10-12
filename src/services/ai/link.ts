@@ -1,0 +1,164 @@
+/**
+ * Page side of the AI chart link. Talks to vite-ai-plugin.ts over the Vite HMR
+ * websocket: answers snapshot requests and receives pushed overlay sets.
+ * Dev server only; in a production build `import.meta.hot` is undefined and
+ * startAiLink() does nothing.
+ */
+import { useMarketStore, type PaneId } from '../../store/useMarketStore.ts';
+import { useSettingsStore } from '../../store/useSettingsStore.ts';
+import { useAccountStore } from '../../store/useAccountStore.ts';
+import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
+import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
+import { useReplayStore } from '../../store/useReplayStore.ts';
+import { useAiOverlayStore, onOverlayToggle } from '../../store/useAiOverlayStore.ts';
+import type { ChartSnapshot, OverlaySet, SnapshotCandle, SnapshotFib, SnapshotOrder, SnapshotPosition } from './types.ts';
+
+/** What the active chart pane contributes to a snapshot. */
+export interface PaneView {
+  pane: PaneId;
+  asset: string;
+  interval: string;
+  visible: { from: number; to: number; bars: number };
+  candles: SnapshotCandle[];
+  fibs: SnapshotFib[];
+}
+
+export type SnapshotProvider = () => PaneView | null;
+
+let provider: SnapshotProvider | null = null;
+
+/** The active TradingChart pane registers here. Returns an unregister function. */
+export function registerSnapshotProvider(fn: SnapshotProvider): () => void {
+  provider = fn;
+  return () => { if (provider === fn) provider = null; };
+}
+
+/** Minimal engine surface for the paper liquidation price. */
+interface LiqSource {
+  getLiquidationPrice(coin: string): { toNumber(): number } | null;
+}
+let liqSource: LiqSource | null = null;
+
+function positionFor(asset: string, mode: 'paper' | 'live'): SnapshotPosition | null {
+  if (mode === 'live') {
+    const p = useLiveAccountStore.getState().positions.find(x => x.coin === asset && x.szi !== 0);
+    if (!p) return null;
+    return {
+      side: p.szi > 0 ? 'long' : 'short', size: Math.abs(p.szi), entry: p.entryPx,
+      upnl: p.unrealizedPnl, liq: p.liquidationPx,
+    };
+  }
+  const p = useAccountStore.getState().paperPositions.find(x => x.coin === asset && !x.szi.isZero());
+  if (!p) return null;
+  let liq: number | null = null;
+  try { liq = liqSource?.getLiquidationPrice(asset)?.toNumber() ?? null; } catch { liq = null; }
+  return {
+    side: p.szi.gt(0) ? 'long' : 'short', size: p.szi.abs().toNumber(), entry: p.entryPx.toNumber(),
+    upnl: p.unrealizedPnl.toNumber(), liq,
+  };
+}
+
+function ordersFor(asset: string, mode: 'paper' | 'live'): SnapshotOrder[] {
+  if (mode === 'live') {
+    return useLiveAccountStore.getState().openOrders
+      .filter(o => o.coin === asset)
+      .map(o => ({
+        side: o.side,
+        type: o.orderType,
+        price: parseFloat(o.isTrigger ? o.triggerPx : o.limitPx),
+        size: parseFloat(o.sz),
+        reduceOnly: o.reduceOnly,
+      }));
+  }
+  return useAccountStore.getState().paperOrders
+    .filter(o => o.coin === asset)
+    .map(o => ({
+      side: o.side,
+      type: o.type === 'trigger' ? `trigger${o.tpsl ? ` ${o.tpsl}` : ''}` : 'limit',
+      price: (o.type === 'trigger' && o.triggerPx ? o.triggerPx : o.price).toNumber(),
+      size: o.size.toNumber(),
+      reduceOnly: o.reduceOnly,
+    }));
+}
+
+/** Build a snapshot from the registered pane plus what the stores know. */
+export function buildSnapshot(): ChartSnapshot {
+  const market = useMarketStore.getState();
+  const mode = useSettingsStore.getState().mode;
+  const view = provider?.() ?? null;
+  const paneId = view?.pane ?? market.activePaneId;
+  const pane = market.panes[paneId] ?? market.panes.primary;
+  const asset = view?.asset ?? pane?.asset ?? 'BTC';
+  const interval = view?.interval ?? pane?.interval ?? '5m';
+  const midStr = market.allMids[asset];
+  const mid = midStr !== undefined && Number.isFinite(parseFloat(midStr)) ? parseFloat(midStr) : null;
+  const { activeSetups, pendingSetup } = useTradeSetupStore.getState();
+  const { sets, enabledIds } = useAiOverlayStore.getState();
+
+  return {
+    takenAt: Date.now(),
+    mode,
+    replay: useReplayStore.getState().active,
+    pane: paneId,
+    asset,
+    interval,
+    timezone: 'America/New_York',
+    visible: view?.visible ?? { from: 0, to: 0, bars: 0 },
+    candles: view?.candles ?? [],
+    mid,
+    position: positionFor(asset, mode),
+    orders: ordersFor(asset, mode),
+    setups: activeSetups.map(s => ({
+      id: s.id,
+      side: s.side === 'buy' ? 'long' as const : 'short' as const,
+      asset: s.asset,
+      entry: s.entryPrice,
+      sl: s.slPrice,
+      tp: s.tpPrice,
+      size: s.assetSize,
+      riskUsdc: s.riskUsdc,
+      rr: s.rr,
+    })),
+    pendingSetup: pendingSetup
+      ? { side: pendingSetup.side === 'buy' ? 'long' : 'short', clicks: [...pendingSetup.clicks] }
+      : null,
+    fibs: view?.fibs ?? [],
+    overlays: sets.map(s => ({ id: s.id, name: s.name, enabled: enabledIds.includes(s.id) })),
+  };
+}
+
+let started = false;
+
+export function startAiLink(engine?: LiqSource): void {
+  if (engine) liqSource = engine;
+  const hot = import.meta.hot;
+  if (!hot || started) return;
+  started = true;
+
+  const sendSnapshot = (reqId?: string) => {
+    try {
+      hot.send('hl-ai:snapshot', { snapshot: buildSnapshot(), reqId });
+    } catch (e) {
+      console.warn('[ai] snapshot failed', e);
+    }
+  };
+
+  hot.on('hl-ai:snapshot-request', (data: { reqId?: string } | undefined) => sendSnapshot(data?.reqId));
+  hot.on('hl-ai:overlays', (data: { sets?: OverlaySet[]; enabled?: string[] } | undefined) => {
+    useAiOverlayStore.getState().receive(
+      Array.isArray(data?.sets) ? data!.sets : [],
+      Array.isArray(data?.enabled) ? data!.enabled : undefined,
+    );
+  });
+  hot.on('vite:ws:disconnect', () => useAiOverlayStore.getState().setConnected(false));
+  hot.on('vite:ws:connect', () => {
+    useAiOverlayStore.getState().setConnected(true);
+    hot.send('hl-ai:hello', {});
+  });
+  onOverlayToggle((id, enabled) => hot.send('hl-ai:toggle', { id, enabled }));
+
+  useAiOverlayStore.getState().setConnected(true);
+  // Ask for the current overlay list (survives page reloads) and seed the cache.
+  hot.send('hl-ai:hello', {});
+  sendSnapshot();
+}

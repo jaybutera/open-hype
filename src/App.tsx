@@ -8,6 +8,7 @@ import { useReplayStore } from './store/useReplayStore.ts';
 import { usePaperEngine } from './hooks/useEngine.ts';
 import { useWebSocket } from './hooks/useWebSocket.ts';
 import { useLiveAccountSync } from './hooks/useLiveAccountSync.ts';
+import { startAiLink } from './services/ai/link.ts';
 
 function useHashRoute() {
   const [hash, setHash] = useState(window.location.hash);
@@ -55,6 +56,11 @@ function AppInner() {
   // Replay mode drives this engine with historical candles when active.
   useEffect(() => {
     useReplayStore.getState().registerEngine(engine);
+  }, [engine]);
+
+  // Dev-server link for AI chart snapshots and overlays (no-op in production builds).
+  useEffect(() => {
+    startAiLink(engine);
   }, [engine]);
 
   useEffect(() => {

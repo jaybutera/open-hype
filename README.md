@@ -27,6 +27,17 @@ Never paste a seed phrase into this or any site.
 
 Market orders are IOC limit orders capped 5% through the mid. TP/SL are reduce-only market triggers. Orders under $10 notional are rejected before signing (exchange minimum).
 
+## AI chart overlays
+
+Claude Code can read the chart you have open and draw on it. There is no chat panel and no API key in the app: the `hl-chart` MCP server in `scripts/hl-chart-mcp.mjs` (registered in `.mcp.json`) calls two routes on the Vite dev server, `GET /api/ai/view` and `POST /api/ai/overlays`.
+
+1. Run `npm run dev` and open the app in a browser.
+2. Start Claude Code in this repo and approve the `hl-chart` server. Three tools appear: `get_chart_view`, `push_overlays` and `clear_overlays`.
+3. Ask about the chart, e.g. "where is the sweep you mean on this 5m chart?". Claude reads the visible candles (exact UTC and ET times, OHLCV), your position, open orders, fibs and the long/short setups you drew, then pushes named overlay sets such as "OB + sweep", "Entry plan" and "Invalidation".
+4. Each set shows up as a toggle button under the Buy/Sell button. Nothing is drawn until you click one; click again to hide it. Several can be on at once, `×` removes one, and **clear** removes them all.
+
+If the dev server runs on a port other than 3000, set `HL_FRONTEND_URL` for the MCP server, e.g. `HL_FRONTEND_URL=http://localhost:3100` in the `env` of the `hl-chart` entry in `.mcp.json`. The link only exists on the dev server; production builds leave it out.
+
 ## Quick Start
 
 ```bash

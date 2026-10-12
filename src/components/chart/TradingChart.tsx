@@ -12,40 +12,17 @@ import { SessionPrimitive } from './SessionPrimitive.ts';
 import { FibPrimitive, type FibRetracement } from './FibPrimitive.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { CandleInterval } from '../../types/market.ts';
+import { utcToChartTime, chartTimeToUtc, formatEt } from '../../utils/chartTime.ts';
+import { AiOverlayPrimitive } from './AiOverlayPrimitive.ts';
+import { useAiOverlayStore } from '../../store/useAiOverlayStore.ts';
+import { registerSnapshotProvider } from '../../services/ai/link.ts';
+import type { SnapshotCandle } from '../../services/ai/types.ts';
 
-/**
- * lightweight-charts displays timestamps via getUTCHours(), so the x-axis
- * always shows UTC. We want to show New York (ET) time instead.
- * Shift timestamps by the NY UTC offset so the chart "accidentally" displays ET.
- */
-function nyOffsetSec(utcSec: number): number {
-  const d = new Date(utcSec * 1000);
-  const ny = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour: 'numeric', minute: 'numeric', hour12: false,
-  }).formatToParts(d);
-  const nyH = parseInt(ny.find(p => p.type === 'hour')!.value, 10) % 24;
-  const nyM = parseInt(ny.find(p => p.type === 'minute')!.value, 10);
-  const nySod = nyH * 3600 + nyM * 60;
-  const utcSod = d.getUTCHours() * 3600 + d.getUTCMinutes() * 60;
-  let off = nySod - utcSod;
-  if (off > 43200) off -= 86400;
-  if (off < -43200) off += 86400;
-  return off;
-}
+/** Max candles a snapshot carries (the most recent visible ones). */
+const SNAPSHOT_MAX_BARS = 600;
 
-let _cachedOffset: number | null = null;
-let _cachedOffsetExpiry = 0;
-export function getNyOffset(utcSec: number): number {
-  if (_cachedOffset !== null && utcSec < _cachedOffsetExpiry) return _cachedOffset;
-  _cachedOffset = nyOffsetSec(utcSec);
-  _cachedOffsetExpiry = utcSec + 3600;
-  return _cachedOffset;
-}
-
-export function utcToChartTime(utcSec: number): number {
-  return utcSec + getNyOffset(utcSec);
-}
+// Chart-time helpers live in utils/chartTime.ts; re-exported for existing importers.
+export { getNyOffset, utcToChartTime, chartTimeToUtc } from '../../utils/chartTime.ts';
 
 const INTERVALS: CandleInterval[] = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
@@ -67,6 +44,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const [fibMode, setFibMode] = useState(false);
   const [fibFirstClick, setFibFirstClick] = useState<{ price: number; time: number } | null>(null);
   const [fibs, setFibs] = useState<FibRetracement[]>([]);
+  const fibsRef = useRef<FibRetracement[]>([]);
+  fibsRef.current = fibs;
+  /** Candles as plotted (deduped, sorted), real UTC ms; index-aligned with the series data. */
+  const plottedRef = useRef<SnapshotCandle[]>([]);
+  const aiPrimitivesRef = useRef<Map<string, AiOverlayPrimitive>>(new Map());
+  const aiSets = useAiOverlayStore(s => s.sets);
+  const aiEnabledIds = useAiOverlayStore(s => s.enabledIds);
 
   const pane = useMarketStore(s => s.panes[paneId]);
   const activePaneId = useMarketStore(s => s.activePaneId);
@@ -162,6 +146,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       priceLinesRef.current = [];
       tradeBoxPrimitivesRef.current.clear();
       orderLinePrimitivesRef.current.clear();
+      aiPrimitivesRef.current.clear();
       sessionPrimitiveRef.current = null;
       fibPrimitiveRef.current = null;
     };
@@ -172,7 +157,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     if (!seriesRef.current || candles.length === 0) return;
 
     const seen = new Set<number>();
-    const data: CandlestickData[] = [];
+    const raw: CandlestickData[] = [];
+    const plotted: SnapshotCandle[] = [];
     for (const c of candles) {
       const tUtc = Math.floor(c.t / 1000);
       const t = utcToChartTime(tUtc);
@@ -183,9 +169,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       const l = parseFloat(c.l);
       const cl = parseFloat(c.c);
       if (isNaN(o) || isNaN(h) || isNaN(l) || isNaN(cl)) continue;
-      data.push({ time: t as Time, open: o, high: h, low: l, close: cl });
+      raw.push({ time: t as Time, open: o, high: h, low: l, close: cl });
+      plotted.push({ t: tUtc * 1000, et: '', o, h, l, c: cl, v: parseFloat(c.v) || 0 });
     }
-    data.sort((a, b) => (a.time as number) - (b.time as number));
+    // Sort by chart time and keep `plotted` index-aligned with `data`.
+    const order = raw.map((_, i) => i).sort((a, b) => (raw[a].time as number) - (raw[b].time as number));
+    const data = order.map(i => raw[i]);
+    plottedRef.current = order.map(i => plotted[i]);
 
     try {
       seriesRef.current.setData(data);
@@ -564,6 +554,65 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       }
     }
   }, [paneOrders, handleOrderDragDone]);
+
+  // AI overlay sets: one primitive per toggled-on set for this pane's asset
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const primMap = aiPrimitivesRef.current;
+    const wanted = new Map(
+      aiSets.filter(s => aiEnabledIds.includes(s.id) && s.asset === currentAsset).map(s => [s.id, s]),
+    );
+
+    for (const [id, prim] of primMap) {
+      if (!wanted.has(id)) {
+        prim.requestRedraw();
+        series.detachPrimitive(prim);
+        primMap.delete(id);
+      }
+    }
+    for (const [id, set] of wanted) {
+      const existing = primMap.get(id);
+      if (existing) {
+        if (existing.set !== set) existing.setSet(set);
+      } else {
+        const prim = new AiOverlayPrimitive(set);
+        series.attachPrimitive(prim);
+        primMap.set(id, prim);
+      }
+    }
+  }, [aiSets, aiEnabledIds, currentAsset]);
+
+  // The active pane answers AI snapshot requests with what is actually on screen
+  useEffect(() => {
+    if (!isActive) return;
+    return registerSnapshotProvider(() => {
+      const chart = chartRef.current;
+      const plotted = plottedRef.current;
+      const range = chart?.timeScale().getVisibleLogicalRange() ?? null;
+      let from = 0;
+      let to = plotted.length - 1;
+      if (range && plotted.length > 0) {
+        from = Math.max(0, Math.min(plotted.length - 1, Math.floor(range.from)));
+        to = Math.max(0, Math.min(plotted.length - 1, Math.ceil(range.to)));
+      }
+      const bars = plotted.length > 0 && to >= from ? to - from + 1 : 0;
+      const start = Math.max(from, to - SNAPSHOT_MAX_BARS + 1);
+      const slice = bars > 0 ? plotted.slice(start, to + 1).map(c => ({ ...c, et: formatEt(c.t) })) : [];
+      return {
+        pane: paneId,
+        asset: currentAsset,
+        interval,
+        visible: bars > 0 ? { from: plotted[from].t, to: plotted[to].t, bars } : { from: 0, to: 0, bars: 0 },
+        candles: slice,
+        fibs: fibsRef.current.map(f => ({
+          id: f.id, p1: f.p1, p2: f.p2,
+          t1: chartTimeToUtc(f.t1) * 1000,
+          t2: chartTimeToUtc(f.t2) * 1000,
+        })),
+      };
+    });
+  }, [isActive, paneId, currentAsset, interval]);
 
   const handleChartMouseMove = useCallback((e: React.MouseEvent) => {
     if (!seriesRef.current) return;

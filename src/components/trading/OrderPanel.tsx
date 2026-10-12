@@ -8,6 +8,7 @@ import type { OrderType, Side } from '../../types/order.ts';
 import { useWalletStore } from '../../store/useWalletStore.ts';
 import { prepareOrder, submitPrepared, type LiveOrderInput, type PreparedOrder } from '../../services/hl/liveTrader.ts';
 import { LiveOrderConfirm } from './LiveOrderConfirm.tsx';
+import { AiOverlayPanel } from './AiOverlayPanel.tsx';
 
 interface Props {
   engine: PaperEngine;
@@ -521,6 +522,8 @@ export function OrderPanel({ engine }: Props) {
 
       {error && <div style={{ color: '#f6465d', fontSize: 12 }}>{error}</div>}
       {success && <div style={{ color: '#0ecb81', fontSize: 12 }}>{success}</div>}
+
+      <AiOverlayPanel />
     </div>
   );
 }
