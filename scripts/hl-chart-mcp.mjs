@@ -170,7 +170,11 @@ async function http(method, path, body) {
   }
   const text = await res.text();
   let json;
-  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  try { json = JSON.parse(text); } catch {
+    // Vite's SPA fallback answers unknown routes with index.html and a 200,
+    // which means the server on BASE is a checkout without the /api/ai plugin.
+    throw new Error(`the dev server at ${BASE} answered ${path} with ${res.headers.get('content-type') || 'non-JSON'}, not JSON. It is probably a checkout without the AI overlay routes; run \`npm run dev\` from the ai-overlays branch, or set HL_FRONTEND_URL to that server.`);
+  }
   return { status: res.status, json };
 }
 
