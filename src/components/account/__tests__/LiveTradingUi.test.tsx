@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { Wallet } from 'ethers';
 import { WalletConnect } from '../WalletConnect.tsx';
+import { LiveAccountSelector } from '../LiveAccountSelector.tsx';
 import { OrderPanel } from '../../trading/OrderPanel.tsx';
 import { useWalletStore } from '../../../store/useWalletStore.ts';
 import { useSettingsStore } from '../../../store/useSettingsStore.ts';
@@ -118,5 +119,54 @@ describe('OrderPanel in live mode', () => {
     fireEvent.click(await screen.findByText('Cancel'));
     await waitFor(() => expect(screen.queryByTestId('live-confirm')).toBeNull());
     expect(net.exchangeCalls()).toHaveLength(0);
+  });
+});
+
+describe('LiveAccountSelector', () => {
+  const sub = new Wallet('0x' + 'c3'.repeat(32)).address;
+  const engine = { getAvailableBalance: () => '0', setLeverage: () => {}, placeOrder: vi.fn(), onPriceUpdate: () => {} } as unknown as PaperEngine;
+
+  beforeEach(() => useSettingsStore.setState({ mode: 'live', side: 'buy', sizeUsdc: '120', leverage: 3 }));
+  afterEach(() => useSettingsStore.setState({ mode: 'paper' }));
+
+  it('hidden without sub-accounts', async () => {
+    stubHyperliquidFetch();
+    act(() => useWalletStore.getState().connectApiKey(new Wallet('0x' + '66'.repeat(32)).privateKey, user.address));
+    render(<LiveAccountSelector />);
+    await act(() => new Promise(r => setTimeout(r, 0)));
+    expect(screen.queryByTestId('live-account-selector')).toBeNull();
+  });
+
+  it('lists master and sub-accounts; picking one routes the reviewed order to it', async () => {
+    const net = stubHyperliquidFetch({
+      info: b => (b.type === 'subAccounts'
+        ? [{ name: 'Swing', subAccountUser: sub.toLowerCase(), master: user.address, clearinghouseState: { marginSummary: { accountValue: '250' } } }]
+        : undefined),
+      exchange: b => (b.action.type === 'order'
+        ? { status: 'ok', response: { type: 'order', data: { statuses: [{ resting: { oid: 7 } }] } } }
+        : { status: 'ok', response: { type: 'default' } }),
+    });
+    act(() => useWalletStore.getState().connectApiKey(new Wallet('0x' + '66'.repeat(32)).privateKey, user.address));
+    render(<><LiveAccountSelector /><OrderPanel engine={engine} /></>);
+
+    const button = await screen.findByTestId('live-account-selector');
+    expect(button).toHaveTextContent('Master Account');
+    fireEvent.click(button);
+    const options = screen.getAllByRole('option');
+    expect(options.map(o => o.textContent)).toEqual([
+      expect.stringContaining('Master Account'),
+      expect.stringContaining('Swing$250.00'),
+    ]);
+    fireEvent.click(options[1]);
+    expect(button).toHaveTextContent('Swing');
+
+    fireEvent.change(screen.getByPlaceholderText('60000'), { target: { value: '59000' } });
+    fireEvent.click(screen.getByText(/Review Buy\/Long BTC/));
+    expect(await screen.findByTestId('live-confirm-account')).toHaveTextContent(`Sub-account Swing (${sub.slice(0, 6)}…${sub.slice(-4)})`);
+    expect(JSON.parse(screen.getByTestId('live-payload').textContent!).vaultAddress).toBe(sub);
+
+    fireEvent.click(screen.getByText('Confirm & send'));
+    expect(await screen.findByText('resting #7')).toBeInTheDocument();
+    expect(net.exchangeCalls().map(c => c.vaultAddress)).toEqual([sub.toLowerCase(), sub.toLowerCase()]);
   });
 });

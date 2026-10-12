@@ -2,6 +2,7 @@ import { AssetSelector } from '../common/AssetSelector.tsx';
 import { ModeToggle } from '../common/ModeToggle.tsx';
 import { PaperAccountSelector } from '../common/PaperAccountSelector.tsx';
 import { WalletConnect } from '../account/WalletConnect.tsx';
+import { LiveAccountSelector } from '../account/LiveAccountSelector.tsx';
 import { NetworkToggle } from '../common/NetworkToggle.tsx';
 import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useWalletStore } from '../../store/useWalletStore.ts';
@@ -157,6 +158,7 @@ export function Header() {
       {mode === 'live' && (
         <>
           <NetworkToggle />
+          <LiveAccountSelector />
           {liveAddress && (
             <span
               data-testid="live-balance"

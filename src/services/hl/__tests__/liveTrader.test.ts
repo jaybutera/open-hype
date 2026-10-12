@@ -6,7 +6,7 @@ import { useWalletStore } from '../../../store/useWalletStore.ts';
 import { useLiveAccountStore } from '../../../store/useLiveAccountStore.ts';
 import { actionHash } from '../signing.ts';
 import {
-  prepareOrder, placeLiveOrder, cancelLiveOrders, closeLivePosition, placeLivePositionTrigger,
+  prepareOrder, placeLiveOrder, cancelLiveOrders, closeLivePosition, placeLivePositionTrigger, submitPrepared,
 } from '../liveTrader.ts';
 import { stubHyperliquidFetch, META, XYZ_META } from '../../../test/hlMocks.ts';
 import type { Meta } from '../../../types/market.ts';
@@ -15,11 +15,11 @@ const agent = new Wallet('0x' + '33'.repeat(32));
 const master = '0x' + '44'.repeat(20);
 
 /** Recover the L1 signer exactly as the exchange does (mainnet phantom agent). */
-function recoverL1(req: { action: unknown; nonce: number; signature: { r: string; s: string; v: number } }) {
+function recoverL1(req: { action: unknown; nonce: number; signature: { r: string; s: string; v: number }; vaultAddress?: string }) {
   const digest = TypedDataEncoder.hash(
     { name: 'Exchange', version: '1', chainId: 1337, verifyingContract: '0x0000000000000000000000000000000000000000' },
     { Agent: [{ name: 'source', type: 'string' }, { name: 'connectionId', type: 'bytes32' }] },
-    { source: 'a', connectionId: actionHash(req.action, req.nonce) },
+    { source: 'a', connectionId: actionHash(req.action, req.nonce, req.vaultAddress) },
   );
   return recoverAddress(digest, Signature.from(req.signature));
 }
@@ -137,7 +137,7 @@ describe('order lifecycle against a stubbed exchange', () => {
 describe('position management', () => {
   beforeEach(() => {
     useLiveAccountStore.setState({
-      user: master,
+      user: master, lastSync: Date.now(),
       positions: [{ coin: 'BTC', szi: -0.03992, entryPx: 61000, positionValue: 2400, unrealizedPnl: 5, returnOnEquity: 0, liquidationPx: 70000, marginUsed: 200, leverage: { type: 'isolated', value: 10 } }],
     });
   });
@@ -160,5 +160,54 @@ describe('position management', () => {
     const r = await cancelLiveOrders([{ coin: 'BTC', oid: 571364614362 }, { coin: 'xyz:TSLA', oid: 2 }]);
     expect(net.exchangeCalls()[0].action).toEqual({ type: 'cancel', cancels: [{ a: 0, o: 571364614362 }, { a: 110001, o: 2 }] });
     expect(r).toEqual({ ok: false, message: 'Order was never placed, already canceled, or filled.' });
+  });
+});
+
+describe('sub-account trading', () => {
+  const sub = '0x035605fc2f24d65300227189025e90a0d947f16c';
+  beforeEach(() => {
+    useWalletStore.setState({ subAccounts: [{ name: 'Scalps', address: '0x035605fC2f24d65300227189025e90a0d947F16c', accountValue: 50 }] });
+    useWalletStore.getState().selectAccount(sub);
+  });
+
+  it('orders, leverage and cancels carry vaultAddress, and it is part of the signed hash', async () => {
+    const net = stubHyperliquidFetch({
+      exchange: b => (b.action.type === 'order' ? ok([{ resting: { oid: 9 } }])
+        : b.action.type === 'cancel' ? { status: 'ok', response: { type: 'cancel', data: { statuses: ['success'] } } }
+        : { status: 'ok', response: { type: 'default' } }),
+    });
+    const p = await prepareOrder({ coin: 'BTC', side: 'buy', size: '0.001', kind: 'limit', price: 60000, leverage: 4 });
+    expect(p.vaultAddress).toBe('0x035605fC2f24d65300227189025e90a0d947F16c');
+    expect(p.summary.account).toBe('Sub-account Scalps (0x0356…F16c)');
+    expect((await submitPrepared(p)).ok).toBe(true);
+    await cancelLiveOrders([{ coin: 'BTC', oid: 9 }]);
+
+    const calls = net.exchangeCalls();
+    expect(calls.map(c => c.action.type)).toEqual(['updateLeverage', 'order', 'cancel']);
+    for (const c of calls) {
+      expect(c.vaultAddress).toBe(sub);
+      expect(recoverL1(c)).toBe(agent.address);
+      // Without the vault in the hash the signature would recover to some other address.
+      expect(recoverL1({ ...c, vaultAddress: undefined })).not.toBe(agent.address);
+    }
+    // Account data is read from the sub-account, not the master.
+    const infoUsers = net.calls.filter(c => c.body?.type === 'clearinghouseState').map(c => c.body.user);
+    expect(infoUsers).toContain('0x035605fC2f24d65300227189025e90a0d947F16c');
+    expect(infoUsers).not.toContain(master);
+  });
+
+  it('master account orders carry no vaultAddress', async () => {
+    useWalletStore.getState().selectAccount(null);
+    const net = stubHyperliquidFetch({ exchange: () => ok([{ resting: { oid: 1 } }]) });
+    await placeLiveOrder({ coin: 'BTC', side: 'buy', size: '0.001', kind: 'limit', price: 60000 });
+    expect(net.exchangeCalls()[0]).not.toHaveProperty('vaultAddress');
+  });
+
+  it('refuses to send an order reviewed for a different account', async () => {
+    const net = stubHyperliquidFetch();
+    const p = await prepareOrder({ coin: 'BTC', side: 'buy', size: '0.001', kind: 'limit', price: 60000 });
+    useWalletStore.getState().selectAccount(null);
+    expect(await submitPrepared(p)).toMatchObject({ ok: false, message: 'Account changed after review; review the order again' });
+    expect(net.exchangeCalls()).toHaveLength(0);
   });
 });

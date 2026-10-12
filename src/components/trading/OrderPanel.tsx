@@ -52,6 +52,7 @@ export function OrderPanel({ engine }: Props) {
   const mode = useSettingsStore(s => s.mode);
   const tradingStatus = useWalletStore(s => s.tradingStatus);
   const walletAddress = useWalletStore(s => s.address);
+  const subAccount = useWalletStore(s => s.subAccount);
   const isLive = mode === 'live';
   const [pendingLive, setPendingLive] = useState<{ order: PreparedOrder; setupId?: string } | null>(null);
   const [liveBusy, setLiveBusy] = useState(false);
@@ -83,7 +84,7 @@ export function OrderPanel({ engine }: Props) {
   }, [assetMaxLeverage, leverage, setLeverage]);
 
   // A staged live order belongs to the asset/mode it was built for.
-  useEffect(() => { setPendingLive(null); }, [currentAsset, mode, walletAddress]);
+  useEffect(() => { setPendingLive(null); }, [currentAsset, mode, walletAddress, subAccount]);
 
   const stageLive = async (input: LiveOrderInput, setupId?: string) => {
     setError(null);

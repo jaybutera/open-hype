@@ -68,6 +68,7 @@ export function stubHyperliquidFetch(opts: {
         switch (body?.type) {
           case 'perpDexs': out = [null, { name: 'xyz' }]; break;
           case 'extraAgents': out = []; break;
+          case 'subAccounts': out = null; break;
           case 'frontendOpenOrders': out = []; break;
           case 'clearinghouseState': out = {
             marginSummary: { accountValue: '0', totalMarginUsed: '0' }, withdrawable: '0', assetPositions: [],

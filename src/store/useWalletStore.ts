@@ -27,6 +27,26 @@ export type TradingStatus = 'none' | 'approving' | 'ready';
 export const AGENT_NAME = 'OpenHype';
 const LAST_WALLET_KEY = 'hl-last-wallet';
 const agentKey = (master: string) => `hl-agent:${NETWORK}:${master.toLowerCase()}`;
+const subAccountKey = (master: string) => `hl-subaccount:${NETWORK}:${master.toLowerCase()}`;
+
+export interface SubAccount { name: string; address: string; accountValue: number }
+
+interface RawSubAccount {
+  name: string;
+  subAccountUser: string;
+  clearinghouseState?: { marginSummary?: { accountValue?: string } };
+}
+
+function loadSelectedSub(master: string): string | null {
+  try { return localStorage.getItem(subAccountKey(master)); } catch { return null; }
+}
+
+function saveSelectedSub(master: string, sub: string | null) {
+  try {
+    if (sub) localStorage.setItem(subAccountKey(master), sub.toLowerCase());
+    else localStorage.removeItem(subAccountKey(master));
+  } catch {}
+}
 
 interface StoredAgent { key: string; address: string; approvedAt: number }
 
@@ -81,8 +101,14 @@ export function normalizePrivateKey(raw: string): string {
 interface WalletStore {
   status: 'disconnected' | 'connecting' | 'connected';
   source: WalletSource | null;
-  /** Master account address: the account that holds funds and is queried for balances. */
+  /** Master account address: owns the agent approval and any sub-accounts. */
   address: string | null;
+  /** Sub-accounts of the master, from the `subAccounts` info request. */
+  subAccounts: SubAccount[];
+  /** Selected sub-account address, or null to trade the master account. */
+  subAccount: string | null;
+  /** Master account value (core perps), for the account selector. */
+  masterValue: number | null;
   walletId: string | null;
   walletName: string | null;
   chainId: number | null;
@@ -97,6 +123,8 @@ interface WalletStore {
   restore: () => Promise<void>;
   enableTrading: () => Promise<void>;
   invalidateAgent: (reason: string) => void;
+  loadSubAccounts: () => Promise<void>;
+  selectAccount: (subAccount: string | null) => void;
   disconnect: () => void;
   clearError: () => void;
 }
@@ -107,7 +135,8 @@ export const useWalletStore = create<WalletStore>((set, get) => {
   const adoptAccount = async (master: string) => {
     const addr = getAddress(master);
     const agent = loadAgent(addr);
-    set({ address: addr, agent, tradingStatus: agent ? 'ready' : 'none', error: null });
+    set({ address: addr, subAccounts: [], subAccount: null, masterValue: null, agent, tradingStatus: agent ? 'ready' : 'none', error: null });
+    void get().loadSubAccounts();
     if (agent && !(await agentStillApproved(addr, agent.address))) {
       if (get().address !== addr) return;
       dropAgent(addr);
@@ -121,6 +150,7 @@ export const useWalletStore = create<WalletStore>((set, get) => {
     set({
       status: 'disconnected', source: null, address: null, walletId: null, walletName: null,
       chainId: null, provider: null, agent: null, tradingStatus: 'none', error: null,
+      subAccounts: [], subAccount: null, masterValue: null,
     });
   };
 
@@ -167,6 +197,9 @@ export const useWalletStore = create<WalletStore>((set, get) => {
     status: 'disconnected',
     source: null,
     address: null,
+    subAccounts: [],
+    subAccount: null,
+    masterValue: null,
     walletId: null,
     walletName: null,
     chainId: null,
@@ -186,7 +219,9 @@ export const useWalletStore = create<WalletStore>((set, get) => {
         set({
           status: 'connected', source: 'apiKey', walletId: null, walletName: 'API wallet', provider: null, chainId: null,
           address: master ? getAddress(master) : signer.address, agent: signer, tradingStatus: 'ready', error: null,
+          subAccounts: [], subAccount: null, masterValue: null,
         });
+        void get().loadSubAccounts();
       } catch (e) {
         set({ error: e instanceof Error ? e.message : String(e) });
       }
@@ -236,6 +271,39 @@ export const useWalletStore = create<WalletStore>((set, get) => {
       }
     },
 
+    loadSubAccounts: async () => {
+      const master = get().address;
+      if (!master) return;
+      let raw: RawSubAccount[] | null;
+      let masterState: RawSubAccount['clearinghouseState'] | null;
+      try {
+        [raw, masterState] = await Promise.all([
+          postInfo<RawSubAccount[] | null>({ type: 'subAccounts', user: master }),
+          postInfo<RawSubAccount['clearinghouseState']>({ type: 'clearinghouseState', user: master }).catch(() => null),
+        ]);
+      } catch { return; }
+      if (get().address !== master) return;
+      const subAccounts = (Array.isArray(raw) ? raw : []).map(r => ({
+        name: r.name,
+        address: getAddress(r.subAccountUser),
+        accountValue: parseFloat(r.clearinghouseState?.marginSummary?.accountValue ?? '0'),
+      }));
+      // Keep the current pick, else restore the stored one if it still belongs to this master.
+      const want = get().subAccount ?? loadSelectedSub(master);
+      const picked = subAccounts.find(a => a.address.toLowerCase() === want?.toLowerCase());
+      const mv = masterState?.marginSummary?.accountValue;
+      set({ subAccounts, subAccount: picked?.address ?? null, masterValue: mv != null ? parseFloat(mv) : null });
+    },
+
+    selectAccount: (sub) => {
+      const { address, subAccounts } = get();
+      if (!address) return;
+      const picked = sub ? subAccounts.find(a => a.address.toLowerCase() === sub.toLowerCase()) : null;
+      if (sub && !picked) return;
+      saveSelectedSub(address, picked?.address ?? null);
+      set({ subAccount: picked?.address ?? null });
+    },
+
     /** Explicit disconnect also forgets the stored agent key; reconnecting asks for a fresh approval. */
     disconnect: () => {
       const { address, source } = get();
@@ -245,9 +313,13 @@ export const useWalletStore = create<WalletStore>((set, get) => {
       set({
         status: 'disconnected', source: null, address: null, walletId: null, walletName: null,
         chainId: null, provider: null, agent: null, tradingStatus: 'none', error: null,
+        subAccounts: [], subAccount: null, masterValue: null,
       });
     },
 
     clearError: () => set({ error: null }),
   };
 });
+
+/** Account whose balances, positions and orders are shown and traded: the selected sub-account, else the master. */
+export const selectActiveAccount = (s: Pick<WalletStore, 'address' | 'subAccount'>): string | null => s.subAccount ?? s.address;

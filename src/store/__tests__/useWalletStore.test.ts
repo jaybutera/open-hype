@@ -191,3 +191,67 @@ describe('API wallet key', () => {
     expect(useWalletStore.getState().address).toBe(new Wallet(key).address);
   });
 });
+
+describe('sub-accounts', () => {
+  const subA = new Wallet('0x' + 'a1'.repeat(32)).address;
+  const subB = new Wallet('0x' + 'b2'.repeat(32)).address;
+  const subsOf = (master: string) => (master.toLowerCase() === user.address.toLowerCase() ? [
+    { name: 'Alpha', subAccountUser: subA.toLowerCase(), master, clearinghouseState: { marginSummary: { accountValue: '123.45' } } },
+    { name: 'Beta', subAccountUser: subB.toLowerCase(), master, clearinghouseState: { marginSummary: { accountValue: '0.0' } } },
+  ] : null);
+  const stub = () => stubHyperliquidFetch({
+    info: b => (b.type === 'subAccounts' ? subsOf(b.user)
+      : b.type === 'clearinghouseState' && b.user === user.address ? { marginSummary: { accountValue: '1000.5', totalMarginUsed: '0' }, withdrawable: '0', assetPositions: [] }
+      : undefined),
+  });
+
+  it('loads sub-accounts on connect with balances; master stays selected by default', async () => {
+    stub();
+    await useWalletStore.getState().connectBrowser('injected');
+    await flush();
+    const s = useWalletStore.getState();
+    expect(s.subAccounts).toEqual([
+      { name: 'Alpha', address: subA, accountValue: 123.45 },
+      { name: 'Beta', address: subB, accountValue: 0 },
+    ]);
+    expect(s.masterValue).toBe(1000.5);
+    expect(s.subAccount).toBeNull();
+  });
+
+  it('remembers the selected sub-account per master across reconnects', async () => {
+    stub();
+    await useWalletStore.getState().connectBrowser('injected');
+    await flush();
+    useWalletStore.getState().selectAccount(subB);
+    expect(useWalletStore.getState().subAccount).toBe(subB);
+    expect(localStorage.getItem(`hl-subaccount:mainnet:${user.address.toLowerCase()}`)).toBe(subB.toLowerCase());
+
+    useWalletStore.setState({ status: 'disconnected', address: null, subAccount: null, subAccounts: [] });
+    await useWalletStore.getState().connectBrowser('injected');
+    await flush();
+    expect(useWalletStore.getState().subAccount).toBe(subB);
+
+    useWalletStore.getState().selectAccount(null);
+    expect(useWalletStore.getState().subAccount).toBeNull();
+    expect(localStorage.getItem(`hl-subaccount:mainnet:${user.address.toLowerCase()}`)).toBeNull();
+  });
+
+  it('ignores addresses that are not sub-accounts of this master', async () => {
+    stub();
+    await useWalletStore.getState().connectBrowser('injected');
+    await flush();
+    useWalletStore.getState().selectAccount(user2.address);
+    expect(useWalletStore.getState().subAccount).toBeNull();
+  });
+
+  it('switching wallet account clears the sub-account selection', async () => {
+    stub();
+    provider.accounts = [user, user2];
+    await useWalletStore.getState().connectBrowser('injected');
+    await flush();
+    useWalletStore.getState().selectAccount(subA);
+    provider.emit('accountsChanged', [user2.address]);
+    await flush();
+    expect(useWalletStore.getState()).toMatchObject({ address: user2.address, subAccount: null, subAccounts: [] });
+  });
+});

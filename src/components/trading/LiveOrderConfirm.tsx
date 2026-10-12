@@ -20,6 +20,7 @@ export function LiveOrderConfirm({ order, busy, onConfirm, onCancel }: Props) {
       <div style={{ fontWeight: 700, color: isMainnet ? '#f6465d' : '#f0b90b' }}>
         {isMainnet ? 'REAL ORDER on Hyperliquid mainnet' : 'Testnet order'}
       </div>
+      <div data-testid="live-confirm-account" style={{ color: '#e1e4e8' }}>{summary.account}</div>
       <div>
         <span style={{ color, fontWeight: 700 }}>{summary.side.toUpperCase()}</span>{' '}
         {summary.size} {summary.coin} {summary.kind === 'market' ? `market (worst ${summary.price})` : `@ ${summary.price}`}
@@ -31,7 +32,7 @@ export function LiveOrderConfirm({ order, busy, onConfirm, onCancel }: Props) {
       <details style={{ color: '#555' }}>
         <summary style={{ cursor: 'pointer' }}>Payload</summary>
         <pre data-testid="live-payload" style={{ whiteSpace: 'pre-wrap', fontSize: 10, margin: 0 }}>
-          {JSON.stringify({ orders: wires, grouping: order.grouping }, null, 1)}
+          {JSON.stringify({ orders: wires, grouping: order.grouping, ...(order.vaultAddress ? { vaultAddress: order.vaultAddress } : {}) }, null, 1)}
         </pre>
       </details>
       <div style={{ display: 'flex', gap: 6 }}>

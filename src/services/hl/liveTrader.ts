@@ -3,7 +3,7 @@ import { API_BASE } from '../../config/constants.ts';
 import { IS_MAINNET, NETWORK } from './network.ts';
 import { postInfo } from '../api/client.ts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
-import { useWalletStore } from '../../store/useWalletStore.ts';
+import { useWalletStore, selectActiveAccount } from '../../store/useWalletStore.ts';
 import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { buildAssetIndex, type AssetInfo } from './assets.ts';
 import { formatPrice, formatSize } from './format.ts';
@@ -38,7 +38,20 @@ export interface PreparedOrder {
   wires: OrderWire[];
   grouping: Grouping;
   leverage?: number;
-  summary: { coin: string; side: Side; size: string; price: string; notional: number; network: string; kind: string };
+  /** Sub-account the order was reviewed for (null = master). Sent as vaultAddress. */
+  vaultAddress: string | null;
+  summary: {
+    coin: string; side: Side; size: string; price: string; notional: number; network: string; kind: string;
+    /** Account label shown on the review card. */
+    account: string;
+  };
+}
+
+function accountLabel(sub: string | null): string {
+  if (!sub) return 'Master account';
+  const name = useWalletStore.getState().subAccounts.find(a => a.address === sub)?.name;
+  const short = `${sub.slice(0, 6)}…${sub.slice(-4)}`;
+  return name ? `Sub-account ${name} (${short})` : `Sub-account ${short}`;
 }
 
 export interface LiveResult { ok: boolean; message: string; statuses?: OrderStatus[] }
@@ -120,7 +133,8 @@ export async function prepareOrder(input: LiveOrderInput): Promise<PreparedOrder
     wires,
     grouping: wires.length > 1 ? 'normalTpsl' : 'na',
     leverage: input.reduceOnly ? undefined : input.leverage,
-    summary: { coin: input.coin, side: input.side, size, price, notional, network: NETWORK, kind: input.kind },
+    vaultAddress: vault(),
+    summary: { coin: input.coin, side: input.side, size, price, notional, network: NETWORK, kind: input.kind, account: accountLabel(vault()) },
   };
 }
 
@@ -132,9 +146,21 @@ function exchange(): ExchangeClient {
   return client;
 }
 
+/** Sub-account to act on (sent as vaultAddress), or null for the master account. */
+function vault(): string | null {
+  return useWalletStore.getState().subAccount;
+}
+
 function refreshAccount() {
-  const user = useWalletStore.getState().address;
+  const user = selectActiveAccount(useWalletStore.getState());
   if (user) void useLiveAccountStore.getState().refresh(user);
+}
+
+/** Positions in the account store must belong to the account the action targets; load them if not. */
+async function ensureSynced() {
+  const want = selectActiveAccount(useWalletStore.getState());
+  const store = useLiveAccountStore.getState();
+  if (want && (store.user !== want || store.lastSync == null)) await store.refresh(want);
 }
 
 async function run(fn: () => Promise<LiveResult>): Promise<LiveResult> {
@@ -167,25 +193,27 @@ function describeStatuses(statuses: OrderStatus[]): LiveResult {
   return { ok: statuses.length > 0 && statuses.every(s => s.kind !== 'error'), message: parts.join(' | ') || 'No status returned', statuses };
 }
 
-/** Leverage this session already set, keyed by signer and coin. */
+/** Leverage this session already set, keyed by signer, account and coin. */
 const appliedLeverage = new Map<string, number>();
 
 /** Align account leverage for the asset before an opening order. Skips when it already matches. */
-async function ensureLeverage(asset: AssetInfo, leverage: number) {
+async function ensureLeverage(asset: AssetInfo, leverage: number, vaultAddress: string | null) {
   const lev = Math.max(1, Math.min(Math.floor(leverage), asset.maxLeverage));
   const ex = exchange();
-  const key = `${ex.signerAddress}:${asset.coin}`;
+  const key = `${ex.signerAddress}:${vaultAddress ?? 'master'}:${asset.coin}`;
   const pos = useLiveAccountStore.getState().positions.find(p => p.coin === asset.coin);
   if (pos ? pos.leverage.value === lev : appliedLeverage.get(key) === lev) return;
   const isCross = pos ? pos.leverage.type === 'cross' : !asset.onlyIsolated;
-  await ex.updateLeverage(asset.assetId, isCross, lev);
+  await ex.updateLeverage(asset.assetId, isCross, lev, vaultAddress);
   appliedLeverage.set(key, lev);
 }
 
 export function submitPrepared(p: PreparedOrder): Promise<LiveResult> {
   return run(async () => {
-    if (p.leverage) await ensureLeverage(p.asset, p.leverage);
-    return describeStatuses(await exchange().placeOrders(p.wires, p.grouping));
+    const v = p.vaultAddress;
+    if (v !== vault()) throw new Error('Account changed after review; review the order again');
+    if (p.leverage) { await ensureSynced(); await ensureLeverage(p.asset, p.leverage, v); }
+    return describeStatuses(await exchange().placeOrders(p.wires, p.grouping, v));
   });
 }
 
@@ -198,28 +226,33 @@ export async function placeLiveOrder(input: LiveOrderInput): Promise<LiveResult>
 /** Reduce-only market TP or SL for the whole open position. */
 export function placeLivePositionTrigger(coin: string, tpsl: TpSl, triggerPx: Decimal.Value): Promise<LiveResult> {
   return run(async () => {
+    await ensureSynced();
+    const v = vault();
     const pos = useLiveAccountStore.getState().positions.find(p => p.coin === coin);
     if (!pos) throw new Error(`No open ${coin} position`);
     const asset = await resolveAsset(coin);
     const wire = triggerWire(asset, pos.szi < 0, triggerPx, formatSize(Math.abs(pos.szi), asset.szDecimals), tpsl);
-    return describeStatuses(await exchange().placeOrders([wire]));
+    return describeStatuses(await exchange().placeOrders([wire], 'na', v));
   });
 }
 
 export function closeLivePosition(coin: string): Promise<LiveResult> {
   return run(async () => {
+    await ensureSynced();
+    const v = vault();
     const pos = useLiveAccountStore.getState().positions.find(p => p.coin === coin);
     if (!pos) throw new Error(`No open ${coin} position`);
     const p = await prepareOrder({ coin, side: pos.szi > 0 ? 'sell' : 'buy', size: Math.abs(pos.szi), kind: 'market', reduceOnly: true });
-    return describeStatuses(await exchange().placeOrders(p.wires));
+    return describeStatuses(await exchange().placeOrders(p.wires, 'na', v));
   });
 }
 
 export function cancelLiveOrders(orders: { coin: string; oid: number }[]): Promise<LiveResult> {
   return run(async () => {
     if (!orders.length) return { ok: true, message: 'Nothing to cancel' };
+    const v = vault();
     const cancels = await Promise.all(orders.map(async o => ({ a: (await resolveAsset(o.coin)).assetId, o: o.oid })));
-    const res = await exchange().cancel(cancels);
+    const res = await exchange().cancel(cancels, v);
     const failed = res.filter(r => !r.ok) as { ok: false; message: string }[];
     return failed.length
       ? { ok: false, message: failed.map(f => f.message).join(' | ') }

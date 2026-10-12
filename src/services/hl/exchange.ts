@@ -111,29 +111,33 @@ export class ExchangeClient {
     return this.lastNonce;
   }
 
-  /** Build the signed request body without sending it. */
-  async signAction(action: unknown): Promise<{ action: unknown; nonce: number; signature: HLSignature }> {
+  /**
+   * Build the signed request body without sending it. `vaultAddress` acts on a
+   * sub-account (or vault) of the master; it is part of the signed hash.
+   */
+  async signAction(action: unknown, vaultAddress?: string | null): Promise<{ action: unknown; nonce: number; signature: HLSignature; vaultAddress?: string }> {
     const nonce = this.nextNonce();
-    const signature = await signL1Action(this.signer, action, nonce, this.opts.isMainnet);
-    return { action, nonce, signature };
+    const vault = vaultAddress ? vaultAddress.toLowerCase() : null;
+    const signature = await signL1Action(this.signer, action, nonce, this.opts.isMainnet, vault);
+    return vault ? { action, nonce, signature, vaultAddress: vault } : { action, nonce, signature };
   }
 
-  private async send(action: unknown): Promise<ExchangeResponse> {
-    return postJson(this.opts.apiBase, await this.signAction(action), this.fetchImpl);
+  private async send(action: unknown, vaultAddress?: string | null): Promise<ExchangeResponse> {
+    return postJson(this.opts.apiBase, await this.signAction(action, vaultAddress), this.fetchImpl);
   }
 
-  async placeOrders(orders: OrderWire[], grouping: Grouping = 'na'): Promise<OrderStatus[]> {
-    return parseOrderStatuses(statusesOf(await this.send(orderAction(orders, grouping))));
+  async placeOrders(orders: OrderWire[], grouping: Grouping = 'na', vaultAddress?: string | null): Promise<OrderStatus[]> {
+    return parseOrderStatuses(statusesOf(await this.send(orderAction(orders, grouping), vaultAddress)));
   }
 
-  async cancel(cancels: { a: number; o: number }[]): Promise<CancelStatus[]> {
-    const r = await this.send({ type: 'cancel', cancels: cancels.map(c => ({ a: c.a, o: c.o })) });
+  async cancel(cancels: { a: number; o: number }[], vaultAddress?: string | null): Promise<CancelStatus[]> {
+    const r = await this.send({ type: 'cancel', cancels: cancels.map(c => ({ a: c.a, o: c.o })) }, vaultAddress);
     return statusesOf(r).map(st =>
       st === 'success' ? { ok: true as const } : { ok: false as const, message: (st as { error?: string }).error ?? JSON.stringify(st) });
   }
 
-  async updateLeverage(asset: number, isCross: boolean, leverage: number): Promise<void> {
-    await this.send({ type: 'updateLeverage', asset, isCross, leverage: Math.floor(leverage) });
+  async updateLeverage(asset: number, isCross: boolean, leverage: number, vaultAddress?: string | null): Promise<void> {
+    await this.send({ type: 'updateLeverage', asset, isCross, leverage: Math.floor(leverage) }, vaultAddress);
   }
 }
 
