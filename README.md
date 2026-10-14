@@ -36,6 +36,10 @@ Claude Code can read the chart you have open and draw on it. There is no chat pa
 3. Ask about the chart, e.g. "where is the sweep you mean on this 5m chart?". Claude reads the visible candles (exact UTC and ET times, OHLCV), your position, open orders, fibs and the long/short setups you drew, then pushes named overlay sets such as "OB + sweep", "Entry plan" and "Invalidation".
 4. Each set shows up as a toggle button under the Buy/Sell button. Nothing is drawn until you click one; click again to hide it. Several can be on at once, `×` removes one, and **clear** removes them all.
 
+### Price alerts
+
+Alerts live on the dev server, which watches Hyperliquid directly, so they keep working with the tab closed. Alt+click on the chart arms a cross alert at that price; alt+ctrl+click arms a close alert on the chart's interval. Armed alerts draw as dashed lines and are listed under the AI overlays, where `×` removes one. Claude arms them with the `set_alert` tool and waits on `scripts/hl-alert-wait.mjs <id>` in the background, so the session that set the alert is woken when it fires. Alerts persist in `.hl-alerts.json` (gitignored) across dev server restarts. Perps only (the feed is `allMids` and `candle`).
+
 If the dev server runs on a port other than 3000, set `HL_FRONTEND_URL` for the MCP server, e.g. `HL_FRONTEND_URL=http://localhost:3100` in the `env` of the `hl-chart` entry in `.mcp.json`. The link only exists on the dev server; production builds leave it out.
 
 ## Quick Start

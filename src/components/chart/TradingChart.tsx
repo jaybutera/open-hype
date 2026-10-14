@@ -16,7 +16,9 @@ import { utcToChartTime, chartTimeToUtc, formatEt } from '../../utils/chartTime.
 import { AiOverlayPrimitive } from './AiOverlayPrimitive.ts';
 import { useAiOverlayStore } from '../../store/useAiOverlayStore.ts';
 import { registerSnapshotProvider } from '../../services/ai/link.ts';
-import type { SnapshotCandle } from '../../services/ai/types.ts';
+import type { SnapshotCandle, OverlaySet } from '../../services/ai/types.ts';
+import { useAlertStore } from '../../store/useAlertStore.ts';
+import { alertLine } from '../../services/ai/alerts.ts';
 
 /** Max candles a snapshot carries (the most recent visible ones). */
 const SNAPSHOT_MAX_BARS = 600;
@@ -51,6 +53,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const aiPrimitivesRef = useRef<Map<string, AiOverlayPrimitive>>(new Map());
   const aiSets = useAiOverlayStore(s => s.sets);
   const aiEnabledIds = useAiOverlayStore(s => s.enabledIds);
+  const alerts = useAlertStore(s => s.alerts);
+  const alertPrimRef = useRef<AiOverlayPrimitive | null>(null);
 
   const pane = useMarketStore(s => s.panes[paneId]);
   const activePaneId = useMarketStore(s => s.activePaneId);
@@ -147,6 +151,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       tradeBoxPrimitivesRef.current.clear();
       orderLinePrimitivesRef.current.clear();
       aiPrimitivesRef.current.clear();
+      alertPrimRef.current = null;
       sessionPrimitiveRef.current = null;
       fibPrimitiveRef.current = null;
     };
@@ -394,6 +399,19 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       return;
     }
 
+    // alt+click arms a price alert at the clicked price (alt+ctrl: on this interval's close)
+    if (e.altKey) {
+      e.preventDefault();
+      void useAlertStore.getState().add({
+        asset: currentAsset,
+        kind: e.ctrlKey ? 'close' : 'cross',
+        interval: e.ctrlKey ? interval : undefined,
+        // Hyperliquid prices carry at most 5 significant figures.
+        level: Number(priceNum.toPrecision(5)),
+      });
+      return;
+    }
+
     if (!e.shiftKey) return;
 
     const mid = parseFloat(allMids[currentAsset] ?? '0');
@@ -582,6 +600,21 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       }
     }
   }, [aiSets, aiEnabledIds, currentAsset]);
+
+  // Armed price alerts for this asset: one always-on dashed line each
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const lines = alerts.filter(a => a.asset === currentAsset && a.status === 'armed').map(alertLine);
+    const prim = alertPrimRef.current;
+    if (lines.length === 0) {
+      if (prim) { prim.requestRedraw(); series.detachPrimitive(prim); alertPrimRef.current = null; }
+      return;
+    }
+    const set: OverlaySet = { id: '__alerts', batch: '__alerts', name: 'Alerts', asset: currentAsset, color: '#f0b90b', createdAt: 0, shapes: lines };
+    if (prim) prim.setSet(set);
+    else { const p = new AiOverlayPrimitive(set); series.attachPrimitive(p); alertPrimRef.current = p; }
+  }, [alerts, currentAsset]);
 
   // The active pane answers AI snapshot requests with what is actually on screen
   useEffect(() => {

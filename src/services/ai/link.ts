@@ -11,6 +11,8 @@ import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { useReplayStore } from '../../store/useReplayStore.ts';
 import { useAiOverlayStore, onOverlayToggle } from '../../store/useAiOverlayStore.ts';
+import { useAlertStore } from '../../store/useAlertStore.ts';
+import type { Alert } from './alerts.ts';
 import type { ChartSnapshot, OverlaySet, SnapshotCandle, SnapshotFib, SnapshotOrder, SnapshotPosition } from './types.ts';
 
 /** What the active chart pane contributes to a snapshot. */
@@ -149,6 +151,9 @@ export function startAiLink(engine?: LiqSource): void {
       Array.isArray(data?.sets) ? data!.sets : [],
       Array.isArray(data?.enabled) ? data!.enabled : undefined,
     );
+  });
+  hot.on('hl-ai:alerts', (data: { alerts?: Alert[] } | undefined) => {
+    useAlertStore.getState().receive(Array.isArray(data?.alerts) ? data!.alerts : []);
   });
   hot.on('vite:ws:disconnect', () => useAiOverlayStore.getState().setConnected(false));
   hot.on('vite:ws:connect', () => {

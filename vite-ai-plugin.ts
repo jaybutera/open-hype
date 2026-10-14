@@ -1,7 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
+import { resolve } from 'node:path';
 import { normalizePush, OverlayValidationError } from './src/services/ai/validate.ts';
 import type { ChartSnapshot, OverlaySet } from './src/services/ai/types.ts';
+import { AlertValidationError } from './src/services/ai/alerts.ts';
+import { AlertEngine } from './alert-engine.ts';
 
 /**
  * Bridge between an AI (Claude Code via scripts/hl-chart-mcp.mjs) and the open
@@ -11,6 +14,10 @@ import type { ChartSnapshot, OverlaySet } from './src/services/ai/types.ts';
  *   POST   /api/ai/overlays      -> { sets: OverlaySetInput[], replace? } validate + store + broadcast
  *   DELETE /api/ai/overlays[?id] -> clear all (or one) sets
  *   GET    /api/ai/overlays      -> current set list
+ *   GET    /api/ai/alerts        -> { alerts } (armed and fired)
+ *   POST   /api/ai/alerts        -> AlertInput; arms a price alert (alert-engine.ts watches Hyperliquid)
+ *   DELETE /api/ai/alerts[?id]   -> remove one (or all)
+ *   GET    /api/ai/alerts/wait?id=&timeout= -> long-poll; { status: 'fired', alert } once it fires
  *
  * Page <-> server traffic uses Vite custom websocket events:
  *   client -> server  hl-ai:snapshot { snapshot, reqId? }, hl-ai:toggle { id, enabled }, hl-ai:hello {}
@@ -68,6 +75,14 @@ export function aiOverlayPlugin(): Plugin {
       const overlaysPayload = () => ({ sets, enabled: [...enabled] });
       const broadcast = () => server.ws.send('hl-ai:overlays', overlaysPayload());
 
+      const engine = new AlertEngine(
+        resolve(server.config.root, '.hl-alerts.json'),
+        msg => server.config.logger.info(`[hl-ai alerts] ${msg}`),
+      );
+      const alertsPayload = () => ({ alerts: engine.list() });
+      engine.onChange(() => server.ws.send('hl-ai:alerts', alertsPayload()));
+      server.httpServer?.once('close', () => engine.close());
+
       server.ws.on('hl-ai:snapshot', (data: { snapshot?: ChartSnapshot; reqId?: string }) => {
         if (!data?.snapshot || typeof data.snapshot !== 'object') return;
         snapshot = data.snapshot;
@@ -89,6 +104,7 @@ export function aiOverlayPlugin(): Plugin {
 
       server.ws.on('hl-ai:hello', (_data: unknown, client) => {
         client.send('hl-ai:overlays', overlaysPayload());
+        client.send('hl-ai:alerts', alertsPayload());
       });
 
       const requestSnapshot = (): Promise<ChartSnapshot | null> => {
@@ -107,9 +123,59 @@ export function aiOverlayPlugin(): Plugin {
         try {
           if (url.pathname === '/api/ai/view' && req.method === 'GET') {
             const fresh = await requestSnapshot();
-            if (fresh) return sendJson(res, 200, withOverlays(fresh));
-            if (snapshot) return sendJson(res, 200, { ...withOverlays(snapshot), stale: true });
+            const view = (s: ChartSnapshot) => ({ ...withOverlays(s), alerts: engine.list().filter(a => a.asset === s.asset) });
+            if (fresh) return sendJson(res, 200, view(fresh));
+            if (snapshot) return sendJson(res, 200, { ...view(snapshot), stale: true });
             return sendJson(res, 404, { error: 'no chart connected' });
+          }
+
+          if (url.pathname === '/api/ai/alerts/wait' && req.method === 'GET') {
+            const id = url.searchParams.get('id') ?? '';
+            const timeout = Math.min(30, Math.max(0, Number(url.searchParams.get('timeout') ?? 30) || 0));
+            const fired = await engine.wait(id, timeout * 1000);
+            if (fired === undefined) return sendJson(res, 404, { error: `no alert with id ${id}` });
+            if (fired === null) return sendJson(res, 200, { status: 'armed' });
+            return sendJson(res, 200, { status: 'fired', alert: fired });
+          }
+
+          if (url.pathname === '/api/ai/alerts') {
+            if (req.method === 'GET') return sendJson(res, 200, alertsPayload());
+
+            if (req.method === 'DELETE') {
+              const id = url.searchParams.get('id');
+              if (id) {
+                if (!engine.remove(id)) return sendJson(res, 404, { error: `no alert with id ${id}` });
+              } else {
+                engine.clear();
+              }
+              return sendJson(res, 200, { ok: true, remaining: engine.list().length });
+            }
+
+            if (req.method === 'POST') {
+              let body: unknown;
+              try {
+                body = await readJson(req);
+              } catch (e) {
+                return sendJson(res, 400, { error: (e as Error).message });
+              }
+              // Default asset and mid come from the chart the user is looking at.
+              const current = (await requestSnapshot()) ?? snapshot;
+              const asset = (body as { asset?: string } | undefined)?.asset || current?.asset || null;
+              const mid = (asset && engine.mid(asset)) ?? (current && current.asset === asset ? current.mid : null);
+              try {
+                const { alert, existing } = engine.add(body, { defaultAsset: current?.asset ?? null, mid });
+                return sendJson(res, 200, {
+                  ok: true,
+                  existing,
+                  alert,
+                  wait: `node scripts/hl-alert-wait.mjs ${alert.id}`,
+                });
+              } catch (e) {
+                if (e instanceof AlertValidationError) return sendJson(res, 400, { error: e.message });
+                throw e;
+              }
+            }
+            return sendJson(res, 405, { error: `method ${req.method} not allowed` });
           }
 
           if (url.pathname === '/api/ai/overlays') {

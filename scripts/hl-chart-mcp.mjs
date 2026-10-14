@@ -153,6 +153,48 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'set_alert',
+    description: [
+      'Arm a price alert on the dev server; it watches Hyperliquid directly, so it keeps working when the chart tab is closed.',
+      'kind "cross" (default) fires on the first tick at or past `level` in `direction`; kind "close" fires when a bar on `interval`',
+      'closes at or past `level` (e.g. "15m close below 82927"). `direction` defaults from the current mid (level above mid -> "above").',
+      'Use exact prices from get_chart_view. A cross level already past the mid is rejected unless force: true.',
+      '`asset` defaults to the charted asset. `note` (<=300 chars) is shown as the tooltip in the app; write what the level means.',
+      'The alert draws as a dashed line on the chart and is listed under the AI overlays; the user can remove it there.',
+      'The response includes `wait`, a command. Run it immediately with Bash run_in_background (not Monitor): it blocks until the',
+      'alert fires and then exits, which re-invokes this session with the fired alert so you can read the chart and answer the user.',
+      'Each alert fires once and then stays listed as fired until removed with cancel_alert.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        level: { type: 'number', exclusiveMinimum: 0, description: 'Exact price.' },
+        direction: { enum: ['above', 'below'], description: 'Defaults from the current mid.' },
+        kind: { enum: ['cross', 'close'], description: 'Default "cross".' },
+        interval: { enum: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'], description: 'Required for kind "close".' },
+        asset: { type: 'string', description: 'Defaults to the charted asset.' },
+        note: { type: 'string', maxLength: 300, description: 'What this level means (tooltip in the app).' },
+        force: { type: 'boolean', description: 'Arm a cross alert whose level is already past the mid; it fires on the next tick.' },
+      },
+      required: ['level'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_alerts',
+    description: 'List price alerts on the dev server, armed and fired, with ids for cancel_alert.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'cancel_alert',
+    description: 'Remove one alert by id (armed or fired). Omit id to remove all alerts.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Alert id from set_alert or list_alerts; omit to remove all.' } },
+      additionalProperties: false,
+    },
+  },
 ];
 
 /* ---------------------------------------------------------------- http --- */
@@ -212,6 +254,23 @@ async function callTool(name, args = {}) {
     const { status, json } = await http('DELETE', `/api/ai/overlays${q}`);
     return textResult({ status, ...json }, status !== 200);
   }
+  if (name === 'set_alert') {
+    const { status, json } = await http('POST', '/api/ai/alerts', { ...args, source: 'mcp' });
+    if (status !== 200) return textResult({ status, ...json }, true);
+    return textResult({
+      ...json,
+      note: `Now run \`${json.wait}\` with Bash run_in_background (cwd: this repo) so this session wakes when it fires.`,
+    });
+  }
+  if (name === 'list_alerts') {
+    const { status, json } = await http('GET', '/api/ai/alerts');
+    return textResult({ status, ...json }, status !== 200);
+  }
+  if (name === 'cancel_alert') {
+    const q = args.id ? `?id=${encodeURIComponent(args.id)}` : '';
+    const { status, json } = await http('DELETE', `/api/ai/alerts${q}`);
+    return textResult({ status, ...json }, status !== 200);
+  }
   throw Object.assign(new Error(`unknown tool ${name}`), { code: -32602 });
 }
 
@@ -233,7 +292,7 @@ async function handle(msg) {
           protocolVersion: params?.protocolVersion || '2025-06-18',
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: 'Reads the user\'s open Hyperliquid chart (get_chart_view) and pushes toggleable overlay sets onto it (push_overlays).',
+          instructions: 'Reads the user\'s open Hyperliquid chart (get_chart_view), pushes toggleable overlay sets onto it (push_overlays), and arms price alerts (set_alert) that wake this session when they fire.',
         });
       case 'notifications/initialized':
       case 'notifications/cancelled':
