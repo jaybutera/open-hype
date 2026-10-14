@@ -257,9 +257,12 @@ async function callTool(name, args = {}) {
   if (name === 'set_alert') {
     const { status, json } = await http('POST', '/api/ai/alerts', { ...args, source: 'mcp' });
     if (status !== 200) return textResult({ status, ...json }, true);
+    // The wait script must reach the same server this MCP talks to.
+    const wait = `HL_FRONTEND_URL=${BASE} node scripts/hl-alert-wait.mjs ${json.alert.id}`;
     return textResult({
       ...json,
-      note: `Now run \`${json.wait}\` with Bash run_in_background (cwd: this repo) so this session wakes when it fires.`,
+      wait,
+      note: `Now run \`${wait}\` with Bash run_in_background (cwd: this repo) so this session wakes when it fires.`,
     });
   }
   if (name === 'list_alerts') {

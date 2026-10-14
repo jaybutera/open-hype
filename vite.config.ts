@@ -137,5 +137,6 @@ function yahooProxyPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [react(), yahooProxyPlugin(), replayDataPlugin(), aiOverlayPlugin()],
-  server: { port: 3000 },
+  // allowedHosts: the dev server also runs on the box machine and is opened by name over the LAN/Tailscale.
+  server: { port: 3000, allowedHosts: ['box', 'box.lan'] },
 });

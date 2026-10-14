@@ -1,1 +1,1 @@
-{ "mcpServers": { "hl-chart": { "command": "node", "args": ["scripts/hl-chart-mcp.mjs"] } } }
+{ "mcpServers": { "hl-chart": { "command": "node", "args": ["scripts/hl-chart-mcp.mjs"], "env": { "HL_FRONTEND_URL": "http://100.117.74.55:3000" } } } }

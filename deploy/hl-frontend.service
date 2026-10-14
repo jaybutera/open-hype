@@ -1,0 +1,24 @@
+# systemd user unit for the always-on dev server on the box machine.
+# The AI chart link and price alerts are Vite dev-server plugins, so the dev
+# server is what runs, not a production build.
+#
+# Install (on box):  cp deploy/hl-frontend.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now hl-frontend
+# Update (from the laptop):  scripts/deploy-box.sh   (pulls master, installs deps, restarts)
+# Logs:  journalctl --user -u hl-frontend -f
+[Unit]
+Description=Open Hype dev server (hl-frontend) with AI overlay and alert routes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/src/hl-frontend
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Pull on every (re)start; a failed pull (no network) must not keep the server down.
+ExecStartPre=-/usr/bin/git pull --ff-only
+ExecStartPre=-/usr/bin/env npm install --no-audit --no-fund
+ExecStart=/usr/bin/env node node_modules/.bin/vite --host 0.0.0.0 --port 3000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
