@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * hl-chart MCP server: lets an AI (Claude Code) read the user's open chart and
- * push overlay sets onto it. Wraps the Vite dev server's /api/ai/* routes
+ * hl-chart MCP server: lets an AI (Claude Code) read the user's open chart,
+ * push overlay sets onto it, arm alerts, and propose trades the user confirms
+ * in the page. Wraps the Vite dev server's /api/ai/* routes
  * (vite-ai-plugin.ts). No dependencies: newline-delimited JSON-RPC 2.0 over
  * stdio. stdout carries protocol messages only; logs go to stderr.
  *
@@ -89,7 +90,9 @@ const TOOLS = [
     description: [
       "Read exactly what is on the user's trading chart right now (the active pane of the Hyperliquid frontend).",
       'Returns JSON: asset, interval, mode (paper/live), replay flag, mid price, the candles in the visible range,',
-      "the user's position and open orders for this asset, drawn fibs, and the user's drawn trade setups.",
+      "the user's position and open orders for this asset (each order has an `oid` for propose_cancel / replaceOid, and `tpsl` on TP/SL triggers),",
+      "drawn fibs, and the user's drawn trade setups. `trading` says whether live trading is enabled (status \"ready\") and which account orders go to.",
+      '`proposals` lists recent trade proposals and their status.',
       'Candles are compact rows; the `columns` key names each field: [t_ms, "YYYY-MM-DD HH:MM ET", open, high, low, close, volume].',
       't_ms is the bar open in UTC ms; the ET string is the same instant in New York time (what the chart axis shows).',
       'Prices are exact; quote them rather than rounding. At most 600 candles are returned (the most recent visible);',
@@ -197,6 +200,95 @@ const TOOLS = [
   },
 ];
 
+const PROPOSE_COMMON = {
+  coin: { type: 'string', description: 'Defaults to the charted asset. HIP-3 assets use "dex:COIN", e.g. "xyz:TSLA".' },
+  note: { type: 'string', maxLength: 300, description: 'Why: shown on the confirm card. Name the setup and the levels.' },
+  mode: { enum: ['paper', 'live'], description: 'Defaults to the mode the app is in now. The card refuses to run in the other mode.' },
+  expiresInSec: { type: 'number', minimum: 30, maximum: 86400, description: 'Card disappears after this if nobody decides. Default 900.' },
+};
+const OID = { oneOf: [{ type: 'integer' }, { type: 'string' }], description: 'Order id from get_chart_view orders[].oid.' };
+const PROPOSE_NOTE = [
+  'Nothing is sent by this call: the proposal appears as a confirm card in the app (under the Buy/Sell button) and the',
+  "user clicks Confirm, which signs it in the browser with the key the page holds. The response includes `wait`, a command:",
+  'run it with Bash run_in_background so this session wakes with the outcome (done/failed with the exchange response, rejected,',
+  'expired). Confirmed orders show on the chart and in the positions/orders tables like hand-placed ones; call get_chart_view',
+  'after the outcome to see them. Read `warnings` (e.g. no chart open, app in the other mode).',
+].join(' ');
+
+const TRADE_TOOLS = [
+  {
+    name: 'propose_order',
+    description: [
+      'Propose a new order: limit (give price) or market. Size with exactly one of size (asset units), sizeUsd (notional),',
+      'or riskUsd (loss if sl is hit; needs sl). Optional tp/sl attach reduce-only market triggers that activate when the entry fills.',
+      'replaceOid moves an existing order: the new one is placed first, then that order is cancelled together with the TP/SL attached',
+      'to it, so give tp/sl again on the new order.',
+      'leverage (live only) sets the account leverage for the coin before the order. Hyperliquid minimum is $10 notional.',
+      PROPOSE_NOTE,
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PROPOSE_COMMON,
+        side: { enum: ['buy', 'sell', 'long', 'short'] },
+        orderType: { enum: ['limit', 'market'], description: 'Default limit when price is given.' },
+        price: { type: 'number', exclusiveMinimum: 0, description: 'Limit price; exact, from get_chart_view.' },
+        size: { type: 'number', exclusiveMinimum: 0 },
+        sizeUsd: { type: 'number', exclusiveMinimum: 0 },
+        riskUsd: { type: 'number', exclusiveMinimum: 0 },
+        tif: { enum: ['Gtc', 'Ioc', 'Alo'], description: 'Limit only. Default Gtc; Alo = post-only.' },
+        reduceOnly: { type: 'boolean' },
+        tp: { type: 'number', exclusiveMinimum: 0 },
+        sl: { type: 'number', exclusiveMinimum: 0 },
+        leverage: { type: 'integer', minimum: 1, maximum: 100 },
+        replaceOid: OID,
+      },
+      required: ['side'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'propose_tpsl',
+    description: [
+      'Propose a take-profit or stop-loss on the whole open position (reduce-only market trigger). With replaceOid it moves an',
+      'existing TP/SL: the new trigger is placed first, then the old one is cancelled.',
+      PROPOSE_NOTE,
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: { ...PROPOSE_COMMON, tpsl: { enum: ['tp', 'sl'] }, price: { type: 'number', exclusiveMinimum: 0 }, replaceOid: OID },
+      required: ['tpsl', 'price'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'propose_cancel',
+    description: ['Propose cancelling open orders on a coin: listed oids, or all: true.', PROPOSE_NOTE].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: { ...PROPOSE_COMMON, oids: { type: 'array', minItems: 1, items: OID }, all: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'propose_close',
+    description: ['Propose a market close of the whole position on a coin. For a partial close use propose_order with reduceOnly.', PROPOSE_NOTE].join(' '),
+    inputSchema: { type: 'object', properties: { ...PROPOSE_COMMON }, additionalProperties: false },
+  },
+  {
+    name: 'withdraw_proposal',
+    description: 'Take back a trade proposal that is still pending (the card disappears). Fails once the user has confirmed it.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Proposal id from a propose_* response.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+];
+
+TOOLS.push(...TRADE_TOOLS);
+
 /* ---------------------------------------------------------------- http --- */
 
 async function http(method, path, body) {
@@ -274,6 +366,22 @@ async function callTool(name, args = {}) {
     const { status, json } = await http('DELETE', `/api/ai/alerts${q}`);
     return textResult({ status, ...json }, status !== 200);
   }
+  const PROPOSE_KIND = { propose_order: 'order', propose_tpsl: 'tpsl', propose_cancel: 'cancel', propose_close: 'close' };
+  if (name in PROPOSE_KIND) {
+    const { note, mode, expiresInSec, ...action } = args;
+    const { status, json } = await http('POST', '/api/ai/trades', { action: { ...action, kind: PROPOSE_KIND[name] }, note, mode, expiresInSec });
+    if (status !== 200) return textResult({ status, ...json }, true);
+    const wait = `HL_FRONTEND_URL=${BASE} node scripts/hl-trade-wait.mjs ${json.trade.id}`;
+    return textResult({
+      ...json,
+      wait,
+      note: `Not sent yet: the user has to confirm the card in the app. Now run \`${wait}\` with Bash run_in_background (cwd: this repo) so this session wakes with the outcome.`,
+    });
+  }
+  if (name === 'withdraw_proposal') {
+    const { status, json } = await http('DELETE', `/api/ai/trades?id=${encodeURIComponent(args.id ?? '')}`);
+    return textResult({ status, ...json }, status !== 200);
+  }
   throw Object.assign(new Error(`unknown tool ${name}`), { code: -32602 });
 }
 
@@ -295,7 +403,7 @@ async function handle(msg) {
           protocolVersion: params?.protocolVersion || '2025-06-18',
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: 'Reads the user\'s open Hyperliquid chart (get_chart_view), pushes toggleable overlay sets onto it (push_overlays), and arms price alerts (set_alert) that wake this session when they fire.',
+          instructions: 'Reads the user\'s open Hyperliquid chart (get_chart_view), pushes toggleable overlay sets onto it (push_overlays), arms price alerts (set_alert) that wake this session when they fire, and proposes trades (propose_order, propose_tpsl, propose_cancel, propose_close) that the user confirms in the app before the page signs and sends them.',
         });
       case 'notifications/initialized':
       case 'notifications/cancelled':

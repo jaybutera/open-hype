@@ -5,6 +5,7 @@ import { normalizePush, OverlayValidationError } from './src/services/ai/validat
 import type { ChartSnapshot, OverlaySet } from './src/services/ai/types.ts';
 import { AlertValidationError } from './src/services/ai/alerts.ts';
 import { AlertEngine } from './alert-engine.ts';
+import { TradeDesk, TradeValidationError, describeAction } from './src/services/ai/trades.ts';
 
 /**
  * Bridge between an AI (Claude Code via scripts/hl-chart-mcp.mjs) and the open
@@ -18,10 +19,20 @@ import { AlertEngine } from './alert-engine.ts';
  *   POST   /api/ai/alerts        -> AlertInput; arms a price alert (alert-engine.ts watches Hyperliquid)
  *   DELETE /api/ai/alerts[?id]   -> remove one (or all)
  *   GET    /api/ai/alerts/wait?id=&timeout= -> long-poll; { status: 'fired', alert } once it fires
+ *   GET    /api/ai/trades        -> { trades } (open and recently finished proposals)
+ *   POST   /api/ai/trades        -> { action, note?, mode?, expiresInSec? }; stores a proposal for the page to confirm
+ *   DELETE /api/ai/trades?id=    -> withdraw a pending proposal
+ *   GET    /api/ai/trades/wait?id=&timeout= -> long-poll; { status, trade } once it is decided
+ *   POST   /api/ai/trades/claim?id=  -> page only: { decidedBy } pending -> executing; 409 if someone else got it
+ *   POST   /api/ai/trades/result?id= -> page only: { ok, message } executing -> done/failed
+ *   POST   /api/ai/trades/reject?id= -> page only: { reason? } pending -> rejected
+ *
+ * Trades are signed and sent by the page with the key it holds; this server
+ * never sees a key and never calls the exchange.
  *
  * Page <-> server traffic uses Vite custom websocket events:
  *   client -> server  hl-ai:snapshot { snapshot, reqId? }, hl-ai:toggle { id, enabled }, hl-ai:hello {}
- *   server -> client  hl-ai:snapshot-request { reqId }, hl-ai:overlays { sets }
+ *   server -> client  hl-ai:snapshot-request { reqId }, hl-ai:overlays { sets }, hl-ai:alerts { alerts }, hl-ai:trades { trades }
  */
 const SNAPSHOT_TIMEOUT_MS = 1500;
 const MAX_BODY = 1_000_000;
@@ -83,6 +94,13 @@ export function aiOverlayPlugin(): Plugin {
       engine.onChange(() => server.ws.send('hl-ai:alerts', alertsPayload()));
       server.httpServer?.once('close', () => engine.close());
 
+      const desk = new TradeDesk();
+      const tradesPayload = () => ({ trades: desk.list() });
+      desk.onChange(() => server.ws.send('hl-ai:trades', tradesPayload()));
+      const sweep = setInterval(() => desk.sweep(), 5000);
+      sweep.unref?.();
+      server.httpServer?.once('close', () => clearInterval(sweep));
+
       server.ws.on('hl-ai:snapshot', (data: { snapshot?: ChartSnapshot; reqId?: string }) => {
         if (!data?.snapshot || typeof data.snapshot !== 'object') return;
         snapshot = data.snapshot;
@@ -105,6 +123,7 @@ export function aiOverlayPlugin(): Plugin {
       server.ws.on('hl-ai:hello', (_data: unknown, client) => {
         client.send('hl-ai:overlays', overlaysPayload());
         client.send('hl-ai:alerts', alertsPayload());
+        client.send('hl-ai:trades', tradesPayload());
       });
 
       const requestSnapshot = (): Promise<ChartSnapshot | null> => {
@@ -123,7 +142,11 @@ export function aiOverlayPlugin(): Plugin {
         try {
           if (url.pathname === '/api/ai/view' && req.method === 'GET') {
             const fresh = await requestSnapshot();
-            const view = (s: ChartSnapshot) => ({ ...withOverlays(s), alerts: engine.list().filter(a => a.asset === s.asset) });
+            const view = (s: ChartSnapshot) => ({
+              ...withOverlays(s),
+              alerts: engine.list().filter(a => a.asset === s.asset),
+              proposals: desk.list().slice(-10),
+            });
             if (fresh) return sendJson(res, 200, view(fresh));
             if (snapshot) return sendJson(res, 200, { ...view(snapshot), stale: true });
             return sendJson(res, 404, { error: 'no chart connected' });
@@ -176,6 +199,69 @@ export function aiOverlayPlugin(): Plugin {
               }
             }
             return sendJson(res, 405, { error: `method ${req.method} not allowed` });
+          }
+
+          if (url.pathname.startsWith('/api/ai/trades')) {
+            const id = url.searchParams.get('id') ?? '';
+            const sub = url.pathname.slice('/api/ai/trades'.length);
+
+            if (sub === '/wait' && req.method === 'GET') {
+              const timeout = Math.min(30, Math.max(0, Number(url.searchParams.get('timeout') ?? 30) || 0));
+              const t = await desk.wait(id, timeout * 1000);
+              if (t === undefined) return sendJson(res, 404, { error: `no proposal with id ${id}` });
+              if (t === null) return sendJson(res, 200, { status: desk.get(id)?.status ?? 'pending' });
+              return sendJson(res, 200, { status: t.status, trade: t });
+            }
+
+            if (sub === '' && req.method === 'GET') return sendJson(res, 200, tradesPayload());
+
+            if (sub === '' && req.method === 'DELETE') {
+              const t = desk.withdraw(id);
+              if (!t) return sendJson(res, 409, { error: `no pending proposal with id ${id}`, trade: desk.get(id) ?? null });
+              return sendJson(res, 200, { ok: true, trade: t });
+            }
+
+            if (req.method !== 'POST') return sendJson(res, 405, { error: `method ${req.method} not allowed` });
+            let body: unknown;
+            try {
+              body = await readJson(req);
+            } catch (e) {
+              return sendJson(res, 400, { error: (e as Error).message });
+            }
+            const b = (body ?? {}) as Record<string, unknown>;
+
+            if (sub === '') {
+              const fresh = await requestSnapshot();
+              const current = fresh ?? snapshot;
+              try {
+                const trade = desk.propose(body, { defaultAsset: current?.asset ?? null, mode: current?.mode ?? null });
+                server.config.logger.info(`[hl-ai trades] proposed ${trade.id} (${trade.mode}): ${describeAction(trade.action)}`);
+                const warnings: string[] = [];
+                if (!fresh) warnings.push(current ? 'the page did not answer just now; the proposal waits until a chart tab is open' : 'no chart connected; the proposal waits until the user opens the app');
+                if (current && current.mode !== trade.mode) warnings.push(`the page is in ${current.mode} mode; the user must switch to ${trade.mode} to confirm`);
+                return sendJson(res, 200, { ok: true, trade, warnings });
+              } catch (e) {
+                if (e instanceof TradeValidationError) return sendJson(res, 400, { error: e.message });
+                throw e;
+              }
+            }
+
+            if (sub === '/claim') {
+              const r = desk.claim(id, b.decidedBy === 'auto' ? 'auto' : 'user');
+              return r.ok ? sendJson(res, 200, r) : sendJson(res, 409, r);
+            }
+            if (sub === '/result') {
+              const t = desk.finish(id, b);
+              if (!t) return sendJson(res, 409, { error: `proposal ${id} is not executing` });
+              server.config.logger.info(`[hl-ai trades] ${t.id} ${t.status}: ${t.result?.message}`);
+              return sendJson(res, 200, { ok: true, trade: t });
+            }
+            if (sub === '/reject') {
+              const t = desk.reject(id, typeof b.reason === 'string' ? b.reason : undefined);
+              if (!t) return sendJson(res, 409, { error: `no pending proposal with id ${id}` });
+              return sendJson(res, 200, { ok: true, trade: t });
+            }
+            return sendJson(res, 404, { error: 'unknown trades endpoint' });
           }
 
           if (url.pathname === '/api/ai/overlays') {

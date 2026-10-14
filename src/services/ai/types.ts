@@ -25,11 +25,15 @@ export interface SnapshotPosition {
 }
 
 export interface SnapshotOrder {
+  /** Exchange order id (live) or paper order id; use it in propose_cancel / replaceOid. */
+  oid: number | string;
   side: string;
   type: string;
   price: number;
   size: number;
   reduceOnly: boolean;
+  /** Set on TP/SL triggers. */
+  tpsl?: 'tp' | 'sl';
 }
 
 export interface SnapshotSetup {
@@ -68,6 +72,8 @@ export interface ChartSnapshot {
   mid: number | null;
   position: SnapshotPosition | null;
   orders: SnapshotOrder[];
+  /** Live trading readiness ('ready' = an approved key is loaded) and the account orders go to. */
+  trading: { status: 'none' | 'approving' | 'ready'; account: string | null; network: string };
   setups: SnapshotSetup[];
   pendingSetup: { side: 'long' | 'short'; clicks: number[] } | null;
   fibs: SnapshotFib[];

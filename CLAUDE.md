@@ -13,4 +13,8 @@ The `hl-chart` MCP server (`.mcp.json`, `scripts/hl-chart-mcp.mjs`) links this s
 
 `set_alert` arms a price alert on the dev server (cross of a level, or a bar close beyond it on an interval). The dev server watches Hyperliquid itself, so the alert works with the tab closed. After `set_alert`, run the `wait` command from its response with Bash `run_in_background`; the command exits when the alert fires, which wakes this session with the fired alert. Then call `get_chart_view`, and continue the conversation with full context. Set a `note` that says what the level means. Alerts also come from the user: alt+click on the chart arms a cross alert, alt+ctrl+click a close alert on the chart's interval. `get_chart_view` lists the charted asset's alerts under `alerts`.
 
+## Trades
+
+`propose_order`, `propose_tpsl`, `propose_cancel` and `propose_close` put a confirm card in the app's right column; nothing is sent until the user clicks Confirm, and then the page signs it with the key it holds (live) or runs it on the paper engine (paper). The dev server only stores proposals and relays the outcome; it never holds a key. Each proposal is tied to the mode the app was in when it was made and refuses to run in the other mode. After proposing, run the `wait` command from the response with Bash `run_in_background`; it exits with the outcome (done with the exchange response, failed, rejected, expired). Use order ids from `get_chart_view` `orders[].oid` for cancels and `replaceOid`. Give the reasoning in `note`, with exact levels. The user can turn on auto-confirm for risk-reducing proposals (closes, cancels of entry orders, new or tighter stops); everything else always waits for a click.
+
 Design notes are in `specs/ai-overlays.md`.

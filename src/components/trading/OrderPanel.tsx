@@ -9,6 +9,7 @@ import { useWalletStore } from '../../store/useWalletStore.ts';
 import { prepareOrder, submitPrepared, type LiveOrderInput, type PreparedOrder } from '../../services/hl/liveTrader.ts';
 import { LiveOrderConfirm } from './LiveOrderConfirm.tsx';
 import { AiOverlayPanel } from './AiOverlayPanel.tsx';
+import { AiTradePanel } from './AiTradePanel.tsx';
 import { AlertPanel } from './AlertPanel.tsx';
 
 interface Props {
@@ -524,6 +525,7 @@ export function OrderPanel({ engine }: Props) {
       {error && <div style={{ color: '#f6465d', fontSize: 12 }}>{error}</div>}
       {success && <div style={{ color: '#0ecb81', fontSize: 12 }}>{success}</div>}
 
+      <AiTradePanel />
       <AiOverlayPanel />
       <AlertPanel />
     </div>

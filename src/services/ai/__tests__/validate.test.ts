@@ -23,6 +23,7 @@ function snap(over: Partial<ChartSnapshot> = {}): ChartSnapshot {
     timezone: 'America/New_York',
     visible: { from: c[0].t, to: c[c.length - 1].t, bars: c.length },
     candles: c, mid: 120, position: null, orders: [], setups: [], pendingSetup: null,
+    trading: { status: 'none', account: null, network: 'mainnet' },
     fibs: [], overlays: [], ...over,
   };
 }
