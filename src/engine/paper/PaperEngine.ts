@@ -345,10 +345,7 @@ export class PaperEngine {
       this.positions.set(order.coin, result.position);
     } else {
       this.positions.delete(order.coin);
-      // Position fully closed — cancel all reduceOnly and TP/SL orders for this coin
-      this.openOrders = this.openOrders.filter(
-        o => !(o.coin === order.coin && (o.reduceOnly || o.tpsl) && o.id !== order.id)
-      );
+      this.dropOrphanExits(order.coin, order.id);
     }
 
     // Record fill
@@ -374,6 +371,21 @@ export class PaperEngine {
 
     // Remove the filled order
     this.removeOrder(order.id);
+  }
+
+  /**
+   * Position on `coin` is gone: cancel its reduceOnly and TP/SL orders. Keep
+   * the ones attached (parentOid) to an entry that is still resting; they
+   * belong to the position that entry will open, not the one that closed.
+   */
+  private dropOrphanExits(coin: string, keepId?: string): void {
+    const open = new Set(this.openOrders.map(o => o.id));
+    this.openOrders = this.openOrders.filter(o =>
+      o.coin !== coin ||
+      !(o.reduceOnly || o.tpsl) ||
+      o.id === keepId ||
+      (o.parentOid !== undefined && open.has(o.parentOid))
+    );
   }
 
   private removeOrder(orderId: string): void {
@@ -491,10 +503,8 @@ export class PaperEngine {
       this.positions.delete(coin);
     }
 
-    // Cancel any reduceOnly orders for this coin since position is gone
-    if (!result.position) {
-      this.openOrders = this.openOrders.filter(o => !(o.coin === coin && o.reduceOnly));
-    }
+    // Position is gone: cancel its reduceOnly and TP/SL orders
+    if (!result.position) this.dropOrphanExits(coin);
 
     this.fills.push(createLedgerEntry(coin, side, size, price, fee, result.realizedPnl, this.balance, this.now()));
     this.emitUpdate();

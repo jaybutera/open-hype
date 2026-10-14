@@ -101,6 +101,73 @@ describe('store integration', () => {
     }
   });
 
+  describe('TP/SL attached to a resting entry survive the current position closing', () => {
+    let entryOid: string;
+    let tpOid: string;
+    let slOid: string;
+
+    beforeEach(() => {
+      // Short 1 BTC at 50000 with a reduceOnly TP at 48000
+      engine.placeOrder({
+        coin: 'BTC', side: 'sell', price: '50000', size: '1',
+        reduceOnly: false, orderType: { limit: { tif: 'Ioc' } },
+      });
+      engine.onPriceUpdate('BTC', '50000');
+      engine.placeOrder({
+        coin: 'BTC', side: 'buy', price: '48000', size: '1',
+        reduceOnly: true,
+        orderType: { trigger: { isMarket: true, triggerPx: '48000', tpsl: 'tp' } },
+      });
+
+      // Resting buy limit at 47000 with attached TP 52000 / SL 45000 (as propose_order places them)
+      entryOid = engine.placeOrder({
+        coin: 'BTC', side: 'buy', price: '47000', size: '1',
+        reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+      }).oid as string;
+      tpOid = engine.placeOrder({
+        coin: 'BTC', side: 'sell', price: '52000', size: '1', reduceOnly: false,
+        orderType: { trigger: { isMarket: true, triggerPx: '52000', tpsl: 'tp' } },
+        parentOid: entryOid,
+      }).oid as string;
+      slOid = engine.placeOrder({
+        coin: 'BTC', side: 'sell', price: '45000', size: '1', reduceOnly: false,
+        orderType: { trigger: { isMarket: true, triggerPx: '45000', tpsl: 'sl' } },
+        parentOid: entryOid,
+      }).oid as string;
+    });
+
+    function expectEntryAndChildrenResting() {
+      expect(storeState().positions).toHaveLength(0);
+      const ids = engine.getOpenOrders().map(o => o.id).sort();
+      expect(ids).toEqual([entryOid, tpOid, slOid].sort());
+    }
+
+    function fillEntryAndCheckProtection() {
+      engine.onPriceUpdate('BTC', '47000');
+      const pos = engine.getPosition('BTC');
+      expect(pos?.szi.toString()).toBe('1');
+      const orders = engine.getOpenOrders();
+      expect(orders.map(o => o.id).sort()).toEqual([tpOid, slOid].sort());
+
+      // SL is live for the long
+      engine.onPriceUpdate('BTC', '45000');
+      expect(engine.getPosition('BTC')).toBeNull();
+      expect(storeState().orders).toHaveLength(0);
+    }
+
+    it('short closed by its TP fill', () => {
+      engine.onPriceUpdate('BTC', '48000');
+      expectEntryAndChildrenResting();
+      fillEntryAndCheckProtection();
+    });
+
+    it('short closed by marketClose', () => {
+      engine.marketClose('BTC', '49000');
+      expectEntryAndChildrenResting();
+      fillEntryAndCheckProtection();
+    });
+  });
+
   it('margin rejection at placement time', () => {
     // 100 BTC × 50000 / 10 = 500k margin
     const result = engine.placeOrder({
