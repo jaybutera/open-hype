@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Side } from '../types/order.ts';
 import { useSettingsStore } from './useSettingsStore.ts';
 import { useMarketStore, type PaneId } from './useMarketStore.ts';
+import { newId } from '../utils/id.ts';
 
 export interface TradeSetup {
   id: string;
@@ -55,7 +56,7 @@ function calcSetup(side: Side, entry: number, sl: number, tp: number, riskUsdc: 
   const rr = riskPerUnit > 0 ? Math.abs(tp - entry) / riskPerUnit : 0;
 
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     side,
     entryPrice: entry,
     slPrice: sl,
