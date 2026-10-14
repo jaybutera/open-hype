@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useLiveAccountStore, type LivePosition } from '../../store/useLiveAccountStore.ts';
+import { useLiveAccountStore, type LiveFill, type LivePosition } from '../../store/useLiveAccountStore.ts';
 import { useWalletStore } from '../../store/useWalletStore.ts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { NETWORK } from '../../services/hl/network.ts';
@@ -35,11 +35,125 @@ function TriggerInput({ pos, run }: { pos: LivePosition; run: (f: () => Promise<
   );
 }
 
-/** Positions and open orders of the connected Hyperliquid account. */
+type Tab = 'positions' | 'history' | 'balances';
+const HISTORY_PAGE = 200;
+
+// Aggregated fills carry a volume-weighted price with float noise; show what a price ladder would.
+const fmtPx = (n: number) => n.toLocaleString(undefined, { maximumSignificantDigits: 6 });
+const fmtSz = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 6 });
+const pnlColor = (n: number) => (n > 0 ? '#0ecb81' : n < 0 ? '#f6465d' : '#8a8f98');
+const fmtTime = (t: number) => {
+  const d = new Date(t);
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour12: false })}`;
+};
+
+function TradeHistory({ fills, loaded }: { fills: LiveFill[]; loaded: boolean }) {
+  const [shown, setShown] = useState(HISTORY_PAGE);
+  if (!loaded) return <div style={{ padding: '20px 16px', color: '#555', textAlign: 'center' }}>Loading trade history…</div>;
+  if (fills.length === 0) return <div style={{ padding: '20px 16px', color: '#555', textAlign: 'center' }}>No trades yet</div>;
+  return (
+    <>
+      <table data-testid="live-history" style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ color: '#8a8f98', fontSize: 11 }}>
+            <th style={{ ...th, textAlign: 'left', paddingLeft: 16 }}>Time</th>
+            <th style={{ ...th, textAlign: 'left' }}>Asset</th>
+            <th style={{ ...th, textAlign: 'left' }}>Direction</th>
+            <th style={th}>Price</th><th style={th}>Size</th><th style={th}>Value</th>
+            <th style={th}>Fee</th><th style={{ ...th, paddingRight: 16 }}>Closed PnL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {fills.slice(0, shown).map(f => (
+            <tr key={f.tid} data-testid={`live-fill-${f.tid}`} style={{ borderBottom: '1px solid #1a1f2e' }}>
+              <td style={{ ...td, textAlign: 'left', paddingLeft: 16, color: '#8a8f98', whiteSpace: 'nowrap' }}>{fmtTime(f.time)}</td>
+              <td style={{ ...td, textAlign: 'left' }}>{f.coin}</td>
+              <td style={{ ...td, textAlign: 'left', color: f.side === 'buy' ? '#0ecb81' : '#f6465d' }}>{f.dir}</td>
+              <td style={td}>{fmtPx(f.px)}</td>
+              <td style={td}>{fmtSz(f.sz)}</td>
+              <td style={td}>${fmt(f.px * f.sz)}</td>
+              <td style={{ ...td, color: '#8a8f98' }}>{fmt(f.fee, 4)} {f.feeToken !== 'USDC' ? f.feeToken : ''}</td>
+              <td style={{ ...td, paddingRight: 16, color: pnlColor(f.closedPnl), fontWeight: f.closedPnl ? 600 : 400 }}>
+                {f.closedPnl ? `$${fmt(f.closedPnl)}` : '-'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {fills.length > shown && (
+        <div style={{ padding: 8, textAlign: 'center' }}>
+          <button className="btn-ghost" onClick={() => setShown(n => n + HISTORY_PAGE)} style={{ fontSize: 11 }}>
+            Show more ({fills.length - shown} older)
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function Balances() {
+  const { spotBalances, perps, spotValue, perpValue } = useLiveAccountStore();
+  const sub = { padding: '8px 16px', fontWeight: 600, borderBottom: '1px solid #1a1f2e', display: 'flex', justifyContent: 'space-between' };
+  return (
+    <div data-testid="live-balances" style={{ display: 'flex' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={sub}><span>Spot</span><span style={{ color: '#8a8f98', fontWeight: 400 }}>${fmt(spotValue)}</span></div>
+        {spotBalances.length === 0 ? (
+          <div style={{ padding: '20px 16px', color: '#555', textAlign: 'center' }}>No spot balances</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ color: '#8a8f98', fontSize: 11 }}>
+                <th style={{ ...th, textAlign: 'left', paddingLeft: 16 }}>Coin</th>
+                <th style={th}>Total</th><th style={th}>In use</th><th style={{ ...th, paddingRight: 16 }}>USD value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {spotBalances.map(b => (
+                <tr key={b.token} style={{ borderBottom: '1px solid #1a1f2e' }}>
+                  <td style={{ ...td, textAlign: 'left', paddingLeft: 16 }}>{b.coin}</td>
+                  <td style={td}>{b.total.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
+                  <td style={td}>{b.hold ? b.hold.toLocaleString(undefined, { maximumFractionDigits: 8 }) : '-'}</td>
+                  <td style={{ ...td, paddingRight: 16 }}>${fmt(b.usdValue)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, borderLeft: '1px solid #1a1f2e' }}>
+        <div style={sub}><span>Perps</span><span style={{ color: '#8a8f98', fontWeight: 400 }}>${fmt(perpValue)}</span></div>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ color: '#8a8f98', fontSize: 11 }}>
+              <th style={{ ...th, textAlign: 'left', paddingLeft: 16 }}>Dex</th>
+              <th style={th}>Account value</th><th style={th}>Margin used</th><th style={{ ...th, paddingRight: 16 }}>Withdrawable</th>
+            </tr>
+          </thead>
+          <tbody>
+            {perps.map(p => (
+              <tr key={p.dex} style={{ borderBottom: '1px solid #1a1f2e' }}>
+                <td style={{ ...td, textAlign: 'left', paddingLeft: 16 }}>{p.dex || 'Hyperliquid'}</td>
+                <td style={td}>${fmt(p.accountValue)}</td>
+                <td style={td}>${fmt(p.marginUsed)}</td>
+                <td style={{ ...td, paddingRight: 16 }}>${fmt(p.withdrawable)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** Positions, open orders, trade history and balances of the connected Hyperliquid account. */
 export function LivePositionTable() {
   const address = useWalletStore(s => s.address);
   const tradingReady = useWalletStore(s => s.tradingStatus === 'ready');
-  const { positions, openOrders, accountValue, withdrawable, marginUsed, lastSync, syncError } = useLiveAccountStore();
+  const {
+    positions, openOrders, fills, fillsLoaded, accountValue, perpValue, spotValue, withdrawable, marginUsed, lastSync, syncError,
+  } = useLiveAccountStore();
+  const [tab, setTab] = useState<Tab>('positions');
   const allMids = useMarketStore(s => s.allMids);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<LiveResult | null>(null);
@@ -50,7 +164,22 @@ export function LivePositionTable() {
     void f().then(r => { setResult(r); setBusy(false); });
   };
 
-  const box = { background: '#0d1117', borderTop: '1px solid #1a1f2e', fontSize: 13, color: '#e1e4e8', maxHeight: 260, overflowY: 'auto' as const };
+  const box = { background: '#0d1117', borderTop: '1px solid #1a1f2e', fontSize: 13, color: '#e1e4e8', minHeight: '100%' };
+  const tabBtn = (t: Tab, label: string) => (
+    <button
+      key={t}
+      data-testid={`live-tab-${t}`}
+      onClick={() => setTab(t)}
+      style={{
+        background: 'transparent', border: 'none', cursor: 'pointer',
+        fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 0,
+        color: tab === t ? '#e1e4e8' : '#8a8f98',
+        borderBottom: `2px solid ${tab === t ? '#3861fb' : 'transparent'}`,
+      }}
+    >
+      {label}
+    </button>
+  );
 
   if (!address) {
     return <div style={{ ...box, padding: '20px 16px', color: '#555', textAlign: 'center' }}>Connect a wallet to see your Hyperliquid {NETWORK} account</div>;
@@ -58,9 +187,13 @@ export function LivePositionTable() {
 
   return (
     <div data-testid="live-positions" style={box}>
+      {/* Summary and tabs stay in view while the panel body scrolls. */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 1, background: '#0d1117' }}>
       <div style={{ display: 'flex', gap: 24, padding: '8px 16px', borderBottom: '1px solid #1a1f2e', color: '#8a8f98', fontSize: 12, alignItems: 'center' }}>
-        <span>Account value: <b style={{ color: '#e1e4e8' }}>${fmt(accountValue)}</b></span>
-        <span>Withdrawable: <b style={{ color: '#e1e4e8' }}>${fmt(withdrawable)}</b></span>
+        <span>Account value: <b data-testid="live-account-value" style={{ color: '#e1e4e8' }}>${fmt(accountValue)}</b></span>
+        <span>Perps: <b style={{ color: '#e1e4e8' }}>${fmt(perpValue)}</b></span>
+        <span>Spot: <b style={{ color: '#e1e4e8' }}>${fmt(spotValue)}</b></span>
+        <span>Available: <b style={{ color: '#e1e4e8' }}>${fmt(withdrawable)}</b></span>
         <span>Margin used: <b style={{ color: '#e1e4e8' }}>${fmt(marginUsed)}</b></span>
         <span style={{ color: syncError ? '#f6465d' : '#555' }}>
           {syncError ? `Sync failed: ${syncError}` : lastSync ? `Synced ${new Date(lastSync).toLocaleTimeString()}` : 'Loading…'}
@@ -71,7 +204,17 @@ export function LivePositionTable() {
         )}
       </div>
 
-      <div style={{ display: 'flex' }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid #1a1f2e', paddingLeft: 4 }}>
+        {tabBtn('positions', `Positions (${positions.length}) / Orders (${openOrders.length})`)}
+        {tabBtn('history', 'Trade History')}
+        {tabBtn('balances', 'Balances')}
+      </div>
+      </div>
+
+      {tab === 'history' && <TradeHistory fills={fills} loaded={fillsLoaded} />}
+      {tab === 'balances' && <Balances />}
+
+      {tab === 'positions' && <div style={{ display: 'flex' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ padding: '8px 16px', fontWeight: 600, borderBottom: '1px solid #1a1f2e' }}>Positions</div>
           {positions.length === 0 ? (
@@ -160,7 +303,7 @@ export function LivePositionTable() {
             </table>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

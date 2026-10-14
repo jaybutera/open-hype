@@ -3,6 +3,7 @@ import { Wallet, getAddress, isAddress } from 'ethers';
 import { API_BASE } from '../config/constants.ts';
 import { IS_MAINNET, NETWORK } from '../services/hl/network.ts';
 import { postInfo } from '../services/api/client.ts';
+import { valueSpot, type RawSpotBalance } from '../services/hl/balances.ts';
 import { approveAgentTypedData, recoverApproveAgentSigner, splitSignature } from '../services/hl/signing.ts';
 import { submitApproveAgent, ExchangeError } from '../services/hl/exchange.ts';
 import {
@@ -35,6 +36,14 @@ interface RawSubAccount {
   name: string;
   subAccountUser: string;
   clearinghouseState?: { marginSummary?: { accountValue?: string } };
+  spotState?: { balances?: RawSpotBalance[] };
+}
+
+/** Perp account value plus spot holdings; unified accounts keep idle USDC in spot. */
+async function totalValue(perp: RawSubAccount['clearinghouseState'] | null, spot: RawSpotBalance[] | undefined): Promise<number | null> {
+  const pv = perp?.marginSummary?.accountValue;
+  if (pv == null && !spot) return null;
+  return parseFloat(pv ?? '0') + (spot ? await valueSpot(spot) : 0);
 }
 
 function loadSelectedSub(master: string): string | null {
@@ -107,7 +116,7 @@ interface WalletStore {
   subAccounts: SubAccount[];
   /** Selected sub-account address, or null to trade the master account. */
   subAccount: string | null;
-  /** Master account value (core perps), for the account selector. */
+  /** Master account value (perps plus spot), for the account selector. */
   masterValue: number | null;
   walletId: string | null;
   walletName: string | null;
@@ -276,23 +285,29 @@ export const useWalletStore = create<WalletStore>((set, get) => {
       if (!master) return;
       let raw: RawSubAccount[] | null;
       let masterState: RawSubAccount['clearinghouseState'] | null;
+      let masterSpot: RawSubAccount['spotState'] | null;
       try {
-        [raw, masterState] = await Promise.all([
+        [raw, masterState, masterSpot] = await Promise.all([
           postInfo<RawSubAccount[] | null>({ type: 'subAccounts', user: master }),
           postInfo<RawSubAccount['clearinghouseState']>({ type: 'clearinghouseState', user: master }).catch(() => null),
+          postInfo<RawSubAccount['spotState']>({ type: 'spotClearinghouseState', user: master }).catch(() => null),
         ]);
       } catch { return; }
+      const subs = Array.isArray(raw) ? raw : [];
+      const [masterValue, ...subValues] = await Promise.all([
+        totalValue(masterState, masterSpot?.balances),
+        ...subs.map(r => totalValue(r.clearinghouseState ?? null, r.spotState?.balances)),
+      ]);
       if (get().address !== master) return;
-      const subAccounts = (Array.isArray(raw) ? raw : []).map(r => ({
+      const subAccounts = subs.map((r, i) => ({
         name: r.name,
         address: getAddress(r.subAccountUser),
-        accountValue: parseFloat(r.clearinghouseState?.marginSummary?.accountValue ?? '0'),
+        accountValue: subValues[i] ?? 0,
       }));
       // Keep the current pick, else restore the stored one if it still belongs to this master.
       const want = get().subAccount ?? loadSelectedSub(master);
       const picked = subAccounts.find(a => a.address.toLowerCase() === want?.toLowerCase());
-      const mv = masterState?.marginSummary?.accountValue;
-      set({ subAccounts, subAccount: picked?.address ?? null, masterValue: mv != null ? parseFloat(mv) : null });
+      set({ subAccounts, subAccount: picked?.address ?? null, masterValue });
     },
 
     selectAccount: (sub) => {

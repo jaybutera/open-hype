@@ -19,6 +19,8 @@ export function Header() {
   const liveAddress = useWalletStore(s => s.address);
   const liveValue = useLiveAccountStore(s => s.accountValue);
   const liveWithdrawable = useLiveAccountStore(s => s.withdrawable);
+  const livePerp = useLiveAccountStore(s => s.perpValue);
+  const liveSpot = useLiveAccountStore(s => s.spotValue);
   const liveSyncError = useLiveAccountStore(s => s.syncError);
   const activePane = useMarketStore(s => s.panes[s.activePaneId] ?? s.panes.primary);
   const currentAsset = activePane?.asset ?? 'BTC';
@@ -162,7 +164,7 @@ export function Header() {
           {liveAddress && (
             <span
               data-testid="live-balance"
-              title={liveSyncError ? `Sync error: ${liveSyncError}` : `Withdrawable $${liveWithdrawable.toFixed(2)}`}
+              title={liveSyncError ? `Sync error: ${liveSyncError}` : `Perps $${livePerp.toFixed(2)} + Spot $${liveSpot.toFixed(2)}; available $${liveWithdrawable.toFixed(2)}`}
               style={{ fontSize: 13, color: liveSyncError ? '#f6465d' : '#0ecb81', fontWeight: 600, flexShrink: 0 }}
             >
               LIVE ${liveValue.toFixed(2)}

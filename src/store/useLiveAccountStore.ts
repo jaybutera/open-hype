@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { postInfo } from '../services/api/client.ts';
 import type { Side } from '../types/order.ts';
+import {
+  loadSpotPrices, needsSpotPrices, spotBalanceUsd, spotUsdcAvailable, type RawSpotState,
+} from '../services/hl/balances.ts';
 
 export interface LivePosition {
   coin: string;
@@ -30,6 +33,29 @@ export interface LiveOpenOrder {
   timestamp: number;
 }
 
+export interface LiveFill {
+  coin: string;
+  px: number;
+  sz: number;
+  side: Side;
+  time: number;
+  /** Hyperliquid's direction label, e.g. "Open Long", "Close Short". */
+  dir: string;
+  closedPnl: number;
+  fee: number;
+  feeToken: string;
+  oid: number;
+  tid: number;
+}
+
+export interface LiveSpotBalance { coin: string; token: number; total: number; hold: number; usdValue: number }
+export interface LivePerpSummary { dex: string; accountValue: number; marginUsed: number; withdrawable: number }
+
+interface RawFill {
+  coin: string; px: string; sz: string; side: 'A' | 'B'; time: number; dir: string;
+  closedPnl: string; fee: string; feeToken: string; oid: number; tid: number;
+}
+
 interface RawPosition {
   coin: string; szi: string; entryPx: string; positionValue: string; unrealizedPnl: string;
   returnOnEquity: string; liquidationPx: string | null; marginUsed: string;
@@ -49,13 +75,25 @@ interface RawOpenOrder {
 /** Builder-deployed dexes whose assets the app trades; each has its own clearinghouse. */
 export const LIVE_DEXES = ['', 'xyz'] as const;
 
+/** Most fills kept in memory; matches what a single `userFills` request returns. */
+const MAX_FILLS = 2000;
+
 interface LiveAccountStore {
   user: string | null;
+  /** Perps across all dexes plus spot, in USD. Unified accounts keep idle USDC in spot. */
   accountValue: number;
+  perpValue: number;
+  spotValue: number;
+  /** Perp withdrawable plus spot USDC that is free to move. */
   withdrawable: number;
   marginUsed: number;
+  perps: LivePerpSummary[];
+  spotBalances: LiveSpotBalance[];
   positions: LivePosition[];
   openOrders: LiveOpenOrder[];
+  /** Trade history, newest first, partial fills of one crossing order merged. */
+  fills: LiveFill[];
+  fillsLoaded: boolean;
   lastSync: number | null;
   syncError: string | null;
   refresh: (user: string) => Promise<void>;
@@ -63,8 +101,9 @@ interface LiveAccountStore {
 }
 
 const empty = {
-  user: null, accountValue: 0, withdrawable: 0, marginUsed: 0,
-  positions: [], openOrders: [], lastSync: null, syncError: null,
+  user: null, accountValue: 0, perpValue: 0, spotValue: 0, withdrawable: 0, marginUsed: 0,
+  perps: [], spotBalances: [], positions: [], openOrders: [], fills: [], fillsLoaded: false,
+  lastSync: null, syncError: null,
 };
 
 function toPosition(p: RawPosition): LivePosition {
@@ -90,28 +129,80 @@ function toOrder(o: RawOpenOrder): LiveOpenOrder {
   };
 }
 
+function toFill(f: RawFill): LiveFill {
+  return {
+    coin: f.coin, px: parseFloat(f.px), sz: parseFloat(f.sz), side: f.side === 'B' ? 'buy' : 'sell',
+    time: f.time, dir: f.dir, closedPnl: parseFloat(f.closedPnl), fee: parseFloat(f.fee),
+    feeToken: f.feeToken, oid: f.oid, tid: f.tid,
+  };
+}
+
+/** Merge fresh fills into the known list by trade id, newest first. */
+export function mergeFills(known: LiveFill[], fresh: LiveFill[]): LiveFill[] {
+  if (fresh.length === 0) return known;
+  const seen = new Set(known.map(f => f.tid));
+  const added = fresh.filter(f => !seen.has(f.tid));
+  if (added.length === 0) return known;
+  return [...added, ...known].sort((a, b) => b.time - a.time || b.tid - a.tid).slice(0, MAX_FILLS);
+}
+
 export const useLiveAccountStore = create<LiveAccountStore>((set, get) => ({
   ...empty,
   refresh: async (user) => {
     if (get().user !== user) set({ ...empty, user });
     try {
       const withDex = (dex: string) => (dex ? { dex } : {});
-      const [states, orders] = await Promise.all([
+      const { fills: knownFills, fillsLoaded } = get();
+      // First load pulls the latest fills; later polls only ask for what happened since the newest one.
+      const fillsReq = fillsLoaded
+        ? { type: 'userFillsByTime', user, startTime: knownFills[0]?.time ?? 0, aggregateByTime: true }
+        : { type: 'userFills', user, aggregateByTime: true };
+      const [states, orders, spot, rawFills] = await Promise.all([
         Promise.all(LIVE_DEXES.map(dex =>
           postInfo<RawClearinghouse>({ type: 'clearinghouseState', user, ...withDex(dex) }).catch(e => (dex ? null : Promise.reject(e))))),
         Promise.all(LIVE_DEXES.map(dex =>
           postInfo<RawOpenOrder[]>({ type: 'frontendOpenOrders', user, ...withDex(dex) }).catch(e => (dex ? [] : Promise.reject(e))))),
+        postInfo<RawSpotState>({ type: 'spotClearinghouseState', user }),
+        // History is secondary: a failed fetch keeps the old list instead of failing the sync.
+        postInfo<RawFill[]>(fillsReq).catch(() => null),
       ]);
+      const balances = Array.isArray(spot?.balances) ? spot.balances : [];
+      const prices = needsSpotPrices(balances) ? await loadSpotPrices().catch(() => undefined) : undefined;
       // Ignore a response that lands after the user switched accounts.
       if (get().user !== user) return;
+      const perps: LivePerpSummary[] = [];
+      states.forEach((s, i) => {
+        if (!s?.marginSummary) return;
+        perps.push({
+          dex: LIVE_DEXES[i],
+          accountValue: parseFloat(s.marginSummary.accountValue),
+          marginUsed: parseFloat(s.marginSummary.totalMarginUsed),
+          withdrawable: parseFloat(s.withdrawable ?? '0'),
+        });
+      });
       const valid = states.filter((s): s is RawClearinghouse => !!s && !!s.marginSummary);
+      const spotBalances = balances
+        .filter(b => parseFloat(b.total) !== 0)
+        .map(b => ({
+          coin: b.coin, token: b.token, total: parseFloat(b.total), hold: parseFloat(b.hold),
+          usdValue: spotBalanceUsd(b, prices),
+        }));
+      const perpValue = perps.reduce((a, p) => a + p.accountValue, 0);
+      const spotValue = spotBalances.reduce((a, b) => a + b.usdValue, 0);
       set({
         user,
-        accountValue: valid.reduce((a, s) => a + parseFloat(s.marginSummary.accountValue), 0),
-        marginUsed: valid.reduce((a, s) => a + parseFloat(s.marginSummary.totalMarginUsed), 0),
-        withdrawable: parseFloat(valid[0]?.withdrawable ?? '0'),
+        accountValue: perpValue + spotValue,
+        perpValue,
+        spotValue,
+        marginUsed: perps.reduce((a, p) => a + p.marginUsed, 0),
+        withdrawable: (perps[0]?.withdrawable ?? 0) + (spot ? spotUsdcAvailable({ ...spot, balances }) : 0),
+        perps,
+        spotBalances,
         positions: valid.flatMap(s => s.assetPositions.map(ap => toPosition(ap.position))).filter(p => p.szi !== 0),
         openOrders: orders.flat().map(toOrder).sort((a, b) => b.timestamp - a.timestamp),
+        ...(Array.isArray(rawFills)
+          ? { fills: mergeFills(fillsLoaded ? get().fills : [], rawFills.map(toFill)), fillsLoaded: true }
+          : {}),
         lastSync: Date.now(),
         syncError: null,
       });

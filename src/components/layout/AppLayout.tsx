@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { OrderConfirmModal } from '../modals/OrderConfirmModal.tsx';
 import { JournalCapture } from '../journal/JournalCapture.tsx';
 import { ReplayControls } from '../replay/ReplayControls.tsx';
+import { ResizableBottom } from './ResizableBottom.tsx';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 
@@ -48,7 +49,9 @@ export function AppLayout({ engine }: Props) {
         <OrderPanel engine={engine} />
       </div>
 
-      {mode === 'live' ? <LivePositionTable /> : <PositionTable engine={engine} />}
+      <ResizableBottom>
+        {mode === 'live' ? <LivePositionTable /> : <PositionTable engine={engine} />}
+      </ResizableBottom>
 
       <OrderConfirmModal engine={engine} />
       <JournalCapture />

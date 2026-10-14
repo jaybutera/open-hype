@@ -236,6 +236,24 @@ describe('sub-accounts', () => {
     expect(localStorage.getItem(`hl-subaccount:mainnet:${user.address.toLowerCase()}`)).toBeNull();
   });
 
+  it('account values include spot balances, so idle unified accounts are not $0', async () => {
+    stubHyperliquidFetch({
+      info: b => (b.type === 'subAccounts' ? [{
+        name: 'daybias', subAccountUser: subA.toLowerCase(), master: user.address,
+        clearinghouseState: { marginSummary: { accountValue: '0.0' } },
+        spotState: { balances: [{ coin: 'USDC', token: 0, total: '1721.084653', hold: '0.0' }] },
+      }]
+        : b.type === 'clearinghouseState' ? { marginSummary: { accountValue: '0.0', totalMarginUsed: '0' }, withdrawable: '0', assetPositions: [] }
+        : b.type === 'spotClearinghouseState' ? { balances: [{ coin: 'USDC', token: 0, total: '260.896634', hold: '0.0' }] }
+        : undefined),
+    });
+    await useWalletStore.getState().connectBrowser('injected');
+    await flush();
+    const s = useWalletStore.getState();
+    expect(s.masterValue).toBeCloseTo(260.896634, 6);
+    expect(s.subAccounts[0].accountValue).toBeCloseTo(1721.084653, 6);
+  });
+
   it('ignores addresses that are not sub-accounts of this master', async () => {
     stub();
     await useWalletStore.getState().connectBrowser('injected');
