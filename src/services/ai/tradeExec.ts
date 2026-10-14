@@ -184,7 +184,6 @@ async function cancelReplaced(coin: string, mode: 'paper' | 'live', oid: OrderId
   // TP/SL linked to the replaced entry would otherwise outlive it.
   const children = useAccountStore.getState().paperOrders.filter(o => o.parentOid === String(oid)).map(o => o.id);
   const ok = engine?.cancelOrder(String(oid)) ?? false;
-  for (const id of children) engine?.cancelOrder(id);
   const extra = children.length ? ` (and its TP/SL ${children.map(c => `#${c}`).join(', ')})` : '';
   return { ok, message: `${first.message} | cancel #${oid}: ${ok ? `cancelled${extra}` : 'not found'}` };
 }
@@ -253,10 +252,14 @@ async function runPaper(a: TradeAction): Promise<TradeResult> {
       return cancelReplaced(a.coin, 'paper', a.replaceOid, paperTpsl(a));
     case 'cancel': {
       const targets = a.oids === 'all' ? ordersOn(a.coin, 'paper') : a.oids.map(o => findTarget(a.coin, 'paper', o));
-      const missed = targets.filter(o => !engine.cancelOrder(String(o.oid)));
+      const before = engine.getOpenOrders();
+      const children = before.filter(o => o.parentOid !== undefined && targets.some(t => String(t.oid) === o.parentOid));
+      // A target already gone as the TP/SL of an earlier target counts as cancelled.
+      const missed = targets.filter(o => !engine.cancelOrder(String(o.oid)) && !children.some(c => c.id === String(o.oid)));
+      const extra = children.filter(c => !targets.some(t => String(t.oid) === c.id));
       return missed.length
         ? { ok: false, message: `not found: ${missed.map(o => `#${o.oid}`).join(', ')}` }
-        : { ok: true, message: `Cancelled ${targets.length} order${targets.length === 1 ? '' : 's'}` };
+        : { ok: true, message: `Cancelled ${targets.length} order${targets.length === 1 ? '' : 's'}${extra.length ? ` (and TP/SL ${extra.map(c => `#${c.id}`).join(', ')})` : ''}` };
     }
     case 'close': {
       const r = engine.marketClose(a.coin, String(mid(a.coin)));

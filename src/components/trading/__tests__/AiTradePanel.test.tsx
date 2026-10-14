@@ -222,4 +222,17 @@ describe('executeTrade in paper', () => {
       ['limit', null, 58800], ['trigger', 'sl', 58000],
     ]);
   });
+
+  it('cancelling an entry by oid also cancels its TP and SL', async () => {
+    await executeTrade(proposal({ kind: 'order', coin: 'BTC', side: 'buy', orderType: 'limit', price: 59000, size: 0.01, sl: 58000, tp: 61000 }));
+    await executeTrade(proposal({ kind: 'order', coin: 'BTC', side: 'buy', orderType: 'limit', price: 58500, size: 0.01, sl: 57500, tp: 60500 }));
+    const [a, aTp, aSl, ...keep] = useAccountStore.getState().paperOrders.map(o => o.id);
+    const r = await executeTrade(proposal({ kind: 'cancel', coin: 'BTC', oids: [a] }));
+    expect(r).toEqual({ ok: true, message: `Cancelled 1 order (and TP/SL #${aTp}, #${aSl})` });
+    expect(useAccountStore.getState().paperOrders.map(o => o.id)).toEqual(keep);
+
+    const all = await executeTrade(proposal({ kind: 'cancel', coin: 'BTC', oids: 'all' }));
+    expect(all).toEqual({ ok: true, message: 'Cancelled 3 orders' });
+    expect(useAccountStore.getState().paperOrders).toEqual([]);
+  });
 });

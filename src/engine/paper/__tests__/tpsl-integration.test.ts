@@ -168,6 +168,52 @@ describe('store integration', () => {
     });
   });
 
+  describe('cancelling an entry cancels its attached TP/SL', () => {
+    function placeEntry(price: string, tp: string, sl: string) {
+      const entry = engine.placeOrder({
+        coin: 'BTC', side: 'buy', price, size: '0.1',
+        reduceOnly: false, orderType: { limit: { tif: 'Gtc' } },
+      }).oid as string;
+      const tpOid = engine.placeOrder({
+        coin: 'BTC', side: 'sell', price: tp, size: '0.1', reduceOnly: false,
+        orderType: { trigger: { isMarket: true, triggerPx: tp, tpsl: 'tp' } },
+        parentOid: entry,
+      }).oid as string;
+      const slOid = engine.placeOrder({
+        coin: 'BTC', side: 'sell', price: sl, size: '0.1', reduceOnly: false,
+        orderType: { trigger: { isMarket: true, triggerPx: sl, tpsl: 'sl' } },
+        parentOid: entry,
+      }).oid as string;
+      return [entry, tpOid, slOid];
+    }
+
+    beforeEach(() => {
+      engine.onPriceUpdate('BTC', '50000');
+    });
+
+    it('cancel by oid removes the entry, its TP and its SL', () => {
+      const [entry] = placeEntry('49000', '51000', '48000');
+      expect(engine.cancelOrder(entry)).toBe(true);
+      expect(engine.getOpenOrders()).toHaveLength(0);
+      expect(storeState().orders).toHaveLength(0);
+    });
+
+    it('cancelling one entry leaves another entry and its TP/SL untouched', () => {
+      const [entryA] = placeEntry('49000', '51000', '48000');
+      const keep = placeEntry('48500', '50500', '47500');
+      engine.cancelOrder(entryA);
+      expect(engine.getOpenOrders().map(o => o.id).sort()).toEqual([...keep].sort());
+      expect(storeState().orders.map(o => o.id).sort()).toEqual([...keep].sort());
+    });
+
+    it('cancelAllOrders for the coin removes entries and children', () => {
+      placeEntry('49000', '51000', '48000');
+      placeEntry('48500', '50500', '47500');
+      engine.cancelAllOrders('BTC');
+      expect(engine.getOpenOrders()).toHaveLength(0);
+    });
+  });
+
   it('margin rejection at placement time', () => {
     // 100 BTC × 50000 / 10 = 500k margin
     const result = engine.placeOrder({

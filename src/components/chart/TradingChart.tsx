@@ -522,6 +522,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     const ord = paperOrders.find(o => o.id === orderId);
     if (!ord) return;
 
+    // Cancelling the entry also cancels its TP/SL; re-attach them to the moved entry below.
+    const children = paperOrders.filter(o => o.parentOid === orderId);
     engine.cancelOrder(orderId);
 
     const isLimit = ord.type === 'limit';
@@ -535,14 +537,27 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           },
         };
 
-    engine.placeOrder({
+    const placed = engine.placeOrder({
       coin: ord.coin,
       side: ord.side,
       price: isLimit ? newPrice.toFixed(2) : ord.price.toString(),
       size: ord.size.toString(),
       reduceOnly: ord.reduceOnly,
       orderType,
+      ...(ord.parentOid ? { parentOid: ord.parentOid } : {}),
     });
+    if (!placed.success) return;
+    for (const c of children) {
+      engine.placeOrder({
+        coin: c.coin,
+        side: c.side,
+        price: c.price.toString(),
+        size: c.size.toString(),
+        reduceOnly: c.reduceOnly,
+        orderType: { trigger: { isMarket: c.isMarket ?? true, triggerPx: c.triggerPx!.toString(), tpsl: c.tpsl ?? 'sl' } },
+        parentOid: String(placed.oid),
+      });
+    }
   }, [engine, paperOrders]);
 
   // Manage order line primitives — only orders for this pane's asset

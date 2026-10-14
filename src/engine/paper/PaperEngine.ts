@@ -206,10 +206,10 @@ export class PaperEngine {
     return { success: true, oid };
   }
 
+  /** Cancel an order and the TP/SL attached to it (parentOid), which would otherwise go live with no entry. */
   cancelOrder(orderId: string): boolean {
-    const idx = this.openOrders.findIndex(o => o.id === orderId);
-    if (idx === -1) return false;
-    this.openOrders.splice(idx, 1);
+    if (!this.openOrders.some(o => o.id === orderId)) return false;
+    this.openOrders = this.openOrders.filter(o => o.id !== orderId && o.parentOid !== orderId);
     this.emitUpdate();
     return true;
   }
