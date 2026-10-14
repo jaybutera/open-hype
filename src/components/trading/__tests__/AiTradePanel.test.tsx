@@ -126,7 +126,7 @@ describe('AiTradePanel', () => {
     expect(net.exchangeCalls().map(c => c.action.type)).toEqual(['order']);
   });
 
-  it('live: auto-confirm runs a cancel of entry orders without a click', async () => {
+  it('live: auto-run cancels without a click', async () => {
     const net = stubNet(b => (b.action.type === 'cancel'
       ? { status: 'ok', response: { type: 'cancel', data: { statuses: ['success'] } } }
       : { status: 'ok', response: { type: 'default' } }));
@@ -141,18 +141,41 @@ describe('AiTradePanel', () => {
     expect(net.exchangeCalls().map(c => c.action)).toEqual([{ type: 'cancel', cancels: [{ a: 0, o: 7 }] }]);
   });
 
-  it('live: auto-confirm leaves a cancel of the stop for the user', async () => {
+  it('live: auto-run sends a new order without a click', async () => {
+    const net = stubNet(b => (b.action.type === 'order'
+      ? { status: 'ok', response: { type: 'order', data: { statuses: [{ resting: { oid: 43 } }] } } }
+      : { status: 'ok', response: { type: 'default' } }));
+    act(() => useWalletStore.getState().connectApiKey(new Wallet('0x' + '66'.repeat(32)).privateKey, user.address));
+    useSettingsStore.setState({ mode: 'live' });
+    useAiTradeStore.setState({ autoConfirm: true });
+    act(() => useAiTradeStore.getState().receive([proposal(
+      { kind: 'order', coin: 'BTC', side: 'sell', orderType: 'limit', price: 61000, size: 0.002 }, { mode: 'live' },
+    )]));
+    render(<AiTradePanel />);
+    await waitFor(() => expect(net.ai.map(c => c.url)).toEqual(['/api/ai/trades/claim?id=t1', '/api/ai/trades/result?id=t1']));
+    expect(net.ai[1].body).toEqual({ ok: true, message: 'resting #43' });
+  });
+
+  it('with auto-run off, nothing is sent until Confirm', async () => {
     const net = stubNet();
     act(() => useWalletStore.getState().connectApiKey(new Wallet('0x' + '66'.repeat(32)).privateKey, user.address));
     useSettingsStore.setState({ mode: 'live' });
     useLiveAccountStore.setState({ openOrders: [liveOrder({ oid: 8, isTrigger: true, orderType: 'Stop Market', triggerPx: '58000', reduceOnly: true })] });
-    useAiTradeStore.setState({ autoConfirm: true });
     act(() => useAiTradeStore.getState().receive([proposal({ kind: 'cancel', coin: 'BTC', oids: [8] }, { mode: 'live' })]));
     render(<AiTradePanel />);
     expect(await screen.findByText(/position loses that protection/)).toBeInTheDocument();
     await act(() => new Promise(r => setTimeout(r, 20)));
     expect(net.ai).toHaveLength(0);
     expect(net.exchangeCalls()).toHaveLength(0);
+  });
+
+  it('auto-run defaults on and remembers being turned off', () => {
+    localStorage.clear();
+    act(() => useAiTradeStore.getState().setAutoConfirm(false));
+    expect(localStorage.getItem('hl-ai-trade-autorun')).toBe('0');
+    act(() => useAiTradeStore.getState().receive([proposal({ kind: 'close', coin: 'BTC' }, { status: 'done', decidedAt: Date.now() })]));
+    render(<AiTradePanel />);
+    expect(screen.getByLabelText("Run Claude's trades without confirming")).not.toBeChecked();
   });
 
   it('lists finished proposals with their outcome', () => {
@@ -167,30 +190,20 @@ describe('AiTradePanel', () => {
   });
 });
 
-describe('previewTrade risk classification', () => {
+describe('previewTrade', () => {
   beforeEach(() => {
     stubNet();
-    // Paper long 0.1 BTC from 59000, stop at 58000.
+    // Paper long 0.1 BTC from 60000.
     engine.placeOrder({ coin: 'BTC', side: 'buy', price: '60000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Ioc' } } });
     engine.onPriceUpdate('BTC', '60000');
-    engine.placeOrder({ coin: 'BTC', side: 'sell', price: '58000', size: '0.1', reduceOnly: true, orderType: { trigger: { isMarket: true, triggerPx: '58000', tpsl: 'sl' } } });
-  });
-
-  const stopId = () => useAccountStore.getState().paperOrders.find(o => o.tpsl === 'sl')!.id;
-
-  it('a tighter stop is risk-reducing, a looser one is not', async () => {
-    expect((await previewTrade(proposal({ kind: 'tpsl', coin: 'BTC', tpsl: 'sl', price: 59000, replaceOid: stopId() }))).riskReducing).toBe(true);
-    expect((await previewTrade(proposal({ kind: 'tpsl', coin: 'BTC', tpsl: 'sl', price: 57000, replaceOid: stopId() }))).riskReducing).toBe(false);
-    expect((await previewTrade(proposal({ kind: 'tpsl', coin: 'BTC', tpsl: 'tp', price: 62000 }))).riskReducing).toBe(false);
   });
 
   it('rejects a stop on the wrong side of the mid', async () => {
     await expect(previewTrade(proposal({ kind: 'tpsl', coin: 'BTC', tpsl: 'sl', price: 61000 }))).rejects.toThrow(/wrong side of 60000 for a long/);
   });
 
-  it('a close is risk-reducing; new entries never are', async () => {
-    expect((await previewTrade(proposal({ kind: 'close', coin: 'BTC' }))).riskReducing).toBe(true);
-    expect((await previewTrade(proposal({ kind: 'order', coin: 'BTC', side: 'buy', orderType: 'market', sizeUsd: 600 }))).riskReducing).toBe(false);
+  it('describes a close of the open position', async () => {
+    expect((await previewTrade(proposal({ kind: 'close', coin: 'BTC' }))).lines).toEqual(['Market close BTC long 0.1 (mid 60000)']);
   });
 });
 

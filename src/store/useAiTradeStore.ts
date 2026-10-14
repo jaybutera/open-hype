@@ -1,16 +1,17 @@
 import { create } from 'zustand';
 import type { TradeProposal, TradeResult } from '../services/ai/trades.ts';
 
-const AUTO_KEY = 'hl-ai-trade-auto';
+const AUTO_KEY = 'hl-ai-trade-autorun';
 
+/** On unless the user turned it off. */
 function loadAuto(): boolean {
-  try { return localStorage.getItem(AUTO_KEY) === '1'; } catch { return false; }
+  try { return localStorage.getItem(AUTO_KEY) !== '0'; } catch { return true; }
 }
 
 interface AiTradeStore {
   /** Proposals known to the dev server, open and recently finished. */
   trades: TradeProposal[];
-  /** Run risk-reducing proposals (closes, entry cancels, tighter stops) without a click. */
+  /** Run every proposal (paper and live) as soon as it arrives, without a click. */
   autoConfirm: boolean;
   receive: (trades: TradeProposal[]) => void;
   setAutoConfirm: (on: boolean) => void;

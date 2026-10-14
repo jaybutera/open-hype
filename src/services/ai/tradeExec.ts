@@ -26,8 +26,6 @@ export interface TradePreview {
   lines: string[];
   /** Live orders: the exact signed payload, rendered with LiveOrderConfirm. */
   prepared?: PreparedOrder;
-  /** Closes, entry cancels and new or tighter stops; auto-confirm may run these. */
-  riskReducing: boolean;
 }
 
 /** An order as both modes describe it, for cancels and replacements. */
@@ -132,7 +130,7 @@ export async function previewTrade(t: TradeProposal): Promise<TradePreview> {
           coin: a.coin, side: a.side, size, kind: a.orderType, price: a.price, tif: a.tif,
           reduceOnly: a.reduceOnly, tp: a.tp, sl: a.sl, leverage: a.leverage,
         });
-        return { lines, prepared, riskReducing: false };
+        return { lines, prepared };
       }
       checkBracket(a.side === 'buy', refPx, a.tp, a.sl);
       if (a.reduceOnly && positionSize(a.coin, 'paper') === 0) throw new Error(`No ${a.coin} position to reduce`);
@@ -142,7 +140,7 @@ export async function previewTrade(t: TradeProposal): Promise<TradePreview> {
         `≈ $${(lot * refPx).toFixed(2)}${a.tp !== undefined ? ` · TP ${a.tp}` : ''}${a.sl !== undefined ? ` · SL ${a.sl}` : ''}`,
       );
       if (a.leverage !== undefined) lines.push(`Leverage ${a.leverage}x is ignored in paper; the app setting applies`);
-      return { lines, riskReducing: false };
+      return { lines };
     }
     case 'tpsl': {
       const szi = positionSize(a.coin, t.mode);
@@ -154,9 +152,7 @@ export async function previewTrade(t: TradeProposal): Promise<TradePreview> {
       if (replaced && !replaced.reduceOnly && !replaced.tpsl) throw new Error(`#${replaced.oid} is not a TP/SL order`);
       lines.push(`${a.tpsl.toUpperCase()} ${a.coin} ${isLong ? 'long' : 'short'} ${Math.abs(szi)} at ${a.price} (market, reduce-only; mid ${m})`);
       if (replaced) lines.push(`Then cancels ${replaced.label}`);
-      // A new stop always cuts risk; a moved stop only when it is tighter.
-      const riskReducing = a.tpsl === 'sl' && (!replaced || (isLong ? a.price >= replaced.price : a.price <= replaced.price));
-      return { lines, riskReducing };
+      return { lines };
     }
     case 'cancel': {
       const all = ordersOn(a.coin, t.mode);
@@ -164,13 +160,13 @@ export async function previewTrade(t: TradeProposal): Promise<TradePreview> {
       if (!targets.length) throw new Error(`No open ${a.coin} orders`);
       lines.push(...targets.map(o => `Cancel ${o.label}`));
       if (targets.some(o => o.reduceOnly || o.tpsl)) lines.push('Includes TP/SL orders: the position loses that protection.');
-      return { lines, riskReducing: targets.every(o => !o.reduceOnly && !o.tpsl) };
+      return { lines };
     }
     case 'close': {
       const szi = positionSize(a.coin, t.mode);
       if (szi === 0) throw new Error(`No open ${a.coin} position`);
       lines.push(`Market close ${a.coin} ${szi > 0 ? 'long' : 'short'} ${Math.abs(szi)} (mid ${mid(a.coin)})`);
-      return { lines, riskReducing: true };
+      return { lines };
     }
   }
 }

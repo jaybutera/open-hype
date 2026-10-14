@@ -73,7 +73,7 @@ function ProposalCard({ trade }: { trade: TradeProposal }) {
   };
 
   useEffect(() => {
-    if (!autoConfirm || !pending || busy || autoTried.current || !preview?.riskReducing) return;
+    if (!autoConfirm || !pending || busy || autoTried.current || !preview) return;
     autoTried.current = true;
     void run('auto');
   });
@@ -147,9 +147,10 @@ function cardStyle(isLive: boolean) {
 }
 
 /**
- * Trades proposed by the AI (propose_* tools of the hl-chart MCP). Nothing is
- * sent until the user confirms a card, except risk-reducing proposals when
- * auto-confirm is on. The result goes back to the AI session that proposed it.
+ * Trades proposed by the AI (propose_* tools of the hl-chart MCP). With
+ * auto-run on (the default) each proposal runs as soon as it can, paper or
+ * live; with it off, each waits for Confirm. The result goes back to the AI
+ * session that proposed it.
  */
 export function AiTradePanel() {
   const trades = useAiTradeStore(s => s.trades);
@@ -176,11 +177,11 @@ export function AiTradePanel() {
     <div data-testid="ai-trade-panel" style={{ borderTop: '1px solid #1a1f2e', paddingTop: 8, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span style={{ fontSize: 11, color: '#8a8f98', fontWeight: 600 }}>Claude trades</span>
       <label
-        title="Run closes, cancels of entry orders, and new or tighter stops without a click. Everything else still waits for Confirm."
+        title="Send Claude's proposals (paper and live) as soon as they arrive. Off: each waits for Confirm."
         style={{ fontSize: 10, color: '#8a8f98', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
       >
         <input type="checkbox" checked={autoConfirm} onChange={e => setAutoConfirm(e.target.checked)} style={{ margin: 0 }} />
-        Auto-confirm risk-reducing actions
+        Run Claude's trades without confirming
       </label>
       {open.map(t => <ProposalCard key={t.id} trade={t} />)}
       {recent.map(t => (

@@ -208,11 +208,12 @@ const PROPOSE_COMMON = {
 };
 const OID = { oneOf: [{ type: 'integer' }, { type: 'string' }], description: 'Order id from get_chart_view orders[].oid.' };
 const PROPOSE_NOTE = [
-  'Nothing is sent by this call: the proposal appears as a confirm card in the app (under the Buy/Sell button) and the',
-  "user clicks Confirm, which signs it in the browser with the key the page holds. The response includes `wait`, a command:",
-  'run it with Bash run_in_background so this session wakes with the outcome (done/failed with the exchange response, rejected,',
-  'expired). Confirmed orders show on the chart and in the positions/orders tables like hand-placed ones; call get_chart_view',
-  'after the outcome to see them. Read `warnings` (e.g. no chart open, app in the other mode).',
+  'The proposal goes to the open app, which signs it in the browser with the key it holds (live) or runs it on the paper engine',
+  '(paper). By default the app sends it as soon as it arrives, with no confirm click; the user can switch that off, and then a',
+  'confirm card waits under the Buy/Sell button. Treat every call as an order that will be sent. The response includes `wait`, a',
+  'command: run it with Bash run_in_background so this session wakes with the outcome (done/failed with the exchange response,',
+  'rejected, expired). Orders show on the chart and in the positions/orders tables like hand-placed ones; call get_chart_view',
+  'after the outcome to see them. Read `warnings` (e.g. no chart open, app in the other mode: it will not run until the user switches).',
 ].join(' ');
 
 const TRADE_TOOLS = [
@@ -375,7 +376,7 @@ async function callTool(name, args = {}) {
     return textResult({
       ...json,
       wait,
-      note: `Not sent yet: the user has to confirm the card in the app. Now run \`${wait}\` with Bash run_in_background (cwd: this repo) so this session wakes with the outcome.`,
+      note: `The app sends it as soon as it can (unless the user turned auto-run off). Now run \`${wait}\` with Bash run_in_background (cwd: this repo) so this session wakes with the outcome.`,
     });
   }
   if (name === 'withdraw_proposal') {
@@ -403,7 +404,7 @@ async function handle(msg) {
           protocolVersion: params?.protocolVersion || '2025-06-18',
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: 'Reads the user\'s open Hyperliquid chart (get_chart_view), pushes toggleable overlay sets onto it (push_overlays), arms price alerts (set_alert) that wake this session when they fire, and proposes trades (propose_order, propose_tpsl, propose_cancel, propose_close) that the user confirms in the app before the page signs and sends them.',
+          instructions: 'Reads the user\'s open Hyperliquid chart (get_chart_view), pushes toggleable overlay sets onto it (push_overlays), arms price alerts (set_alert) that wake this session when they fire, and places trades through the open app (propose_order, propose_tpsl, propose_cancel, propose_close), which signs and sends them, by default without a confirm click.',
         });
       case 'notifications/initialized':
       case 'notifications/cancelled':
