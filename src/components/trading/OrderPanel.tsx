@@ -9,7 +9,6 @@ import { useWalletStore } from '../../store/useWalletStore.ts';
 import { prepareOrder, submitPrepared, type LiveOrderInput, type PreparedOrder } from '../../services/hl/liveTrader.ts';
 import { LiveOrderConfirm } from './LiveOrderConfirm.tsx';
 import { AiOverlayPanel } from './AiOverlayPanel.tsx';
-import { GexPanel } from './GexPanel.tsx';
 import { AiTradePanel } from './AiTradePanel.tsx';
 import { AlertPanel } from './AlertPanel.tsx';
 
@@ -528,7 +527,6 @@ export function OrderPanel({ engine }: Props) {
 
       <AiTradePanel />
       <AiOverlayPanel />
-      <GexPanel />
       <AlertPanel />
     </div>
   );

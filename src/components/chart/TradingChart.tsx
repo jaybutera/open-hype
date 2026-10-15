@@ -20,6 +20,7 @@ import type { SnapshotCandle, OverlaySet } from '../../services/ai/types.ts';
 import { useAlertStore } from '../../store/useAlertStore.ts';
 import { alertLine } from '../../services/ai/alerts.ts';
 import { GexPrimitive } from './GexPrimitive.ts';
+import { GexToolbar } from './GexToolbar.tsx';
 import { useGexStore } from '../../store/useGexStore.ts';
 import { useGexFeed } from '../../services/gex/useGexFeed.ts';
 import { gexLevelSet } from '../../services/gex/levels.ts';
@@ -849,6 +850,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
             Clear Fibs
           </button>
         )}
+        <GexToolbar ticker={gexTicker} />
         <span style={{ marginLeft: 'auto', fontSize: 11, color: fibMode ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
           {fibMode
             ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')
