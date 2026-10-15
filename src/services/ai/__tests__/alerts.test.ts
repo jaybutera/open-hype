@@ -19,9 +19,9 @@ describe('validateAlert', () => {
     expect(validateAlert({ level: 82000, direction: 'above', force: true }, ctx).status).toBe('armed');
   });
 
-  it('needs a direction when the mid is unknown', () => {
-    expect(() => validateAlert({ level: 1 }, { ...ctx, mid: null })).toThrow(/direction is required/);
-    expect(validateAlert({ level: 1, direction: 'below' }, { ...ctx, mid: null }).refPrice).toBeNull();
+  it('refuses to arm without a current mid, so refPrice is never null', () => {
+    expect(() => validateAlert({ level: 1 }, { ...ctx, mid: null })).toThrow(/no current price for BTC/);
+    expect(() => validateAlert({ level: 1, direction: 'below' }, { ...ctx, mid: null })).toThrow(AlertValidationError);
   });
 
   it('needs an asset when there is no chart to default from', () => {

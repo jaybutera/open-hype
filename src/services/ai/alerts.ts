@@ -25,7 +25,7 @@ export interface Alert {
   note?: string;
   source: AlertSource;
   createdAt: number;
-  /** Mid when the alert was armed, if known. */
+  /** Mid when the alert was armed. New alerts always have one; null only on alerts stored before that rule. */
   refPrice: number | null;
   status: AlertStatus;
   firedAt?: number;
@@ -55,7 +55,7 @@ export interface AlertContext {
   id: string;
   /** Asset to use when the input has none (the charted asset). */
   defaultAsset: string | null;
-  /** Current mid for the asset, if known. */
+  /** Current mid for the asset. Arming is refused when it is null. */
   mid: number | null;
   now?: number;
   source?: AlertSource;
@@ -76,11 +76,13 @@ export function validateAlert(raw: unknown, ctx: AlertContext): Alert {
   if (!assetRaw) throw new AlertValidationError('asset is required (no chart connected to default from)');
   const asset = assetRaw;
 
-  let direction = input.direction;
-  if (direction === undefined) {
-    if (ctx.mid === null) throw new AlertValidationError('direction is required when the current mid is unknown');
-    direction = level > ctx.mid ? 'above' : 'below';
+  const mid = ctx.mid;
+  if (mid === null || !Number.isFinite(mid)) {
+    throw new AlertValidationError(`no current price for ${asset}: could not fetch a mid, so the alert was not armed`);
   }
+
+  let direction = input.direction;
+  if (direction === undefined) direction = level > mid ? 'above' : 'below';
   if (direction !== 'above' && direction !== 'below') throw new AlertValidationError('direction must be "above" or "below"');
 
   let interval: string | undefined;
@@ -107,14 +109,14 @@ export function validateAlert(raw: unknown, ctx: AlertContext): Alert {
     note,
     source: (input.source === 'ui' || input.source === 'mcp') ? input.source : (ctx.source ?? 'mcp'),
     createdAt: ctx.now ?? Date.now(),
-    refPrice: ctx.mid,
+    refPrice: mid,
     status: 'armed',
   };
 
-  if (kind === 'cross' && ctx.mid !== null && !input.force && crossSatisfied(alert, ctx.mid)) {
+  if (kind === 'cross' && !input.force && crossSatisfied(alert, mid)) {
     const other = direction === 'above' ? 'below' : 'above';
     throw new AlertValidationError(
-      `level ${level} is already ${direction} the mid ${ctx.mid}: nothing to wait for. ` +
+      `level ${level} is already ${direction} the mid ${mid}: nothing to wait for. ` +
       `Use direction "${other}", or force: true to fire on the next tick.`,
     );
   }

@@ -8,13 +8,44 @@ import {
 /**
  * Watches Hyperliquid prices for armed alerts. Dev server only (used by
  * vite-ai-plugin.ts). Keeps one websocket open while anything is armed,
- * subscribed to allMids for cross alerts and to one candle stream per
- * (asset, interval) for close alerts. Alerts persist to a JSON file so a
- * dev server restart keeps them.
+ * subscribed to allMids once per perp dex that has a cross alert (the
+ * default allMids feed carries only the main dex; HIP-3 coins such as
+ * "xyz:SP500" need `dex: "xyz"`) and to one candle stream per
+ * (asset, interval) for close alerts. Alerts persist to a JSON file and the
+ * constructor reconnects for them, so a dev server restart keeps them armed.
+ * A ping every 30s and a watchdog that reopens a socket silent for 60s keep a
+ * half-dead connection from hiding missed ticks.
  */
 const WS_URL = 'wss://api.hyperliquid.xyz/ws';
+const INFO_URL = 'https://api.hyperliquid.xyz/info';
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
+const PING_MS = 30_000;
+const SILENT_MS = 60_000;
+/** A feed mid older than this is not trusted as an alert's refPrice. */
+const MID_FRESH_MS = 15_000;
+
+/** Perp dex of a coin: "" for the main dex, "xyz" for "xyz:SP500". */
+export function dexOf(asset: string): string {
+  const i = asset.indexOf(':');
+  return i > 0 ? asset.slice(0, i) : '';
+}
+
+/** Subscription key; '|' separates fields because HIP-3 coins contain ':'. */
+export function midsKey(dex: string): string { return `mids|${dex}`; }
+export function candleKey(coin: string, interval: string): string { return `candle|${coin}|${interval}`; }
+
+export function subscriptionFor(key: string): Record<string, unknown> {
+  const [kind, a, b] = key.split('|');
+  if (kind === 'mids') return a ? { type: 'allMids', dex: a } : { type: 'allMids' };
+  return { type: 'candle', coin: a, interval: b };
+}
+
+export interface AlertEngineDeps {
+  WebSocket?: typeof WebSocket;
+  fetch?: typeof fetch;
+  now?: () => number;
+}
 
 type Listener = (alerts: Alert[], fired: Alert | null) => void;
 
@@ -25,16 +56,26 @@ export class AlertEngine {
   private ws: WebSocket | null = null;
   private wanted = new Set<string>();
   private active = new Set<string>();
-  private mids: Record<string, number> = {};
+  private mids: Record<string, { px: number; at: number }> = {};
   private lastBar = new Map<string, { t: number; c: number }>();
   private listeners = new Set<Listener>();
   private waiters = new Map<string, Set<(a: Alert) => void>>();
   private reconnectDelay = RECONNECT_MIN_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private seq = 0;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private lastMsgAt = 0;
+  private WS: typeof WebSocket;
+  private fetchFn: typeof fetch;
+  private now: () => number;
 
-  constructor(private file: string, private log: (msg: string) => void = () => {}) {
+  constructor(private file: string, private log: (msg: string) => void = () => {}, deps: AlertEngineDeps = {}) {
+    this.WS = deps.WebSocket ?? globalThis.WebSocket;
+    this.fetchFn = deps.fetch ?? globalThis.fetch.bind(globalThis);
+    this.now = deps.now ?? Date.now;
     this.load();
+    const armed = this.alerts.filter(a => a.status === 'armed').length;
+    if (armed) this.log(`loaded ${armed} armed alert(s) from ${this.file}`);
     this.sync();
   }
 
@@ -47,7 +88,31 @@ export class AlertEngine {
 
   /** Current mid for an asset if the feed has seen one. */
   mid(asset: string): number | null {
-    return this.mids[asset] ?? null;
+    return this.mids[asset]?.px ?? null;
+  }
+
+  /** A fresh mid: the feed's if it is recent, else one fetched from the info API; null if neither works. */
+  async freshMid(asset: string): Promise<number | null> {
+    const m = this.mids[asset];
+    if (m && this.now() - m.at < MID_FRESH_MS) return m.px;
+    const dex = dexOf(asset);
+    try {
+      const res = await this.fetchFn(INFO_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(dex ? { type: 'allMids', dex } : { type: 'allMids' }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const mids = await res.json() as Record<string, string>;
+      const px = parseFloat(mids?.[asset]);
+      if (!Number.isFinite(px)) return null;
+      this.mids[asset] = { px, at: this.now() };
+      return px;
+    } catch (e) {
+      this.log(`mid fetch for ${asset} failed: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   /** Validate and arm. An identical armed alert is returned instead of duplicated. */
@@ -108,31 +173,71 @@ export class AlertEngine {
     const next = new Set<string>();
     for (const a of this.alerts) {
       if (a.status !== 'armed') continue;
-      next.add(a.kind === 'cross' ? 'allMids' : `candle:${a.asset}:${a.interval}`);
+      next.add(a.kind === 'cross' ? midsKey(dexOf(a.asset)) : candleKey(a.asset, a.interval ?? ''));
     }
     this.wanted = next;
     if (next.size === 0) { this.dropSocket(); return; }
     if (!this.ws) { this.connect(); return; }
-    if (this.ws.readyState === WebSocket.OPEN) this.applySubscriptions();
+    if (this.ws.readyState === this.WS.OPEN) this.applySubscriptions();
   }
 
   private connect(): void {
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     let ws: WebSocket;
-    try { ws = new WebSocket(WS_URL); } catch (e) { this.log(`ws open failed: ${(e as Error).message}`); this.scheduleReconnect(); return; }
+    try { ws = new this.WS(WS_URL); } catch (e) { this.log(`ws open failed: ${(e as Error).message}`); this.scheduleReconnect(); return; }
     this.ws = ws;
     this.active.clear();
-    ws.onopen = () => { this.reconnectDelay = RECONNECT_MIN_MS; this.applySubscriptions(); };
-    ws.onmessage = ev => {
-      try { this.onMessage(JSON.parse(String(ev.data))); } catch { /* ignore non-JSON */ }
+    this.lastMsgAt = this.now();
+    ws.onopen = () => {
+      this.log(`feed connected (${[...this.wanted].join(', ')})`);
+      this.reconnectDelay = RECONNECT_MIN_MS;
+      this.lastMsgAt = this.now();
+      this.applySubscriptions();
     };
-    ws.onerror = () => { try { ws.close(); } catch { /* ignore */ } };
-    ws.onclose = () => {
+    ws.onmessage = ev => {
+      this.lastMsgAt = this.now();
+      let msg: unknown;
+      try { msg = JSON.parse(String(ev.data)); } catch { return; /* ignore non-JSON */ }
+      try { this.onMessage(msg as { channel?: string; data?: unknown }); } catch (e) { this.log(`message handling failed: ${(e as Error).message}`); }
+    };
+    ws.onerror = ev => {
+      this.log(`feed error: ${(ev as { message?: string }).message ?? 'unknown'}`);
+      try { ws.close(); } catch { /* ignore */ }
+    };
+    ws.onclose = ev => {
       if (this.ws !== ws) return;
       this.ws = null;
       this.active.clear();
+      this.stopPing();
+      this.log(`feed closed (code ${(ev as { code?: number }).code ?? '?'})${this.wanted.size > 0 ? ', reconnecting' : ''}`);
       if (this.wanted.size > 0) this.scheduleReconnect();
     };
+    this.startPing();
+  }
+
+  private startPing(): void {
+    this.stopPing();
+    this.pingTimer = setInterval(() => {
+      const ws = this.ws;
+      if (!ws) return;
+      if (this.now() - this.lastMsgAt > SILENT_MS) {
+        this.log(`feed silent for ${Math.round((this.now() - this.lastMsgAt) / 1000)}s, reopening`);
+        this.ws = null;
+        this.active.clear();
+        this.stopPing();
+        try { ws.close(); } catch { /* ignore */ }
+        this.scheduleReconnect();
+        return;
+      }
+      if (ws.readyState === this.WS.OPEN) {
+        try { ws.send(JSON.stringify({ method: 'ping' })); } catch { /* onclose handles it */ }
+      }
+    }, PING_MS);
+    (this.pingTimer as { unref?: () => void }).unref?.();
+  }
+
+  private stopPing(): void {
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
   }
 
   private scheduleReconnect(): void {
@@ -143,6 +248,7 @@ export class AlertEngine {
 
   private dropSocket(): void {
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    this.stopPing();
     const ws = this.ws;
     this.ws = null;
     this.active.clear();
@@ -150,25 +256,19 @@ export class AlertEngine {
     if (ws) { try { ws.close(); } catch { /* ignore */ } }
   }
 
-  private subscription(key: string): Record<string, unknown> {
-    if (key === 'allMids') return { type: 'allMids' };
-    const [, coin, interval] = key.split(':');
-    return { type: 'candle', coin, interval };
-  }
-
   private applySubscriptions(): void {
     const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== this.WS.OPEN) return;
     for (const key of this.active) {
       if (!this.wanted.has(key)) {
-        ws.send(JSON.stringify({ method: 'unsubscribe', subscription: this.subscription(key) }));
+        ws.send(JSON.stringify({ method: 'unsubscribe', subscription: subscriptionFor(key) }));
         this.active.delete(key);
         this.lastBar.delete(key);
       }
     }
     for (const key of this.wanted) {
       if (!this.active.has(key)) {
-        ws.send(JSON.stringify({ method: 'subscribe', subscription: this.subscription(key) }));
+        ws.send(JSON.stringify({ method: 'subscribe', subscription: subscriptionFor(key) }));
         this.active.add(key);
       }
     }
@@ -178,21 +278,24 @@ export class AlertEngine {
     if (msg.channel === 'allMids') {
       const mids = (msg.data as { mids?: Record<string, string> } | undefined)?.mids;
       if (!mids) return;
+      const at = this.now();
       for (const [coin, px] of Object.entries(mids)) {
         const n = parseFloat(px);
-        if (Number.isFinite(n)) this.mids[coin] = n;
+        if (Number.isFinite(n)) this.mids[coin] = { px: n, at };
       }
       for (const a of this.alerts) {
         if (a.status !== 'armed' || a.kind !== 'cross') continue;
-        const mid = this.mids[a.asset];
-        if (mid !== undefined && crossSatisfied(a, mid)) this.fire(a, mid);
+        const px = mids[a.asset];
+        if (px === undefined) continue;
+        const mid = parseFloat(px);
+        if (Number.isFinite(mid) && crossSatisfied(a, mid)) this.fire(a, mid);
       }
       return;
     }
     if (msg.channel === 'candle') {
       const c = msg.data as CandleMsg | undefined;
       if (!c || typeof c.t !== 'number') return;
-      const key = `candle:${c.s}:${c.i}`;
+      const key = candleKey(c.s, c.i);
       const close = parseFloat(c.c);
       const prev = this.lastBar.get(key);
       if (prev && c.t > prev.t) {
@@ -208,7 +311,7 @@ export class AlertEngine {
 
   private fire(a: Alert, price: number, barT?: number): void {
     a.status = 'fired';
-    a.firedAt = Date.now();
+    a.firedAt = this.now();
     a.firedPrice = price;
     if (barT !== undefined) a.firedBarT = barT;
     this.log(`fired ${a.id}: ${a.asset} ${a.kind} ${a.direction} ${a.level} at ${price}`);

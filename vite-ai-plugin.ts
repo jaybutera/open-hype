@@ -184,7 +184,10 @@ export function aiOverlayPlugin(): Plugin {
               // Default asset and mid come from the chart the user is looking at.
               const current = (await requestSnapshot()) ?? snapshot;
               const asset = (body as { asset?: string } | undefined)?.asset || current?.asset || null;
-              const mid = (asset && engine.mid(asset)) ?? (current && current.asset === asset ? current.mid : null);
+              // refPrice and the default direction come from a fresh mid (feed or info API);
+              // the chart's mid is the fallback. With none of them the alert is refused.
+              const mid = (asset ? await engine.freshMid(asset) : null)
+                ?? (current && current.asset === asset && Number.isFinite(current.mid) ? current.mid : null);
               try {
                 const { alert, existing } = engine.add(body, { defaultAsset: current?.asset ?? null, mid });
                 return sendJson(res, 200, {
