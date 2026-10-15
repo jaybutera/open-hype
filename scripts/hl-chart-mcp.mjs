@@ -160,6 +160,27 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_gex',
+    description: [
+      'Dealer gamma exposure per strike from GEXBot (classic feed), via the dev server, which holds the key and caches 60s.',
+      'Returns spot, zeroGamma (where net dealer gamma flips sign), the major positive/negative strikes (call wall / put wall) by',
+      'volume and by OI, net GEX, and `strikes`: rows of [strike, gexVol, gexOi] sorted by strike (calls positive, puts negative,',
+      'netted per strike). `vol` is from today\'s trading and moves intraday; `oi` is positions open at the start of the day.',
+      '`asOf` is the reading\'s UTC ms and ET time; the feed freezes at the 16:00 ET close. Prices are cash index prices; the',
+      'charted perp (xyz:SP500 -> SPX, xyz:XYZ100 -> NDX, xyz single names -> their ticker) may trade away from them after hours.',
+      'Omit `ticker` to use the charted asset\'s mapping; the answer says which ticker it used.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ticker: { type: 'string', description: 'GEXBot ticker (SPX, NDX, SPY, QQQ, ES_SPX, NQ_NDX, TSLA...). Default: the charted asset\'s GEXBot ticker.' },
+        dte: { type: 'string', enum: ['zero', 'one', 'full'], description: 'zero = expiring today (default), one = tomorrow, full = all expirations GEXBot tracks.' },
+        strikes: { type: 'string', enum: ['near', 'all', 'none'], description: 'How many strike rows: near (default) = the 40 around spot, all = every strike, none = levels only.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'set_alert',
     description: [
       'Arm a price alert on the dev server; it watches Hyperliquid directly, so it keeps working when the chart tab is closed.',
@@ -325,6 +346,59 @@ function compactView(view) {
   };
 }
 
+/** Mirrors src/services/gex/symbols.ts: which GEXBot ticker a chart asset's options are on. */
+const GEX_INDEX_ALIASES = { 'xyz:SP500': 'SPX', 'xyz:XYZ100': 'NDX', 'xyz:VIX': 'VIX' };
+function gexTickerFor(asset) {
+  if (!asset) return null;
+  if (GEX_INDEX_ALIASES[asset]) return GEX_INDEX_ALIASES[asset];
+  return asset.startsWith('xyz:') ? asset.slice(4) : null;
+}
+
+function etOf(ms) {
+  const d = new Date(ms);
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(d).reduce((o, x) => (o[x.type] = x.value, o), {});
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ET`;
+}
+
+const NEAR_STRIKES = 40;
+
+/** GEXBot's raw classic response -> levels plus [strike, gexVol, gexOi] rows. */
+function compactGex(raw, dte, which, asset) {
+  const rows = (raw.strikes ?? [])
+    .filter(r => Array.isArray(r) && r.length >= 3)
+    .map(r => [Number(r[0]), Number(r[1]), Number(r[2])])
+    .sort((a, b) => a[0] - b[0]);
+  let strikes = rows;
+  if (which === 'none') strikes = [];
+  else if (which !== 'all' && rows.length > NEAR_STRIKES) {
+    let i = rows.findIndex(r => r[0] >= raw.spot);
+    if (i < 0) i = rows.length;
+    const lo = Math.max(0, Math.min(i - NEAR_STRIKES / 2, rows.length - NEAR_STRIKES));
+    strikes = rows.slice(lo, lo + NEAR_STRIKES);
+  }
+  const ms = Number(raw.timestamp) * 1000;
+  return {
+    ticker: raw.ticker,
+    dte,
+    ...(asset ? { asset } : {}),
+    asOf: { ms, et: etOf(ms) },
+    spot: raw.spot,
+    zeroGamma: raw.zero_gamma,
+    majorPosVol: raw.major_pos_vol,
+    majorNegVol: raw.major_neg_vol,
+    majorPosOi: raw.major_pos_oi,
+    majorNegOi: raw.major_neg_oi,
+    sumGexVol: raw.sum_gex_vol,
+    sumGexOi: raw.sum_gex_oi,
+    strikesTotal: rows.length,
+    columns: ['strike', 'gexVol', 'gexOi'],
+    strikes,
+  };
+}
+
 const textResult = (obj, isError = false) => ({
   content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj) }],
   ...(isError ? { isError: true } : {}),
@@ -344,6 +418,20 @@ async function callTool(name, args = {}) {
       ...json,
       note: 'Sets are not visible until the user toggles their buttons on.',
     });
+  }
+  if (name === 'get_gex') {
+    let ticker = args.ticker ? String(args.ticker).toUpperCase() : null;
+    let asset = null;
+    if (!ticker) {
+      const view = await http('GET', '/api/ai/view');
+      asset = view.json?.asset ?? null;
+      ticker = gexTickerFor(asset);
+      if (!ticker) return textResult(`The charted asset (${asset ?? 'none'}) has no GEXBot ticker; pass \`ticker\` (SPX, NDX, SPY, QQQ, ES_SPX, NQ_NDX, or a stock).`, true);
+    }
+    const dte = args.dte || 'zero';
+    const { status, json } = await http('GET', `/api/gex/${encodeURIComponent(ticker)}/${dte}`);
+    if (status !== 200 || json.error) return textResult({ status, ticker, dte, ...json }, true);
+    return textResult(compactGex(json, dte, args.strikes || 'near', asset));
   }
   if (name === 'clear_overlays') {
     const q = args.id ? `?id=${encodeURIComponent(args.id)}` : '';

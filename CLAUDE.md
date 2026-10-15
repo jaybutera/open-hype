@@ -9,6 +9,10 @@ The `hl-chart` MCP server (`.mcp.json`, `scripts/hl-chart-mcp.mjs`) links this s
 - When an answer names a zone, a level, a candle, or a plan, also call `push_overlays` so the user can see it: one set per idea (for example "OB + sweep", "Entry plan", "Invalidation"), pushed together in one call. Sets appear as toggle buttons under the Buy/Sell button and draw nothing until the user clicks them. Read the warnings in the response and re-push if a price did not match the bar you meant.
 - If `get_chart_view` reports no chart connected, tell the user to open the app at the dev server URL. The dev server runs always-on on the box machine (http://100.117.74.55:3000, systemd user unit `hl-frontend`, see `deploy/`); `.mcp.json` points the MCP server there through `HL_FRONTEND_URL`. `scripts/deploy-box.sh` restarts it on the latest master.
 
+## GEX
+
+`get_gex` returns GEXBot dealer gamma for the charted asset's options (`xyz:SP500` is SPX, `xyz:XYZ100` is NDX, `xyz:TSLA` is TSLA; pass `ticker` for anything else): zero gamma, the major positive/negative strikes by volume and OI, net GEX, and per-strike rows. The dev server holds the key (`GEXBOT_API_KEY` in `.env`) and caches 60s. The chart's `GEX` toolbar buttons draw the same data; `get_chart_view.gex` says what the user has on. Quote the `asOf` time when the reading is from before the current session; the feed freezes at the 16:00 ET close.
+
 ## Price alerts
 
 `set_alert` arms a price alert on the dev server (cross of a level, or a bar close beyond it on an interval). The dev server watches Hyperliquid itself, so the alert works with the tab closed. After `set_alert`, run the `wait` command from its response with Bash `run_in_background`; the command exits when the alert fires, which wakes this session with the fired alert. Then call `get_chart_view`, and continue the conversation with full context. Set a `note` that says what the level means. Alerts also come from the user: alt+click on the chart arms a cross alert, alt+ctrl+click a close alert on the chart's interval. `get_chart_view` lists the charted asset's alerts under `alerts`.
