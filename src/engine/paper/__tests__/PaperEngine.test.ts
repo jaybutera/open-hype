@@ -1390,3 +1390,30 @@ describe('settleExpired', () => {
     expect(r.settled).toBe(1);
   });
 });
+
+describe('HIP-3 fees', () => {
+  it('charges a growth-mode market a tenth of double the base rates', () => {
+    const e = new PaperEngine({
+      initialBalance: '10000', leverage: 10,
+      dexFee: coin => coin === 'xyz:SP500' ? { deployerFeeScale: 1, growthMode: true } : undefined,
+    });
+    e.onPriceUpdate('xyz:SP500', '7500');
+    e.placeOrder({ coin: 'xyz:SP500', side: 'buy', price: '7463', size: '8', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
+    e.onPriceUpdate('xyz:SP500', '7463');
+    e.marketClose('xyz:SP500', '7454.35');
+    const [entry, exit] = e.getFills();
+    expect(entry.fee).toBe('1.79112');   // 8 * 7463 * 0.00003
+    expect(exit.fee).toBe('5.367132');   // 8 * 7454.35 * 0.00009
+  });
+
+  it('keeps base rates for validator perps', () => {
+    const e = new PaperEngine({ initialBalance: '10000', leverage: 10, dexFee: () => undefined });
+    e.onPriceUpdate('BTC', '51000');
+    e.placeOrder({ coin: 'BTC', side: 'buy', price: '50000', size: '0.1', reduceOnly: false, orderType: { limit: { tif: 'Gtc' } } });
+    e.onPriceUpdate('BTC', '50000');
+    e.marketClose('BTC', '50000');
+    const [entry, exit] = e.getFills();
+    expect(entry.fee).toBe('0.75'); // 0.1 * 50000 * 0.00015
+    expect(exit.fee).toBe('2.25');  // 0.1 * 50000 * 0.00045
+  });
+});

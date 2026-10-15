@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Decimal from 'decimal.js';
-import { calculateFee, calculateRoe } from '../pnl.ts';
+import { calculateFee, calculateRoe, hip3Rates } from '../pnl.ts';
 import { MAKER_FEE_RATE, TAKER_FEE_RATE } from '../../../config/constants.ts';
 
 describe('calculateFee', () => {
@@ -25,6 +25,28 @@ describe('calculateFee', () => {
     const fee = calculateFee(new Decimal('1'), new Decimal('50000'), true, '0.0001', '0.00035');
     // 1 * 50000 * 0.0001 = 5
     expect(fee.toString()).toBe('5');
+  });
+});
+
+describe('hip3Rates', () => {
+  it('cuts SP500 (scale 1, growth mode) to 0.003% maker, 0.009% taker', () => {
+    const r = hip3Rates(MAKER_FEE_RATE, TAKER_FEE_RATE, { deployerFeeScale: 1, growthMode: true });
+    expect(r).toEqual({ makerRate: '0.00003', takerRate: '0.00009' });
+  });
+
+  it('doubles fees at scale 1 without growth mode', () => {
+    const r = hip3Rates(MAKER_FEE_RATE, TAKER_FEE_RATE, { deployerFeeScale: 1, growthMode: false });
+    expect(r).toEqual({ makerRate: '0.0003', takerRate: '0.0009' });
+  });
+
+  it('uses 1 + scale below scale 1', () => {
+    const r = hip3Rates(MAKER_FEE_RATE, TAKER_FEE_RATE, { deployerFeeScale: 0.5, growthMode: false });
+    expect(r).toEqual({ makerRate: '0.000225', takerRate: '0.000675' });
+  });
+
+  it('keeps maker rebates unscaled by the deployer share', () => {
+    const r = hip3Rates('-0.00002', TAKER_FEE_RATE, { deployerFeeScale: 1, growthMode: true });
+    expect(r.makerRate).toBe('-0.000002');
   });
 });
 

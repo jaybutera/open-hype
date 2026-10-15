@@ -3,7 +3,7 @@ import type { OrderRequest, PlaceOrderResult, Side } from '../../types/order.ts'
 import { DEFAULT_LEVERAGE, MAINTENANCE_MARGIN_RATE, MAKER_FEE_RATE, TAKER_FEE_RATE } from '../../config/constants.ts';
 import { matchOrders, matchTriggersByCandle, type PaperOrder, type FillResult } from './matching.ts';
 import { applyFill, computeUnrealizedPnl, computeLiquidationPrice, type PaperPosition } from './positions.ts';
-import { calculateFee } from './pnl.ts';
+import { calculateFee, hip3Rates, type DexFee } from './pnl.ts';
 import { createLedgerEntry, createOptionLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
 import type { Leg, OptionContract } from '../../services/options/types.ts';
 import {
@@ -30,6 +30,8 @@ export interface PaperEngineConfig {
   leverage?: number;
   makerRate?: string;
   takerRate?: string;
+  /** HIP-3 fee settings for a coin; undefined for validator perps. */
+  dexFee?: (coin: string) => DexFee | undefined;
   onUpdate?: (state: PaperState) => void;
   onRejection?: (reason: string, order: PaperOrder) => void;
   /** Clock for order/fill timestamps. Replay mode injects historical time. */
@@ -78,6 +80,7 @@ export class PaperEngine {
   private leverage: number;
   private makerRate: string;
   private takerRate: string;
+  private dexFee: (coin: string) => DexFee | undefined;
   private onUpdate: ((state: PaperState) => void) | null;
   private onRejection: ((reason: string, order: PaperOrder) => void) | null = null;
   private now: () => number;
@@ -87,6 +90,7 @@ export class PaperEngine {
     this.leverage = config.leverage ?? DEFAULT_LEVERAGE;
     this.makerRate = config.makerRate ?? MAKER_FEE_RATE;
     this.takerRate = config.takerRate ?? TAKER_FEE_RATE;
+    this.dexFee = config.dexFee ?? (() => undefined);
     this.onUpdate = config.onUpdate ?? null;
     this.onRejection = config.onRejection ?? null;
     this.now = config.now ?? Date.now;
@@ -325,7 +329,7 @@ export class PaperEngine {
       }
     }
 
-    const fee = calculateFee(fill.fillSize, fillPrice, isMaker, this.makerRate, this.takerRate);
+    const fee = this.fee(order.coin, fill.fillSize, fillPrice, isMaker);
     const existing = this.positions.get(order.coin) ?? null;
 
     const result = applyFill(
@@ -492,7 +496,7 @@ export class PaperEngine {
     const side = pos.szi.gt(0) ? 'sell' : 'buy';
     const size = pos.szi.abs();
     const price = new Decimal(midPrice);
-    const fee = calculateFee(size, price, false, this.makerRate, this.takerRate); // taker
+    const fee = this.fee(coin, size, price, false); // taker
     const existing = this.positions.get(coin)!;
     const result = applyFill(existing, coin, side, size, price, this.leverage);
 
@@ -519,6 +523,12 @@ export class PaperEngine {
 
   setLeverage(leverage: number): void {
     this.leverage = leverage;
+  }
+
+  private fee(coin: string, size: Decimal, price: Decimal, isMaker: boolean): Decimal {
+    const dex = this.dexFee(coin);
+    const r = dex ? hip3Rates(this.makerRate, this.takerRate, dex) : { makerRate: this.makerRate, takerRate: this.takerRate };
+    return calculateFee(size, price, isMaker, r.makerRate, r.takerRate);
   }
 
   setFeeRates(makerRate: string, takerRate: string): void {

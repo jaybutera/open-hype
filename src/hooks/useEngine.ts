@@ -4,8 +4,18 @@ import { useAccountStore } from '../store/useAccountStore.ts';
 import { usePaperAccountsStore } from '../store/usePaperAccountsStore.ts';
 import { useFeeStore } from '../store/useFeeStore.ts';
 import { useWalletStore } from '../store/useWalletStore.ts';
+import { useMarketStore } from '../store/useMarketStore.ts';
 import { PaperEngine } from '../engine/paper/PaperEngine.ts';
+import type { DexFee } from '../engine/paper/pnl.ts';
 import { appNow } from '../services/replay/clock.ts';
+
+/** HIP-3 fee settings from the loaded xyz dex meta. */
+function dexFeeOf(coin: string): DexFee | undefined {
+  if (!coin.includes(':')) return undefined;
+  const u = useMarketStore.getState().xyzMeta?.universe.find(a => a.name === coin);
+  if (!u?.deployerFeeScale) return undefined;
+  return { deployerFeeScale: Number(u.deployerFeeScale), growthMode: u.growthMode === 'enabled' };
+}
 
 function createEngineForAccount(
   acct: ReturnType<typeof usePaperAccountsStore.getState>['accounts'][0],
@@ -20,6 +30,7 @@ function createEngineForAccount(
     leverage,
     makerRate,
     takerRate,
+    dexFee: dexFeeOf,
     onUpdate,
     onRejection,
     now: appNow,

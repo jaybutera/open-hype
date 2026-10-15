@@ -3,6 +3,10 @@ export interface AssetMeta {
   szDecimals: number;
   maxLeverage: number;
   onlyIsolated?: boolean;
+  /** HIP-3 only: deployer fee share, e.g. "1.0". */
+  deployerFeeScale?: string;
+  /** HIP-3 only: "enabled" cuts fees by 90%. */
+  growthMode?: string;
 }
 
 export interface Meta {
