@@ -48,6 +48,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const sessionPrimitiveRef = useRef<SessionPrimitive | null>(null);
   const fibPrimitiveRef = useRef<FibPrimitive | null>(null);
   const [sessionsOn, setSessionsOn] = useState(true);
+  const [alertsOn, setAlertsOn] = useState(true);
   const [fibMode, setFibMode] = useState(false);
   const [fibFirstClick, setFibFirstClick] = useState<{ price: number; time: number } | null>(null);
   const [fibs, setFibs] = useState<FibRetracement[]>([]);
@@ -628,11 +629,11 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     }
   }, [aiSets, aiEnabledIds, currentAsset]);
 
-  // Armed price alerts for this asset: one always-on dashed line each
+  // Armed price alerts for this asset: one dashed line each while the Alerts toggle is on
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
-    const lines = alerts.filter(a => a.asset === currentAsset && a.status === 'armed').map(alertLine);
+    const lines = alertsOn ? alerts.filter(a => a.asset === currentAsset && a.status === 'armed').map(alertLine) : [];
     const prim = alertPrimRef.current;
     if (lines.length === 0) {
       if (prim) { prim.requestRedraw(); series.detachPrimitive(prim); alertPrimRef.current = null; }
@@ -641,7 +642,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     const set: OverlaySet = { id: '__alerts', batch: '__alerts', name: 'Alerts', asset: currentAsset, color: '#f0b90b', createdAt: 0, shapes: lines };
     if (prim) prim.setSet(set);
     else { const p = new AiOverlayPrimitive(set); series.attachPrimitive(p); alertPrimRef.current = p; }
-  }, [alerts, currentAsset]);
+  }, [alerts, alertsOn, currentAsset]);
 
   // GEX levels for this asset's options: zero gamma and the major strikes as labelled lines
   useEffect(() => {
@@ -819,6 +820,20 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           }}
         >
           KZ
+        </button>
+        <button
+          onClick={() => setAlertsOn(v => !v)}
+          style={{
+            padding: '4px 10px',
+            fontSize: 12,
+            background: alertsOn ? '#1a1f2e' : 'transparent',
+            border: alertsOn ? '1px solid #2a2f3e' : '1px solid transparent',
+            borderRadius: 4,
+            color: alertsOn ? '#e1e4e8' : '#8a8f98',
+            cursor: 'pointer',
+          }}
+        >
+          Alerts
         </button>
         <button
           onClick={() => { setFibMode(v => !v); setFibFirstClick(null); }}
