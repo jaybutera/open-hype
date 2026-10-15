@@ -433,15 +433,15 @@ function etToUtcMs(wall) {
 }
 
 /** Same rules as src/services/ai/validate.ts parseTime (the overlay times). */
-function parseTime(value, field) {
+function parseTime(value, field, now = Date.now()) {
   if (typeof value === 'number') {
     if (!Number.isFinite(value) || value <= 0) throw new Error(`${field}: ${value} is not a positive number`);
     return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
   }
   if (typeof value === 'string') {
     const s = value.trim();
-    if (s.toLowerCase() === 'now') return Date.now();
-    if (/^\d+(\.\d+)?$/.test(s)) return parseTime(Number(s), field);
+    if (s.toLowerCase() === 'now') return now;
+    if (/^\d+(\.\d+)?$/.test(s)) return parseTime(Number(s), field, now);
     const et = s.match(/^(.*?)\s*(?:ET|EST|EDT|America\/New_York)$/i);
     if (et) {
       const ms = etToUtcMs(et[1]);
@@ -475,6 +475,46 @@ async function fetchCandles(coin, interval, start, end) {
   return out;
 }
 
+/** Replay cursor (UTC ms) when BASE is a sim session's dev server (SIM=1), else null. */
+async function simClock() {
+  try {
+    const { status, json } = await http('GET', '/api/sim/clock');
+    return status === 200 && json?.active ? json.cursor : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sim counterpart of fetchCandles: the dev server's recorded 1m bars with
+ * start <= t < end, aggregated to interval bars. end is the replay cursor, so
+ * the last bar is the one still forming, as candleSnapshot returns it live.
+ */
+async function fetchSimCandles(coin, interval, start, end) {
+  const barMs = INTERVAL_MS[interval];
+  const out = [];
+  let cur = Math.floor(start / barMs) * barMs;
+  while (cur < end) {
+    const { status, json } = await http('GET', `/api/replay/candles?coin=${encodeURIComponent(coin)}&start=${cur}&end=${end}`);
+    if (status !== 200) throw new Error(`Hyperliquid info candleSnapshot answered 500: null`);
+    if (!Array.isArray(json) || json.length === 0) break;
+    for (const c of json) {
+      const t = Math.floor(c.t / barMs) * barMs;
+      const last = out[out.length - 1];
+      if (last && last.t === t) {
+        last.h = Math.max(last.h, Number(c.h));
+        last.l = Math.min(last.l, Number(c.l));
+        last.c = Number(c.c);
+        last.v += Number(c.v);
+      } else {
+        out.push({ t, o: Number(c.o), h: Number(c.h), l: Number(c.l), c: Number(c.c), v: Number(c.v) });
+      }
+    }
+    cur = json[json.length - 1].t + 60_000;
+  }
+  return out;
+}
+
 async function getCandles(args) {
   const interval = args.interval;
   if (!INTERVAL_MS[interval]) throw new Error(`interval must be one of ${INTERVALS.join(', ')}`);
@@ -487,13 +527,14 @@ async function getCandles(args) {
     if (!asset) return textResult('No asset given and no chart is connected to default to; pass `asset` (e.g. "BTC" or "xyz:SP500").', true);
   }
 
-  const now = Date.now();
-  let to = args.to === undefined ? now : parseTime(args.to, 'to');
+  const simNow = await simClock();
+  const now = simNow ?? Date.now();
+  let to = args.to === undefined ? now : parseTime(args.to, 'to', now);
   if (to > now) to = now;
   let from;
   let wanted;
   if (args.from !== undefined) {
-    from = parseTime(args.from, 'from');
+    from = parseTime(args.from, 'from', now);
     if (from >= to) throw new Error(`from (${new Date(from).toISOString()}) must be before to (${new Date(to).toISOString()})`);
   } else {
     wanted = Math.min(Math.max(1, Math.floor(args.bars ?? 200)), MAX_CANDLES);
@@ -503,12 +544,13 @@ async function getCandles(args) {
   // Never fetch far more than can be returned.
   const fetchFrom = Math.max(from, to - (MAX_CANDLES + 2) * barMs);
 
-  const [raw, mids] = await Promise.all([
-    fetchCandles(asset, interval, fetchFrom, to).catch(e => {
+  let [raw, mids] = await Promise.all([
+    (simNow !== null ? fetchSimCandles(asset, interval, fetchFrom, to) : fetchCandles(asset, interval, fetchFrom, to)).catch(e => {
       throw new Error(`${e.message}. Hyperliquid answers this way for an unknown coin; check "${asset}" (HIP-3 assets use "dex:COIN", e.g. "xyz:SP500").`);
     }),
-    hlInfo(asset.includes(':') ? { type: 'allMids', dex: asset.split(':')[0] } : { type: 'allMids' }).catch(() => null),
+    simNow !== null ? null : hlInfo(asset.includes(':') ? { type: 'allMids', dex: asset.split(':')[0] } : { type: 'allMids' }).catch(() => null),
   ]);
+  if (simNow !== null && raw.length) mids = { [asset]: raw[raw.length - 1].c };
 
   // Bars whose open lies in the window; a from mid-bar keeps the bar containing it.
   let rows = raw.filter(r => r.t + barMs > from && r.t <= to);

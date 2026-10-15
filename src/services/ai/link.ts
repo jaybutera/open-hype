@@ -15,6 +15,8 @@ import { useAlertStore } from '../../store/useAlertStore.ts';
 import { useAiTradeStore } from '../../store/useAiTradeStore.ts';
 import { useWalletStore, selectActiveAccount } from '../../store/useWalletStore.ts';
 import { useGexStore } from '../../store/useGexStore.ts';
+import { appNow } from '../replay/clock.ts';
+import type { CandleInterval } from '../../types/market.ts';
 import { gexSummary } from '../gex/levels.ts';
 import { NETWORK } from '../hl/network.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
@@ -120,7 +122,7 @@ export function buildSnapshot(): ChartSnapshot {
   const { sets, enabledIds } = useAiOverlayStore.getState();
 
   return {
-    takenAt: Date.now(),
+    takenAt: appNow(),
     mode,
     replay: useReplayStore.getState().active,
     pane: paneId,
@@ -196,6 +198,35 @@ export function startAiLink(engine?: PaperEngine): void {
     hot.send('hl-ai:hello', {});
   });
   onOverlayToggle((id, enabled) => hot.send('hl-ai:toggle', { id, enabled }));
+
+  // Sim sessions (vite-ai-plugin.ts, SIM=1): the server starts a replay and
+  // steps it while the agent is idle; each step's 1m bars go back so the
+  // server's alert engine sees the same prices the paper engine filled on.
+  hot.on('hl-ai:sim-start', async (data: { asset: string; interval: CandleInterval; start: number }) => {
+    try {
+      const replay = useReplayStore.getState();
+      await replay.loadAssets();
+      await replay.enterReplay(data.start);
+      const market = useMarketStore.getState();
+      market.setAsset(data.asset, 'primary');
+      market.setInterval(data.interval, 'primary');
+      await useMarketStore.getState().loadCandles('primary');
+      const last = useMarketStore.getState().panes.primary?.candles.at(-1);
+      if (last) useMarketStore.getState().batchUpdateMids({ [data.asset]: last.c });
+      hot.send('hl-ai:sim-started', { cursor: useReplayStore.getState().cursor });
+    } catch (e) {
+      hot.send('hl-ai:sim-started', { error: String((e as Error)?.message ?? e) });
+    }
+  });
+  hot.on('hl-ai:sim-advance', async (data: { reqId: string; minutes: number }) => {
+    try {
+      const minutes = await useReplayStore.getState().simAdvance(data.minutes);
+      const { cursor, atEnd } = useReplayStore.getState();
+      hot.send('hl-ai:sim-tick', { reqId: data.reqId, cursor, atEnd, minutes });
+    } catch (e) {
+      hot.send('hl-ai:sim-tick', { reqId: data.reqId, error: String((e as Error)?.message ?? e) });
+    }
+  });
 
   useAiOverlayStore.getState().setConnected(true);
   // Ask for the current overlay list (survives page reloads) and seed the cache.

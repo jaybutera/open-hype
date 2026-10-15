@@ -71,6 +71,8 @@ export function gexPlugin(): Plugin {
           const ticker = m[1].toUpperCase();
           const dte = m[2] ?? 'zero';
           if (!TICKER_RE.test(ticker) || !DTES.has(dte)) return send(400, JSON.stringify({ error: 'bad ticker or dte' }));
+          // Sim sessions replay history; GEXBot has only the present, so it reads as down.
+          if (process.env.SIM === '1') return send(503, JSON.stringify({ error: 'gexbot answered 503' }));
           if (!apiKey) return send(503, JSON.stringify({ error: 'GEXBOT_API_KEY is not set on the dev server' }));
           const c = await fetchCached(
             `${ticker}/${dte}`,

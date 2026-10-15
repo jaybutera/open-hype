@@ -4,6 +4,8 @@ import {
   validateAlert, crossSatisfied, closeSatisfied, sameCondition,
   type Alert, type AlertContext,
 } from './src/services/ai/alerts.ts';
+import { bucketStart, intervalToMs } from './src/services/replay/aggregate.ts';
+import type { CandleInterval } from './src/types/market.ts';
 
 /**
  * Watches Hyperliquid prices for armed alerts. Dev server only (used by
@@ -15,6 +17,9 @@ import {
  * constructor reconnects for them, so a dev server restart keeps them armed.
  * A ping every 30s and a watchdog that reopens a socket silent for 60s keep a
  * half-dead connection from hiding missed ticks.
+ *
+ * With `feed: 'manual'` (sim sessions) no socket is opened: the caller replays
+ * recorded 1m bars through ingestBar() and `now` is the replay clock.
  */
 const WS_URL = 'wss://api.hyperliquid.xyz/ws';
 const INFO_URL = 'https://api.hyperliquid.xyz/info';
@@ -45,7 +50,12 @@ export interface AlertEngineDeps {
   WebSocket?: typeof WebSocket;
   fetch?: typeof fetch;
   now?: () => number;
+  /** 'manual': never open the websocket; prices arrive through ingestBar(). */
+  feed?: 'live' | 'manual';
 }
+
+/** A recorded 1m bar, as the replay data serves it. */
+export interface SimBar { t: number; o: string; h: string; l: string; c: string }
 
 type Listener = (alerts: Alert[], fired: Alert | null) => void;
 
@@ -68,11 +78,13 @@ export class AlertEngine {
   private WS: typeof WebSocket;
   private fetchFn: typeof fetch;
   private now: () => number;
+  private manual: boolean;
 
   constructor(private file: string, private log: (msg: string) => void = () => {}, deps: AlertEngineDeps = {}) {
     this.WS = deps.WebSocket ?? globalThis.WebSocket;
     this.fetchFn = deps.fetch ?? globalThis.fetch.bind(globalThis);
     this.now = deps.now ?? Date.now;
+    this.manual = deps.feed === 'manual';
     this.load();
     const armed = this.alerts.filter(a => a.status === 'armed').length;
     if (armed) this.log(`loaded ${armed} armed alert(s) from ${this.file}`);
@@ -91,10 +103,31 @@ export class AlertEngine {
     return this.mids[asset]?.px ?? null;
   }
 
+  /**
+   * Manual feed: replay one 1m bar. Cross alerts see the bar's path (open,
+   * the extreme nearer the open first, then the other, then close), so a wick
+   * through a level fires. Close alerts see the bar as an update of the
+   * interval candle containing it, which fires once the next bucket starts,
+   * as the live candle feed does.
+   */
+  ingestBar(asset: string, bar: SimBar): void {
+    const [o, h, l, c] = [bar.o, bar.h, bar.l, bar.c].map(Number);
+    const path = Math.abs(h - o) <= Math.abs(o - l) ? [o, h, l, c] : [o, l, h, c];
+    for (const px of path) this.onMessage({ channel: 'allMids', data: { mids: { [asset]: String(px) } } });
+    const intervals = new Set(this.alerts
+      .filter(a => a.status === 'armed' && a.kind === 'close' && a.asset === asset && a.interval)
+      .map(a => a.interval!));
+    for (const i of intervals) {
+      const t = bucketStart(bar.t, intervalToMs(i as CandleInterval));
+      this.onMessage({ channel: 'candle', data: { t, s: asset, i, c: bar.c } });
+    }
+  }
+
   /** A fresh mid: the feed's if it is recent, else one fetched from the info API; null if neither works. */
   async freshMid(asset: string): Promise<number | null> {
     const m = this.mids[asset];
     if (m && this.now() - m.at < MID_FRESH_MS) return m.px;
+    if (this.manual) return m?.px ?? null;
     const dex = dexOf(asset);
     try {
       const res = await this.fetchFn(INFO_URL, {
@@ -118,7 +151,7 @@ export class AlertEngine {
   /** Validate and arm. An identical armed alert is returned instead of duplicated. */
   add(input: unknown, ctx: Omit<AlertContext, 'id'>): { alert: Alert; existing: boolean } {
     const id = `al_${Date.now().toString(36)}${(++this.seq).toString(36)}`;
-    const alert = validateAlert(input, { ...ctx, id });
+    const alert = validateAlert(input, { now: this.now(), ...ctx, id });
     const dup = this.alerts.find(a => a.status === 'armed' && sameCondition(a, alert));
     if (dup) return { alert: dup, existing: true };
     this.alerts.push(alert);
@@ -176,6 +209,7 @@ export class AlertEngine {
       next.add(a.kind === 'cross' ? midsKey(dexOf(a.asset)) : candleKey(a.asset, a.interval ?? ''));
     }
     this.wanted = next;
+    if (this.manual) return;
     if (next.size === 0) { this.dropSocket(); return; }
     if (!this.ws) { this.connect(); return; }
     if (this.ws.readyState === this.WS.OPEN) this.applySubscriptions();

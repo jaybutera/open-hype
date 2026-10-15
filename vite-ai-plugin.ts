@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 import { normalizePush, OverlayValidationError } from './src/services/ai/validate.ts';
 import type { ChartSnapshot, OverlaySet } from './src/services/ai/types.ts';
 import { AlertValidationError } from './src/services/ai/alerts.ts';
-import { AlertEngine } from './alert-engine.ts';
+import { AlertEngine, type SimBar } from './alert-engine.ts';
+import { SimClock, type SimParams } from './sim-clock.ts';
 import { TradeDesk, TradeValidationError, describeAction } from './src/services/ai/trades.ts';
 
 /**
@@ -30,10 +31,22 @@ import { TradeDesk, TradeValidationError, describeAction } from './src/services/
  * Trades are signed and sent by the page with the key it holds; this server
  * never sees a key and never calls the exchange.
  *
+ * Sim sessions (SIM=1, see specs/sim.md) add:
+ *   POST   /api/sim/start       -> SimParams; the page enters replay at start
+ *   GET    /api/sim/clock       -> { active, state, cursor, end, endReason }
+ *   POST   /api/sim/idle        -> Stop hook: the agent's turn ended; replay runs until a wait resolves
+ *   POST   /api/sim/busy        -> PreToolUse / UserPromptSubmit hook: the agent is working
+ *   POST   /api/sim/stop        -> end the session
+ *
  * Page <-> server traffic uses Vite custom websocket events:
  *   client -> server  hl-ai:snapshot { snapshot, reqId? }, hl-ai:toggle { id, enabled }, hl-ai:hello {}
  *   server -> client  hl-ai:snapshot-request { reqId }, hl-ai:overlays { sets }, hl-ai:alerts { alerts }, hl-ai:trades { trades }
+ *   sim:  server -> client hl-ai:sim-start, hl-ai:sim-advance { reqId, minutes }
+ *         client -> server hl-ai:sim-started { cursor | error }, hl-ai:sim-tick { reqId, cursor, atEnd, minutes }
  */
+const SIM = process.env.SIM === '1';
+const SIM_START_TIMEOUT_MS = 60_000;
+const SIM_TICK_TIMEOUT_MS = 30_000;
 const SNAPSHOT_TIMEOUT_MS = 1500;
 const MAX_BODY = 1_000_000;
 
@@ -66,6 +79,14 @@ function readJson(req: IncomingMessage): Promise<unknown> {
   });
 }
 
+interface SimTick {
+  reqId: string;
+  cursor: number;
+  atEnd?: boolean;
+  minutes: Array<Record<string, SimBar>>;
+  error?: string;
+}
+
 export function aiOverlayPlugin(): Plugin {
   let snapshot: ChartSnapshot | null = null;
   let sets: OverlaySet[] = [];
@@ -86,10 +107,13 @@ export function aiOverlayPlugin(): Plugin {
       const overlaysPayload = () => ({ sets, enabled: [...enabled] });
       const broadcast = () => server.ws.send('hl-ai:overlays', overlaysPayload());
 
+      const sim = new SimClock(process.env.SIM_LOG || null, msg => server.config.logger.info(`[hl-sim] ${msg}`));
       const engine = new AlertEngine(
-        resolve(server.config.root, '.hl-alerts.json'),
+        resolve(server.config.root, SIM ? '.hl-alerts.sim.json' : '.hl-alerts.json'),
         msg => server.config.logger.info(`[hl-ai alerts] ${msg}`),
+        SIM ? { feed: 'manual', now: () => sim.cursor } : {},
       );
+      if (SIM) engine.clear();
       const alertsPayload = () => ({ alerts: engine.list() });
       engine.onChange(() => server.ws.send('hl-ai:alerts', alertsPayload()));
       server.httpServer?.once('close', () => engine.close());
@@ -115,6 +139,54 @@ export function aiOverlayPlugin(): Plugin {
         }
       });
 
+      /* ------------------------------------------------------------ sim --- */
+
+      // Open long-polls per alert id: a fired alert someone is waiting on wakes the agent at once.
+      const alertPolls = new Map<string, number>();
+      engine.onChange((_alerts, fired) => {
+        if (!SIM || !fired) return;
+        sim.event('alert-fired', { id: fired.id, level: fired.level, price: fired.firedPrice, note: fired.note });
+        if (alertPolls.get(fired.id)) sim.wake(fired.id, 'alert');
+      });
+
+      let simStarted: ((d: { cursor?: number; error?: string }) => void) | null = null;
+      server.ws.on('hl-ai:sim-started', (d: { cursor?: number; error?: string }) => simStarted?.(d));
+      const tickWaiters = new Map<string, (d: SimTick) => void>();
+      server.ws.on('hl-ai:sim-tick', (d: SimTick) => {
+        const w = tickWaiters.get(d?.reqId);
+        if (w) { tickWaiters.delete(d.reqId); w(d); }
+      });
+      const requestAdvance = (minutes: number): Promise<SimTick | null> => {
+        const reqId = `s${++reqSeq}`;
+        return new Promise(resolve => {
+          const timer = setTimeout(() => { tickWaiters.delete(reqId); resolve(null); }, SIM_TICK_TIMEOUT_MS);
+          tickWaiters.set(reqId, d => { clearTimeout(timer); resolve(d); });
+          server.ws.send('hl-ai:sim-advance', { reqId, minutes });
+        });
+      };
+
+      // Step the replay one minute at a time while the agent is idle.
+      let looping = false;
+      const runIdle = async () => {
+        if (looping) return;
+        looping = true;
+        try {
+          while (sim.state === 'idle') {
+            if (sim.params && sim.cursor >= sim.params.end) { sim.finish('reached end'); break; }
+            const tick = await requestAdvance(1);
+            if (!tick || tick.error) { sim.finish(`page did not advance: ${tick?.error ?? 'timeout'}`); break; }
+            sim.cursor = tick.cursor;
+            for (const m of tick.minutes) {
+              for (const [coin, bar] of Object.entries(m)) engine.ingestBar(coin, bar);
+            }
+            if (tick.atEnd) { sim.finish('data ended'); break; }
+          }
+        } finally {
+          looping = false;
+        }
+      };
+      sim.onIdle(() => { void runIdle(); });
+
       server.ws.on('hl-ai:toggle', (data: { id?: string; enabled?: boolean }) => {
         if (!data?.id) return;
         if (data.enabled) enabled.add(data.id); else enabled.delete(data.id);
@@ -136,6 +208,45 @@ export function aiOverlayPlugin(): Plugin {
       };
 
       server.middlewares.use(async (req, res, next) => {
+        if (!req.url || !req.url.startsWith('/api/sim/')) return next();
+        if (!SIM) return sendJson(res, 404, { error: 'not a sim server (start it with SIM=1)' });
+        const path = new URL(req.url, 'http://localhost').pathname;
+        try {
+          if (path === '/api/sim/clock' && req.method === 'GET') {
+            return sendJson(res, 200, {
+              active: sim.active, state: sim.state, cursor: sim.cursor,
+              end: sim.params?.end ?? null, endReason: sim.endReason,
+            });
+          }
+          if (req.method !== 'POST') return sendJson(res, 405, { error: `method ${req.method} not allowed` });
+          if (path === '/api/sim/start') {
+            const p = (await readJson(req)) as Partial<SimParams> | undefined;
+            if (!p?.asset || !p.interval || !Number.isFinite(p.start) || !Number.isFinite(p.end) || p.end! <= p.start!) {
+              return sendJson(res, 400, { error: 'need asset, interval, start, end (UTC ms, end > start)' });
+            }
+            sim.begin(p as SimParams);
+            const started = await new Promise<{ cursor?: number; error?: string } | null>(done => {
+              const timer = setTimeout(() => { simStarted = null; done(null); }, SIM_START_TIMEOUT_MS);
+              simStarted = d => { clearTimeout(timer); simStarted = null; done(d); };
+              server.ws.send('hl-ai:sim-start', p);
+            });
+            if (!started || started.error || started.cursor === undefined) {
+              sim.finish(`start failed: ${started?.error ?? 'no page answered'}`);
+              return sendJson(res, 502, { error: started?.error ?? 'no page answered hl-ai:sim-start; is a browser open on this server?' });
+            }
+            sim.started(started.cursor);
+            return sendJson(res, 200, { ok: true, cursor: sim.cursor });
+          }
+          if (path === '/api/sim/idle') { sim.idle(); return sendJson(res, 200, { state: sim.state }); }
+          if (path === '/api/sim/busy') { sim.activity(); return sendJson(res, 200, { state: sim.state }); }
+          if (path === '/api/sim/stop') { sim.finish('stopped'); return sendJson(res, 200, { state: sim.state }); }
+          return sendJson(res, 404, { error: 'unknown sim endpoint' });
+        } catch (e) {
+          return sendJson(res, 500, { error: String((e as Error)?.message ?? e) });
+        }
+      });
+
+      server.middlewares.use(async (req, res, next) => {
         if (!req.url || !req.url.startsWith('/api/ai/')) return next();
         const url = new URL(req.url, 'http://localhost');
 
@@ -144,6 +255,7 @@ export function aiOverlayPlugin(): Plugin {
             const fresh = await requestSnapshot();
             const view = (s: ChartSnapshot) => ({
               ...withOverlays(s),
+              ...(SIM ? { replay: false } : {}),
               alerts: engine.list().filter(a => a.asset === s.asset),
               proposals: desk.list().slice(-10),
             });
@@ -155,7 +267,14 @@ export function aiOverlayPlugin(): Plugin {
           if (url.pathname === '/api/ai/alerts/wait' && req.method === 'GET') {
             const id = url.searchParams.get('id') ?? '';
             const timeout = Math.min(30, Math.max(0, Number(url.searchParams.get('timeout') ?? 30) || 0));
-            const fired = await engine.wait(id, timeout * 1000);
+            alertPolls.set(id, (alertPolls.get(id) ?? 0) + 1);
+            let fired;
+            try {
+              fired = await engine.wait(id, timeout * 1000);
+            } finally {
+              alertPolls.set(id, (alertPolls.get(id) ?? 1) - 1);
+            }
+            if (SIM && fired) sim.wake(id, 'alert');
             if (fired === undefined) return sendJson(res, 404, { error: `no alert with id ${id}` });
             if (fired === null) return sendJson(res, 200, { status: 'armed' });
             return sendJson(res, 200, { status: 'fired', alert: fired });
@@ -211,6 +330,10 @@ export function aiOverlayPlugin(): Plugin {
             if (sub === '/wait' && req.method === 'GET') {
               const timeout = Math.min(30, Math.max(0, Number(url.searchParams.get('timeout') ?? 30) || 0));
               const t = await desk.wait(id, timeout * 1000);
+              if (SIM && t) {
+                sim.event('trade', { id: t.id, status: t.status, action: describeAction(t.action), result: t.result?.message });
+                sim.wake(id, 'trade');
+              }
               if (t === undefined) return sendJson(res, 404, { error: `no proposal with id ${id}` });
               if (t === null) return sendJson(res, 200, { status: desk.get(id)?.status ?? 'pending' });
               return sendJson(res, 200, { status: t.status, trade: t });
@@ -233,6 +356,9 @@ export function aiOverlayPlugin(): Plugin {
             }
             const b = (body ?? {}) as Record<string, unknown>;
 
+            if (sub === '' && SIM && b.mode === 'live') {
+              return sendJson(res, 400, { error: 'live trading is not enabled on this account; use paper' });
+            }
             if (sub === '') {
               const fresh = await requestSnapshot();
               const current = fresh ?? snapshot;

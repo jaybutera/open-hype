@@ -4,7 +4,7 @@ dist/
 tsconfig.tsbuildinfo
 .ralph-*.log
 node_modules
-.hl-alerts.json
+.hl-alerts*.json
 
 # secrets (GEXBOT_API_KEY)
 .env

@@ -45,6 +45,8 @@ let playTimer: ReturnType<typeof setInterval> | null = null;
 let advancing = false; // reentrancy guard for async advance
 let stepping = false; // reentrancy guard for stepForward
 let carry = 0; // fractional candles owed by the play timer
+/** While set, advanceOneMinute reports each revealed minute's 1m bars here (sim sessions). */
+let minuteSink: ((bars: Record<string, CandleData>) => void) | null = null;
 
 /** First index in a sorted, time-stamped array with t >= target. */
 function lowerBound(rows: readonly { t: number }[], target: number): number {
@@ -101,6 +103,8 @@ interface ReplayStore {
   stepForward: () => Promise<void>;
   /** Advance exactly n recorded minutes. */
   advanceMinutes: (n: number) => Promise<void>;
+  /** Advance n recorded minutes and return each minute's 1m bars by coin (sim sessions). */
+  simAdvance: (n: number) => Promise<Array<Record<string, CandleData>>>;
   togglePlay: () => void;
   setSpeed: (n: number) => void;
 }
@@ -320,6 +324,8 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
       market.appendCandle(mergeIntoInterval(last, c, pane.interval), pane.interval);
     }
 
+    if (minuteSink) minuteSink(Object.fromEntries(minuteCandles));
+
     const activeAsset = market.getActivePane().asset;
     const onTicks = tickedCoins.has(activeAsset);
     if (get().tickResolution !== onTicks) set({ tickResolution: onTicks });
@@ -498,6 +504,18 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
     advanceMinutes: async (n) => {
       if (!get().active) return;
       await advance(n);
+    },
+
+    simAdvance: async (n) => {
+      const out: Array<Record<string, CandleData>> = [];
+      if (!get().active) return out;
+      minuteSink = bars => out.push(bars);
+      try {
+        await advance(n);
+      } finally {
+        minuteSink = null;
+      }
+      return out;
     },
 
     togglePlay: () => {
