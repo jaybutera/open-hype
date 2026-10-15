@@ -20,6 +20,12 @@ import { asyncBufferFromFile, parquetReadObjects } from 'hyparquet';
  */
 const DATA_DIR = process.env.REPLAY_DATA_DIR ?? '/home/casper/src/ict-scanner/data';
 const TICK_DIR = join(DATA_DIR, 'ticks');
+/**
+ * Sim sessions (specs/sim.md) set SIM_SHIFT_MS to move the recording in time:
+ * every timestamp served is t + shift and every query is read back by
+ * subtracting it, so a recorded day can be replayed as today's session.
+ */
+const SHIFT = Number(process.env.SIM_SHIFT_MS || 0);
 
 /** Max candles per /candles response (a week of 1m is ~10k). */
 const MAX_ROWS = 100_000;
@@ -281,9 +287,9 @@ export function replayDataPlugin(): Plugin {
                 const ticks = tickDir ? tickCoverage(tickDir) : null;
                 return {
                   coin,
-                  firstTs: rows[0].t,
-                  lastTs: rows[rows.length - 1].t,
-                  ...(ticks ? { ticks } : {}),
+                  firstTs: rows[0].t + SHIFT,
+                  lastTs: rows[rows.length - 1].t + SHIFT,
+                  ...(ticks ? { ticks: { firstTs: ticks.firstTs + SHIFT, lastTs: ticks.lastTs + SHIFT } } : {}),
                 };
               }),
             );
@@ -292,8 +298,8 @@ export function replayDataPlugin(): Plugin {
 
           if (url.pathname === '/api/replay/ticks') {
             const coin = url.searchParams.get('coin') ?? '';
-            const start = Number(url.searchParams.get('start'));
-            const end = Number(url.searchParams.get('end'));
+            const start = Number(url.searchParams.get('start')) - SHIFT;
+            const end = Number(url.searchParams.get('end')) - SHIFT;
             if (!Number.isFinite(start) || !Number.isFinite(end)) {
               return sendJson(res, 400, { error: 'start and end (ms) required' });
             }
@@ -304,13 +310,14 @@ export function replayDataPlugin(): Plugin {
             if (end - start > DAY_MS) {
               return sendJson(res, 400, { error: 'range too large (max 24h)' });
             }
-            return sendJson(res, 200, await loadTicks(tickDir, start, end));
+            const ticks = await loadTicks(tickDir, start, end);
+            return sendJson(res, 200, SHIFT ? ticks.map(tk => ({ ...tk, t: tk.t + SHIFT })) : ticks);
           }
 
           if (url.pathname === '/api/replay/candles') {
             const coin = url.searchParams.get('coin') ?? '';
-            const start = Number(url.searchParams.get('start'));
-            const end = Number(url.searchParams.get('end'));
+            const start = Number(url.searchParams.get('start')) - SHIFT;
+            const end = Number(url.searchParams.get('end')) - SHIFT;
             const path = discoverFiles().get(coin);
             if (!path) return sendJson(res, 404, { error: `no replay data for ${coin}` });
             if (!Number.isFinite(start) || !Number.isFinite(end)) {
@@ -320,7 +327,10 @@ export function replayDataPlugin(): Plugin {
             const from = lowerBound(rows, start);
             const to = Math.min(lowerBound(rows, end), from + MAX_ROWS);
             const out = [];
-            for (let i = from; i < to; i++) out.push(toCandleData(coin, rows[i]));
+            for (let i = from; i < to; i++) {
+              const c = toCandleData(coin, rows[i]);
+              out.push(SHIFT ? { ...c, t: c.t + SHIFT, T: c.T + SHIFT } : c);
+            }
             return sendJson(res, 200, out);
           }
 

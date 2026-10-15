@@ -6,18 +6,25 @@
  *   node scripts/sim.mjs --asset xyz:SP500 --interval 5m \
  *     --start "2026-07-07 09:00 ET" --end "2026-07-07 16:00 ET" \
  *     --prompt "Trade the SP500 open." [--model claude-fable-5-1] [--port 3001]
- *     [--memory-seed DIR] [--no-faketime] [--out DIR]
+ *     [--memory-seed DIR] [--shift today|none|YYYY-MM-DD] [--no-faketime] [--out DIR]
+ *     [--ref origin/master]   (the commit the agent's checkout is made from)
  *
  * Starts a SIM=1 dev server on --port, opens the page in headless Chrome,
  * enters replay at --start, then runs `claude -p` with the hl-chart MCP
  * pointed at that server, hooks that tell the server when the agent's turn
  * ends, cron tools off, and auto memory in the run directory (seeded from
- * --memory-seed). Everything lands in --out (default /tmp/hl-sim/<run id>):
+ * --memory-seed).
+ *
+ * --shift (default today) moves the recording so the --start day is served
+ * as that date, keeping the ET time of day: Claude Code states the real date
+ * in its prompt and cannot run under libfaketime, so the data moves instead.
+ * Bash commands run under faketime at the replay cursor (CLAUDE_CODE_SHELL_PREFIX)
+ * unless --no-faketime. Everything lands in --out (default /tmp/hl-sim/<run id>):
  * sim.jsonl (clock events), claude.jsonl (the transcript), shots/*.png
  * (the chart at each wake), summary.json.
  */
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,11 +32,15 @@ import puppeteer from 'puppeteer-core';
 
 const REPO = resolve(fileURLToPath(import.meta.url), '../..');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const run = (cmd, argv) => new Promise((ok, fail) => {
+  const p = spawn(cmd, argv, { stdio: 'inherit' });
+  p.on('exit', code => (code === 0 ? ok() : fail(new Error(`${cmd} ${argv.join(' ')} exited ${code}`))));
+});
 
 /* --------------------------------------------------------------- args --- */
 
 function parseArgs(argv) {
-  const out = { interval: '5m', model: 'claude-fable-5-1', port: 3001, faketime: true };
+  const out = { interval: '5m', model: 'claude-fable-5-1', port: 3001, faketime: true, shift: 'today' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--no-faketime') { out.faketime = false; continue; }
@@ -65,9 +76,17 @@ function parseTime(s) {
   return ms;
 }
 
-/** faketime's absolute format, in UTC (the run's TZ is set to New York). */
-function faketimeSpec(ms) {
-  return '@' + new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+/** ET calendar date (YYYY-MM-DD) of a UTC instant. */
+function etDate(ms) {
+  return new Date(ms + nyOffsetMs(ms)).toISOString().slice(0, 10);
+}
+
+/** ms to add to recorded times so the start day plays as `target` (ET wall time kept). */
+function shiftFor(startMs, target) {
+  if (target === 'none') return 0;
+  const day = target === 'today' ? etDate(Date.now()) : target;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error(`--shift must be today, none or YYYY-MM-DD`);
+  return parseTime(`${day} 00:00 ET`) - parseTime(`${etDate(startMs)} 00:00 ET`);
 }
 
 function findChrome() {
@@ -83,9 +102,11 @@ function findChrome() {
 /* ---------------------------------------------------------------- run --- */
 
 const args = parseArgs(process.argv.slice(2));
-const start = parseTime(args.start);
-const end = parseTime(args.end);
-const runId = `${new Date(start).toISOString().slice(0, 10)}-${Date.now().toString(36)}`;
+const recStart = parseTime(args.start);
+const shift = shiftFor(recStart, args.shift);
+const start = recStart + shift;
+const end = parseTime(args.end) + shift;
+const runId = `${etDate(recStart)}-${Date.now().toString(36)}`;
 const out = resolve(args.out ?? join('/tmp/hl-sim', runId));
 const BASE = `http://127.0.0.1:${args.port}`;
 mkdirSync(join(out, 'shots'), { recursive: true });
@@ -113,10 +134,10 @@ async function http(method, path, body) {
 }
 
 // 1. Dev server.
-log(`run ${runId} -> ${out}`);
+log(`run ${runId} -> ${out}${shift ? ` (recording ${etDate(recStart)} plays as ${etDate(start)})` : ''}`);
 const vite = spawn(process.execPath, [join(REPO, 'node_modules/.bin/vite'), '--port', String(args.port), '--strictPort', '--host', '127.0.0.1'], {
   cwd: REPO,
-  env: { ...process.env, SIM: '1', SIM_LOG: join(out, 'sim.jsonl') },
+  env: { ...process.env, SIM: '1', SIM_LOG: join(out, 'sim.jsonl'), SIM_SHIFT_MS: String(shift) },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 children.push(vite);
@@ -148,10 +169,22 @@ if (!started) { await cleanup(); throw new Error('could not start the replay'); 
 log(`replay at ${new Date(started.cursor).toISOString()}`);
 await page.screenshot({ path: join(out, 'shots/000-start.png') });
 
-// 4. Claude session.
+// 4. Claude session. The agent works in a throwaway checkout of master with
+// the sim's own files removed, so its repo looks like a normal one.
+const agentDir = join(homedir(), '.cache/hlw', runId, 'hl-frontend');
+await run('git', ['-C', REPO, 'fetch', '-q', 'origin']);
+await run('git', ['-C', REPO, 'worktree', 'add', '-q', '--detach', agentDir, args.ref ?? 'origin/master']);
+for (const f of ['scripts/sim.mjs', 'sim-clock.ts', 'specs/sim.md']) rmSync(join(agentDir, f), { force: true });
+if (existsSync(join(REPO, '.env'))) cpSync(join(REPO, '.env'), join(agentDir, '.env'));
+symlinkSync(join(REPO, 'node_modules'), join(agentDir, 'node_modules'));
+
 const hook = path => ({ type: 'command', command: `curl -s -m 5 -X POST ${BASE}/api/sim/${path} >/dev/null || true` });
 writeFileSync(join(out, 'settings.json'), JSON.stringify({
   autoMemoryDirectory: join(out, 'memory'),
+  // Nothing a sim agent does may reach the real repo or box.
+  permissions: {
+    deny: ['Bash(git push:*)', 'Bash(scripts/deploy-box.sh:*)', 'Bash(*deploy-box*)', 'Bash(ssh:*)', 'Bash(systemctl:*)'],
+  },
   hooks: {
     Stop: [{ hooks: [hook('idle')] }],
     PreToolUse: [{ matcher: '*', hooks: [hook('busy')] }],
@@ -173,15 +206,28 @@ const claudeArgs = [
   '--permission-mode', 'bypassPermissions',
   '--output-format', 'stream-json', '--verbose',
 ];
+// Bash commands (and hooks) run through this prefix, which makes `date` read
+// the replay cursor. Only `date`: Claude's shell snapshot routes grep/find/rg
+// through the claude binary, which hangs under libfaketime's LD_PRELOAD.
+const prefix = join(out, 'shell-prefix.sh');
+writeFileSync(prefix, `#!/usr/bin/env bash
+export TZ=America/New_York
+c=$(curl -s -m 2 ${BASE}/api/sim/clock | sed -n 's/.*"cursor":\\([0-9]*\\).*/\\1/p')
+if [ -n "$c" ]; then
+  t=$(/usr/bin/date -d @$((c / 1000)) '+%Y-%m-%d %H:%M:%S')
+  exec bash -c "date() { faketime -f '@$t' /usr/bin/date \\"\\$@\\"; }; $*"
+fi
+exec bash -c "$*"
+`, { mode: 0o755 });
+
 // CLAUDE_BIN swaps in another agent binary with the same flags (tests use a scripted one).
 const claudeBin = process.env.CLAUDE_BIN || 'claude';
-const claudeCmd = args.faketime ? 'faketime' : claudeBin;
-const claudeFull = args.faketime ? ['-f', faketimeSpec(started.cursor), claudeBin, ...claudeArgs] : claudeArgs;
 const env = { ...process.env, TZ: 'America/New_York' };
+if (args.faketime) env.CLAUDE_CODE_SHELL_PREFIX = prefix;
 const tokenFile = join(homedir(), '.config/hl-sim/token');
 if (!env.CLAUDE_CODE_OAUTH_TOKEN && existsSync(tokenFile)) env.CLAUDE_CODE_OAUTH_TOKEN = readFileSync(tokenFile, 'utf8').trim();
-log(`claude ${args.model}${args.faketime ? ` (faketime ${faketimeSpec(started.cursor)})` : ''}`);
-const claude = spawn(claudeCmd, claudeFull, { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
+log(`claude ${args.model}`);
+const claude = spawn(claudeBin, claudeArgs, { cwd: agentDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
 children.push(claude);
 const transcript = [];
 let buf = '';
@@ -236,11 +282,12 @@ await page.screenshot({ path: join(out, 'shots/999-end.png') }).catch(() => {});
 const result = transcript.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(m => m?.type === 'result').at(-1);
 writeFileSync(join(out, 'paper-accounts.json'), paper ?? 'null');
 writeFileSync(join(out, 'summary.json'), JSON.stringify({
-  runId, params: { ...args, start, end }, claudeExit: exitCode,
+  runId, params: { ...args, start, end, shiftMs: shift, recordedStart: recStart }, claudeExit: exitCode,
   cost: result?.total_cost_usd ?? null,
   end: { cursor: view?.takenAt ?? null, mid: view?.mid ?? null, position: view?.position ?? null, orders: view?.orders ?? [] },
 }, null, 2));
 writeFileSync(join(out, 'vite.log'), viteLog.join(''));
+await run('git', ['-C', REPO, 'worktree', 'remove', '--force', agentDir]).catch(e => log(`worktree remove: ${e.message}`));
 log(`done: ${out}`);
 await cleanup();
 process.exit(0);
