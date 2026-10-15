@@ -26,7 +26,7 @@
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 
@@ -288,6 +288,7 @@ writeFileSync(join(out, 'summary.json'), JSON.stringify({
 }, null, 2));
 writeFileSync(join(out, 'vite.log'), viteLog.join(''));
 await run('git', ['-C', REPO, 'worktree', 'remove', '--force', agentDir]).catch(e => log(`worktree remove: ${e.message}`));
+rmSync(dirname(agentDir), { recursive: true, force: true });
 log(`done: ${out}`);
 await cleanup();
 process.exit(0);
