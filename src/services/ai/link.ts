@@ -14,6 +14,8 @@ import { useAiOverlayStore, onOverlayToggle } from '../../store/useAiOverlayStor
 import { useAlertStore } from '../../store/useAlertStore.ts';
 import { useAiTradeStore } from '../../store/useAiTradeStore.ts';
 import { useWalletStore, selectActiveAccount } from '../../store/useWalletStore.ts';
+import { useGexStore } from '../../store/useGexStore.ts';
+import { gexSummary } from '../gex/levels.ts';
 import { NETWORK } from '../hl/network.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { TradeProposal } from './trades.ts';
@@ -150,6 +152,12 @@ export function buildSnapshot(): ChartSnapshot {
       : null,
     fibs: view?.fibs ?? [],
     overlays: sets.map(s => ({ id: s.id, name: s.name, enabled: enabledIds.includes(s.id) })),
+    gex: (() => {
+      const g = useGexStore.getState();
+      const ticker = g.tickerFor(asset);
+      const d = ticker ? g.current(ticker) : undefined;
+      return ticker && d ? gexSummary(d, g.offsetFor(ticker)) : null;
+    })(),
   };
 }
 

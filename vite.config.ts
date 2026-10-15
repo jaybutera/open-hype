@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { replayDataPlugin } from './vite-replay-plugin.ts';
 import { aiOverlayPlugin } from './vite-ai-plugin.ts';
+import { gexPlugin } from './vite-gex-plugin.ts';
 
 // Yahoo returns very large Set-Cookie + CSP headers; default 16KB undici buffer overflows.
 const bigHeaderAgent = new Agent({
@@ -136,7 +137,7 @@ function yahooProxyPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), yahooProxyPlugin(), replayDataPlugin(), aiOverlayPlugin()],
+  plugins: [react(), yahooProxyPlugin(), replayDataPlugin(), aiOverlayPlugin(), gexPlugin()],
   // allowedHosts: the dev server also runs on the box machine and is opened by name over the LAN/Tailscale.
   server: { port: 3000, allowedHosts: ['box', 'box.lan', 'box.tailbee2ae.ts.net'] },
 });

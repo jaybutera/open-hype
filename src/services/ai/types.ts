@@ -4,6 +4,8 @@
  * (as JSON) the MCP server in scripts/hl-chart-mcp.mjs.
  */
 
+import type { GexSummary } from '../gex/levels.ts';
+
 export interface SnapshotCandle {
   /** Bar open time, UTC ms. */
   t: number;
@@ -78,6 +80,8 @@ export interface ChartSnapshot {
   pendingSetup: { side: 'long' | 'short'; clicks: number[] } | null;
   fibs: SnapshotFib[];
   overlays: Array<{ id: string; name: string; enabled: boolean }>;
+  /** GEXBot levels for the asset's options (xyz:SP500 -> SPX etc.); null when the asset has none or nothing has loaded. */
+  gex?: GexSummary | null;
 }
 
 /* ------------------------------------------------------------ inputs --- */

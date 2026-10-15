@@ -19,6 +19,10 @@ import { registerSnapshotProvider } from '../../services/ai/link.ts';
 import type { SnapshotCandle, OverlaySet } from '../../services/ai/types.ts';
 import { useAlertStore } from '../../store/useAlertStore.ts';
 import { alertLine } from '../../services/ai/alerts.ts';
+import { GexPrimitive } from './GexPrimitive.ts';
+import { useGexStore } from '../../store/useGexStore.ts';
+import { useGexFeed } from '../../services/gex/useGexFeed.ts';
+import { gexLevelSet } from '../../services/gex/levels.ts';
 
 /** Max candles a snapshot carries (the most recent visible ones). */
 const SNAPSHOT_MAX_BARS = 600;
@@ -63,6 +67,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const candles = pane?.candles ?? [];
   const currentAsset = pane?.asset ?? 'BTC';
   const interval = pane?.interval ?? '5m';
+  const gexLevelPrimRef = useRef<AiOverlayPrimitive | null>(null);
+  const gexPrimRef = useRef<GexPrimitive | null>(null);
+  const gexLevelsOn = useGexStore(s => s.levels);
+  const gexStrikes = useGexStore(s => s.strikes);
+  const gexTicker = useGexFeed(currentAsset);
+  const gexData = useGexStore(s => (gexTicker ? s.current(gexTicker) : undefined));
+  const gexOffset = useGexStore(s => (gexTicker ? s.offsetFor(gexTicker) : 0));
   const allMids = useMarketStore(s => s.allMids);
   const setInterval = useMarketStore(s => s.setInterval);
   const loadCandles = useMarketStore(s => s.loadCandles);
@@ -630,6 +641,34 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     if (prim) prim.setSet(set);
     else { const p = new AiOverlayPrimitive(set); series.attachPrimitive(p); alertPrimRef.current = p; }
   }, [alerts, currentAsset]);
+
+  // GEX levels for this asset's options: zero gamma and the major strikes as labelled lines
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const prim = gexLevelPrimRef.current;
+    if (!gexLevelsOn || !gexData) {
+      if (prim) { prim.requestRedraw(); series.detachPrimitive(prim); gexLevelPrimRef.current = null; }
+      return;
+    }
+    const set = gexLevelSet(currentAsset, gexData, gexOffset);
+    if (prim) prim.setSet(set);
+    else { const p = new AiOverlayPrimitive(set); series.attachPrimitive(p); gexLevelPrimRef.current = p; }
+  }, [gexLevelsOn, gexData, gexOffset, currentAsset]);
+
+  // GEX strike profile: bars off the price axis, behind the candles
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const prim = gexPrimRef.current;
+    if (gexStrikes === 'off' || !gexData) {
+      if (prim) { prim.requestRedraw(); series.detachPrimitive(prim); gexPrimRef.current = null; }
+      return;
+    }
+    const profile = { data: gexData, mode: gexStrikes, offset: gexOffset };
+    if (prim) prim.setProfile(profile);
+    else { const p = new GexPrimitive(profile); series.attachPrimitive(p); gexPrimRef.current = p; }
+  }, [gexStrikes, gexData, gexOffset, currentAsset]);
 
   // The active pane answers AI snapshot requests with what is actually on screen
   useEffect(() => {
