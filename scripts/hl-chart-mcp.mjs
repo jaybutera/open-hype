@@ -29,6 +29,9 @@ const COLOR = {
   type: 'string',
   description: 'Hex #rgb/#rrggbb or one of green, red, blue, yellow, orange, purple, white, gray. Defaults to the set colour.',
 };
+const WINDOW_TIME = { oneOf: [{ type: 'number' }, { type: 'string' }] };
+const INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'];
+const MAX_CANDLES = 1000;
 const PRICE = { type: 'number', exclusiveMinimum: 0 };
 const TEXT = { type: 'string', description: 'Short on-chart text (a few words).' };
 
@@ -181,6 +184,31 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_candles',
+    description: [
+      'Read Hyperliquid mainnet candles for any asset, interval and time window, independent of the pane the user has open.',
+      'Call it when you need a timeframe other than the open pane\'s (e.g. the 4h or 1d structure behind a 5m chart), another asset,',
+      'or bars outside the visible range. Same compact rows as get_chart_view: `columns` names [t_ms, "YYYY-MM-DD HH:MM ET", open,',
+      'high, low, close, volume]; t_ms is the bar open in UTC ms, the ET string is that instant in New York time. The last row is',
+      'the bar still forming. Window: `from`/`to` (UTC ms, ISO-8601 with zone, or "YYYY-MM-DD HH:MM ET"; `to` defaults to now), or',
+      '`bars` most recent bars (default 200). At most 1000 bars come back; when the window holds more, the most recent 1000 are',
+      'kept and `clipped` says so. `asset` defaults to the charted asset; HIP-3 assets use "dex:COIN", e.g. "xyz:SP500".',
+      'The response also carries the resolved window and the current mid.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        asset: { type: 'string', description: 'Defaults to the charted asset. HIP-3 assets use "dex:COIN", e.g. "xyz:SP500".' },
+        interval: { enum: INTERVALS, description: 'Bar interval.' },
+        from: { ...WINDOW_TIME, description: 'Window start: UTC ms, ISO-8601 with zone, or "YYYY-MM-DD HH:MM ET". Use with `to`, instead of `bars`.' },
+        to: { ...WINDOW_TIME, description: 'Window end, same formats; defaults to now.' },
+        bars: { type: 'integer', minimum: 1, maximum: MAX_CANDLES, description: 'Number of bars ending at `to` (default now) when `from` is not given. Default 200.' },
+      },
+      required: ['interval'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'set_alert',
     description: [
       'Arm a price alert on the dev server; it watches Hyperliquid directly, so it keeps working when the chart tab is closed.',
@@ -199,7 +227,7 @@ const TOOLS = [
         level: { type: 'number', exclusiveMinimum: 0, description: 'Exact price.' },
         direction: { enum: ['above', 'below'], description: 'Defaults from the current mid.' },
         kind: { enum: ['cross', 'close'], description: 'Default "cross".' },
-        interval: { enum: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'], description: 'Required for kind "close".' },
+        interval: { enum: INTERVALS, description: 'Required for kind "close".' },
         asset: { type: 'string', description: 'Defaults to the charted asset.' },
         note: { type: 'string', maxLength: 300, description: 'What this level means (tooltip in the app).' },
         force: { type: 'boolean', description: 'Arm a cross alert whose level is already past the mid; it fires on the next tick.' },
@@ -363,6 +391,159 @@ function etOf(ms) {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ET`;
 }
 
+/* ------------------------------------------------------------ candles --- */
+
+const HL_INFO = 'https://api.hyperliquid.xyz/info';
+const INTERVAL_MS = {
+  '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+  '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '8h': 28_800_000, '12h': 43_200_000,
+  '1d': 86_400_000, '3d': 259_200_000, '1w': 604_800_000, '1M': 31 * 86_400_000,
+};
+
+async function hlInfo(body) {
+  let res;
+  try {
+    res = await fetch(HL_INFO, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch (e) {
+    throw new Error(`cannot reach Hyperliquid at ${HL_INFO} (${e?.cause?.code || e.message})`);
+  }
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Hyperliquid info ${body.type} answered ${res.status}: ${text.slice(0, 200)}`);
+  return JSON.parse(text);
+}
+
+/** New York UTC offset in ms at a UTC instant (negative: -4h in EDT, -5h in EST). */
+function nyOffsetMs(ms) {
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(ms)).reduce((o, x) => (o[x.type] = x.value, o), {});
+  const wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return wall - Math.floor(ms / 1000) * 1000;
+}
+
+/** "YYYY-MM-DD HH:MM[:SS]" New York wall time -> UTC ms. Mirrors src/utils/chartTime.ts etToUtcMs. */
+function etToUtcMs(wall) {
+  const m = wall.trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)$/);
+  if (!m) return null;
+  const naive = Date.parse(`${m[1]}T${m[2].length === 5 ? m[2] + ':00' : m[2]}Z`);
+  if (!Number.isFinite(naive)) return null;
+  const guess = naive - nyOffsetMs(naive);
+  return naive - nyOffsetMs(guess);
+}
+
+/** Same rules as src/services/ai/validate.ts parseTime (the overlay times). */
+function parseTime(value, field) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) throw new Error(`${field}: ${value} is not a positive number`);
+    return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
+  }
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (s.toLowerCase() === 'now') return Date.now();
+    if (/^\d+(\.\d+)?$/.test(s)) return parseTime(Number(s), field);
+    const et = s.match(/^(.*?)\s*(?:ET|EST|EDT|America\/New_York)$/i);
+    if (et) {
+      const ms = etToUtcMs(et[1]);
+      if (ms !== null) return ms;
+    } else {
+      const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
+      const ms = Date.parse(hasZone ? s : `${s.replace(' ', 'T')}Z`);
+      if (Number.isFinite(ms) && /^\d{4}-\d{2}-\d{2}/.test(s)) return ms;
+    }
+  }
+  throw new Error(`${field}: cannot read time ${JSON.stringify(value)}; use UTC ms, an ISO-8601 string with zone, or "YYYY-MM-DD HH:MM ET"`);
+}
+
+/**
+ * candleSnapshot over [start, end]. Hyperliquid answers a long window with
+ * only its most recent ~5000 bars, so page backwards until start is covered.
+ */
+async function fetchCandles(coin, interval, start, end) {
+  let out = [];
+  let hi = end;
+  for (let page = 0; page < 20 && hi >= start; page++) {
+    const rows = await hlInfo({ type: 'candleSnapshot', req: { coin, interval, startTime: start, endTime: hi } });
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    const firstT = out.length ? out[0].t : Infinity;
+    const fresh = rows.filter(r => r.t < firstT);
+    if (fresh.length === 0) break;
+    out = fresh.concat(out);
+    if (fresh[0].t <= start) break;
+    hi = fresh[0].t - 1;
+  }
+  return out;
+}
+
+async function getCandles(args) {
+  const interval = args.interval;
+  if (!INTERVAL_MS[interval]) throw new Error(`interval must be one of ${INTERVALS.join(', ')}`);
+  const barMs = INTERVAL_MS[interval];
+
+  let asset = args.asset ? String(args.asset).trim() : null;
+  if (!asset) {
+    const view = await http('GET', '/api/ai/view');
+    asset = view.status === 200 ? view.json?.asset ?? null : null;
+    if (!asset) return textResult('No asset given and no chart is connected to default to; pass `asset` (e.g. "BTC" or "xyz:SP500").', true);
+  }
+
+  const now = Date.now();
+  let to = args.to === undefined ? now : parseTime(args.to, 'to');
+  if (to > now) to = now;
+  let from;
+  let wanted;
+  if (args.from !== undefined) {
+    from = parseTime(args.from, 'from');
+    if (from >= to) throw new Error(`from (${new Date(from).toISOString()}) must be before to (${new Date(to).toISOString()})`);
+  } else {
+    wanted = Math.min(Math.max(1, Math.floor(args.bars ?? 200)), MAX_CANDLES);
+    // One spare bar so the window still holds `wanted` full bars after alignment.
+    from = to - (wanted + 1) * barMs;
+  }
+  // Never fetch far more than can be returned.
+  const fetchFrom = Math.max(from, to - (MAX_CANDLES + 2) * barMs);
+
+  const [raw, mids] = await Promise.all([
+    fetchCandles(asset, interval, fetchFrom, to).catch(e => {
+      throw new Error(`${e.message}. Hyperliquid answers this way for an unknown coin; check "${asset}" (HIP-3 assets use "dex:COIN", e.g. "xyz:SP500").`);
+    }),
+    hlInfo(asset.includes(':') ? { type: 'allMids', dex: asset.split(':')[0] } : { type: 'allMids' }).catch(() => null),
+  ]);
+
+  // Bars whose open lies in the window; a from mid-bar keeps the bar containing it.
+  let rows = raw.filter(r => r.t + barMs > from && r.t <= to);
+  if (wanted !== undefined) rows = rows.slice(-wanted);
+  // fetchFrom > from means the window was cut to the last MAX_CANDLES bars before fetching;
+  // it only counts as clipped if Hyperliquid had bars before the cut.
+  const clipped = rows.length > MAX_CANDLES || (args.bars ?? 0) > MAX_CANDLES
+    || (fetchFrom > from && rows.length > 0 && rows[0].t <= fetchFrom + barMs);
+  if (rows.length > MAX_CANDLES) rows = rows.slice(-MAX_CANDLES);
+
+  const mid = mids && mids[asset] !== undefined ? Number(mids[asset]) : null;
+  const result = {
+    asset,
+    interval,
+    window: {
+      from: { ms: from, et: etOf(from) },
+      to: { ms: to, et: etOf(to) },
+      ...(rows.length ? { first: { ms: rows[0].t, et: etOf(rows[0].t) }, last: { ms: rows[rows.length - 1].t, et: etOf(rows[rows.length - 1].t) } } : {}),
+    },
+    bars: rows.length,
+    ...(mid !== null && Number.isFinite(mid) ? { mid } : {}),
+    timezone: 'America/New_York',
+    columns: ['t_ms', 'et', 'o', 'h', 'l', 'c', 'v'],
+    candles: rows.map(r => [r.t, etOf(r.t), Number(r.o), Number(r.h), Number(r.l), Number(r.c), Number(r.v)]),
+  };
+  if (clipped) {
+    result.clipped = `The window holds more than ${MAX_CANDLES} ${interval} bars; only the most recent ${rows.length} are returned (from ${result.window.first?.et ?? '?'}). Narrow the window or use a larger interval for earlier bars.`;
+  }
+  if (rows.length === 0) result.note = `Hyperliquid returned no ${interval} bars for ${asset} in this window; check the asset name (HIP-3 assets use "dex:COIN") and the times.`;
+  else if (!clipped && rows[0].t > from + barMs && wanted === undefined) {
+    result.note = `Hyperliquid has no ${interval} bars for ${asset} before ${result.window.first.et}; it keeps a limited history per interval, so use a larger interval for earlier bars.`;
+  }
+  return textResult(result);
+}
+
 const NEAR_STRIKES = 40;
 
 /** GEXBot's raw classic response -> levels plus [strike, gexVol, gexOi] rows. */
@@ -419,6 +600,7 @@ async function callTool(name, args = {}) {
       note: 'Sets are not visible until the user toggles their buttons on.',
     });
   }
+  if (name === 'get_candles') return getCandles(args);
   if (name === 'get_gex') {
     let ticker = args.ticker ? String(args.ticker).toUpperCase() : null;
     let asset = null;
@@ -495,7 +677,7 @@ async function handle(msg) {
           protocolVersion: params?.protocolVersion || '2025-06-18',
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: 'Reads the user\'s open Hyperliquid chart (get_chart_view), pushes toggleable overlay sets onto it (push_overlays), arms price alerts (set_alert) that wake this session when they fire, and places trades through the open app (propose_order, propose_tpsl, propose_cancel, propose_close), which signs and sends them, by default without a confirm click.',
+          instructions: 'Reads the user\'s open Hyperliquid chart (get_chart_view) and candles for any asset, interval and window (get_candles), pushes toggleable overlay sets onto it (push_overlays), arms price alerts (set_alert) that wake this session when they fire, and places trades through the open app (propose_order, propose_tpsl, propose_cancel, propose_close), which signs and sends them, by default without a confirm click.',
         });
       case 'notifications/initialized':
       case 'notifications/cancelled':
@@ -539,6 +721,7 @@ rl.on('line', line => {
 // Finish in-flight requests (e.g. piped input) before exiting.
 rl.on('close', async () => {
   await Promise.allSettled([...pending]);
-  process.exit(0);
+  // Exit only after stdout drains; a pipe holds 64 KiB and a large reply would be cut.
+  process.stdout.write('', () => process.exit(0));
 });
 log(`ready, frontend ${BASE}`);
