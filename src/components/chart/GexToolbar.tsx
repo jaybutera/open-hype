@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { useGexStore } from '../../store/useGexStore.ts';
 import { GEX_DTES, formatGex } from '../../services/gex/types.ts';
 import { formatEt } from '../../utils/chartTime.ts';
@@ -39,8 +39,6 @@ export function GexToolbar({ ticker, interval }: Props) {
   const setDte = useGexStore(s => s.setDte);
   const data = useGexStore(s => (ticker ? s.current(ticker) : undefined));
   const error = useGexStore(s => (ticker ? s.errors[`${ticker}/${s.dte}`] : undefined));
-
-  const now = useNowEt();
 
   if (!ticker) return null;
   const anyOn = levels || strikes !== 'off';
@@ -89,17 +87,14 @@ export function GexToolbar({ ticker, interval }: Props) {
               </button>
             ))}
           </span>
-          <span
-            style={{ fontSize: 11, color: '#555', marginLeft: 6 }}
-            title={data
-              ? `New York time now; "data" is the GEXBot reading at ${formatEt(data.timestamp)} when it is older than the clock (it stops updating after the close). Spot ${data.spot}, net GEX ${formatGex(data.sumGexVol)} by volume / ${formatGex(data.sumGexOi)} by OI`
-              : 'New York time now'}
-          >
-            {clockEt(now)} ET
-            {data && now - data.timestamp > STALE_MS && (
-              <span style={{ marginLeft: 4, color: '#444' }}>· data {clockEt(data.timestamp)}</span>
-            )}
-          </span>
+          {data && (
+            <span
+              style={{ fontSize: 11, color: '#555', marginLeft: 6 }}
+              title={`Time of the GEXBot reading on the chart; it updates about once a minute in the session and stops at the 16:00 ET close. Spot ${data.spot}, net GEX ${formatGex(data.sumGexVol)} by volume / ${formatGex(data.sumGexOi)} by OI`}
+            >
+              as of {clockEt(data.timestamp)} ET
+            </span>
+          )}
           {error && <span style={{ fontSize: 11, color: '#f6465d', marginLeft: 6 }} title={error}>GEX error</span>}
         </>
       )}
@@ -107,17 +102,4 @@ export function GexToolbar({ ticker, interval }: Props) {
   );
 }
 
-/** A GEXBot reading older than this against the clock is marked as data time. */
-const STALE_MS = 2 * 60_000;
-
 const clockEt = (ms: number) => formatEt(ms).slice(11, 16);
-
-/** UTC ms now, refreshed every 15 s so the toolbar clock keeps New York time. */
-function useNowEt(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 15_000);
-    return () => window.clearInterval(id);
-  }, []);
-  return now;
-}
