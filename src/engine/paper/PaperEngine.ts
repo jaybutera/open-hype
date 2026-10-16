@@ -4,7 +4,7 @@ import { DEFAULT_LEVERAGE, MAINTENANCE_MARGIN_RATE, MAKER_FEE_RATE, TAKER_FEE_RA
 import { matchOrders, matchTriggersByCandle, type PaperOrder, type FillResult } from './matching.ts';
 import { applyFill, computeUnrealizedPnl, computeLiquidationPrice, type PaperPosition } from './positions.ts';
 import { calculateFee, hip3Rates, type DexFee } from './pnl.ts';
-import { createLedgerEntry, fillDir, createOptionLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
+import { createLedgerEntry, fillDir, withFillDirs, createOptionLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
 import type { Leg, OptionContract } from '../../services/options/types.ts';
 import {
   serializeOptionPosition,
@@ -117,7 +117,7 @@ export class PaperEngine {
       this.positions.set(p.coin, p);
     }
     this.openOrders = rehydrateOrders(saved.openOrders);
-    this.fills = [...saved.fills];
+    this.fills = withFillDirs(saved.fills);
     this.optionPositions.clear();
     for (const raw of saved.optionPositions ?? []) {
       const op = deserializeOptionPosition(raw);

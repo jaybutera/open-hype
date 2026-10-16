@@ -32,6 +32,21 @@ export function fillDir(prevSzi: Decimal, side: 'buy' | 'sell', size: Decimal): 
 
 let nextId = 1;
 
+/**
+ * Fill in `dir` on perp fills saved before it was recorded. Every paper position change is a
+ * fill, so walking the ledger in order rebuilds the position each fill was made against.
+ */
+export function withFillDirs(fills: LedgerEntry[]): LedgerEntry[] {
+  const szi = new Map<string, Decimal>();
+  return fills.map(f => {
+    if (f.kind && f.kind !== 'perp') return f;
+    const prev = szi.get(f.coin) ?? new Decimal(0);
+    const size = new Decimal(f.size);
+    szi.set(f.coin, f.side === 'buy' ? prev.add(size) : prev.sub(size));
+    return f.dir ? f : { ...f, dir: fillDir(prev, f.side, size) };
+  });
+}
+
 export function createLedgerEntry(
   coin: string,
   side: 'buy' | 'sell',
