@@ -17,11 +17,11 @@ function ErrorLine() {
   return (
     <div role="alert" data-testid="wallet-error" style={{
       position: 'absolute', right: 0, top: '100%', marginTop: 6, maxWidth: 360,
-      background: '#2a1215', border: '1px solid #f6465d', color: '#f6465d',
+      background: '#2a1215', border: '1px solid var(--down)', color: 'var(--down)',
       fontSize: 11, padding: '6px 8px', display: 'flex', gap: 8, zIndex: 300,
     }}>
       <span style={{ flex: 1 }}>{error}</span>
-      <button onClick={clearError} aria-label="Dismiss" style={{ background: 'none', border: 0, color: '#f6465d', cursor: 'pointer' }}>×</button>
+      <button onClick={clearError} aria-label="Dismiss" style={{ background: 'none', border: 0, color: 'var(--down)', cursor: 'pointer' }}>×</button>
     </div>
   );
 }
@@ -102,8 +102,8 @@ export function WalletConnect() {
   const netBadge = (
     <span data-testid="network-badge" style={{
       fontSize: 10, fontWeight: 700, padding: '2px 6px',
-      color: NETWORK === 'mainnet' ? '#f6465d' : '#f0b90b',
-      border: `1px solid ${NETWORK === 'mainnet' ? '#f6465d' : '#f0b90b'}`,
+      color: NETWORK === 'mainnet' ? 'var(--down)' : '#f0b90b',
+      border: `1px solid ${NETWORK === 'mainnet' ? 'var(--down)' : '#f0b90b'}`,
     }}>
       {NETWORK.toUpperCase()}
     </span>
@@ -154,7 +154,7 @@ export function WalletConnect() {
         </button>
       )}
       {tradingStatus === 'approving' && <span style={{ fontSize: 11, color: '#f0b90b' }}>Approve in wallet…</span>}
-      {tradingStatus === 'ready' && <span data-testid="trading-ready" style={{ fontSize: 11, color: '#0ecb81' }}>Trading enabled</span>}
+      {tradingStatus === 'ready' && <span data-testid="trading-ready" style={{ fontSize: 11, color: 'var(--up)' }}>Trading enabled</span>}
       <button className="btn-secondary" onClick={disconnect} style={{ padding: '4px 10px', fontSize: 11 }}>
         Disconnect
       </button>

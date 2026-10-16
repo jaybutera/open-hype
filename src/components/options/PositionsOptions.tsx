@@ -112,9 +112,9 @@ function SpreadRow({
 
   const entryNum = entry.toNumber();
   const entryLabel = entryNum > 0 ? 'Debit' : entryNum < 0 ? 'Credit' : 'Even';
-  const entryColor = entryNum > 0 ? '#f6465d' : entryNum < 0 ? '#0ecb81' : '#8a8f98';
+  const entryColor = entryNum > 0 ? 'var(--down)' : entryNum < 0 ? 'var(--up)' : '#8a8f98';
   const pnlNum = pnl.toNumber();
-  const pnlColor = pnlNum > 0 ? '#0ecb81' : pnlNum < 0 ? '#f6465d' : '#8a8f98';
+  const pnlColor = pnlNum > 0 ? 'var(--up)' : pnlNum < 0 ? 'var(--down)' : '#8a8f98';
   const dteLabel = nearest === farthest ? fmtDte(nearest) : `${fmtDte(nearest)} → ${fmtDte(farthest)}`;
   const allLegsPriced = mark.legsPriced === legs.length;
   const showLiveValues = useQuotes ? mark.legsPriced > 0 : chainMatches && mark.legsPriced > 0;
@@ -175,8 +175,8 @@ function SpreadRow({
             fontSize: 11,
             fontWeight: 600,
             color: canClose ? '#e1e4e8' : '#4d545f',
-            background: canClose ? 'rgba(246,70,93,0.10)' : 'transparent',
-            border: `1px solid ${canClose ? '#f6465d' : '#1a1f2e'}`,
+            background: canClose ? 'color-mix(in srgb, var(--down) 10%, transparent)' : 'transparent',
+            border: `1px solid ${canClose ? 'var(--down)' : '#1a1f2e'}`,
             cursor: canClose ? 'pointer' : 'not-allowed',
             letterSpacing: 0.3,
             fontFamily: 'inherit',
@@ -191,7 +191,7 @@ function SpreadRow({
           style={{
             padding: '4px 14px 8px',
             fontSize: 11,
-            color: feedback.kind === 'success' ? '#0ecb81' : '#f6465d',
+            color: feedback.kind === 'success' ? 'var(--up)' : 'var(--down)',
           }}
         >
           {feedback.message}
@@ -238,7 +238,7 @@ function SpreadRow({
             {legs.map((l) => {
               const long = l.szi.isPositive();
               const sideLabel = long ? 'LONG' : 'SHORT';
-              const sideColor = long ? '#0ecb81' : '#f6465d';
+              const sideColor = long ? 'var(--up)' : 'var(--down)';
               const cost = legCostBasis(l).toNumber();
               const qty = l.szi.abs().toNumber();
               let hit: OptionContract | null = null;
@@ -276,7 +276,7 @@ function SpreadRow({
                   <span style={{ color: '#8a8f98' }}>
                     Basis {fmtSigned(cost)}
                   </span>
-                  <span style={{ color: legPnl === null ? '#8a8f98' : legPnl >= 0 ? '#0ecb81' : '#f6465d' }}>
+                  <span style={{ color: legPnl === null ? '#8a8f98' : legPnl >= 0 ? 'var(--up)' : 'var(--down)' }}>
                     {legPnl === null ? '—' : fmtSigned(legPnl)}
                   </span>
                 </div>

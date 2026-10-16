@@ -11,13 +11,13 @@ interface Props {
 export function LiveOrderConfirm({ order, busy, onConfirm, onCancel }: Props) {
   const { summary, wires, leverage } = order;
   const isMainnet = summary.network === 'mainnet';
-  const color = summary.side === 'buy' ? '#0ecb81' : '#f6465d';
+  const color = summary.side === 'buy' ? 'var(--up)' : 'var(--down)';
   return (
     <div data-testid="live-confirm" style={{
-      border: `1px solid ${isMainnet ? '#f6465d' : '#f0b90b'}`, padding: 10, fontSize: 12,
+      border: `1px solid ${isMainnet ? 'var(--down)' : '#f0b90b'}`, padding: 10, fontSize: 12,
       display: 'flex', flexDirection: 'column', gap: 6, background: '#11151f',
     }}>
-      <div style={{ fontWeight: 700, color: isMainnet ? '#f6465d' : '#f0b90b' }}>
+      <div style={{ fontWeight: 700, color: isMainnet ? 'var(--down)' : '#f0b90b' }}>
         {isMainnet ? 'REAL ORDER on Hyperliquid mainnet' : 'Testnet order'}
       </div>
       <div data-testid="live-confirm-account" style={{ color: '#e1e4e8' }}>{summary.account}</div>

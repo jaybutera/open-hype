@@ -95,7 +95,7 @@ export function GexToolbar({ ticker, interval }: Props) {
               {data.proxy ? `${data.ticker} ×${data.proxy.factor.toFixed(1)} · ` : ''}as of {clockEt(data.timestamp)} ET
             </span>
           )}
-          {error && <span style={{ fontSize: 11, color: '#f6465d', marginLeft: 6 }} title={error}>GEX error</span>}
+          {error && <span style={{ fontSize: 11, color: 'var(--down)', marginLeft: 6 }} title={error}>GEX error</span>}
         </>
       )}
     </span>

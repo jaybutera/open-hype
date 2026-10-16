@@ -110,7 +110,7 @@ export function ReplayControls() {
       <div style={barStyle}>
         <span style={{ fontSize: 12, fontWeight: 700, color: AMBER, flexShrink: 0 }}>REPLAY SETUP</span>
         {assetsError ? (
-          <span style={{ fontSize: 12, color: '#f6465d' }}>
+          <span style={{ fontSize: 12, color: 'var(--down)' }}>
             No local candle data available ({assetsError})
           </span>
         ) : bounds === null ? (
@@ -141,8 +141,8 @@ export function ReplayControls() {
                   : `Outside the tick window, replay falls back to 1m bars. Ticks: ${fmtNy(tickBounds.min)} → ${fmtNy(tickBounds.max)}`}
                 style={{
                   fontSize: 10, fontWeight: 700, letterSpacing: 0.4, padding: '2px 6px',
-                  border: `1px solid ${startHasTicks ? '#0ecb81' : '#3a3f4e'}`,
-                  color: startHasTicks ? '#0ecb81' : '#8a8f98',
+                  border: `1px solid ${startHasTicks ? 'var(--up)' : '#3a3f4e'}`,
+                  color: startHasTicks ? 'var(--up)' : '#8a8f98',
                 }}
               >
                 {startHasTicks ? 'TICK' : `1M · ticks ${fmtNy(tickBounds.min)}→${fmtNy(tickBounds.max)}`}
@@ -187,8 +187,8 @@ export function ReplayControls() {
           : 'No ticks recorded here — fills use 1m bar high/low, so intra-candle order is approximate'}
         style={{
           fontSize: 10, fontWeight: 700, letterSpacing: 0.4, flexShrink: 0,
-          padding: '2px 6px', border: `1px solid ${tickResolution ? '#0ecb81' : '#3a3f4e'}`,
-          color: tickResolution ? '#0ecb81' : '#8a8f98',
+          padding: '2px 6px', border: `1px solid ${tickResolution ? 'var(--up)' : '#3a3f4e'}`,
+          color: tickResolution ? 'var(--up)' : '#8a8f98',
         }}
       >
         {tickResolution ? 'TICK' : '1M'}
@@ -226,11 +226,11 @@ export function ReplayControls() {
       </select>
 
       {buffering && <span style={{ fontSize: 11, color: '#8a8f98' }}>buffering…</span>}
-      {atEnd && <span style={{ fontSize: 11, color: '#f6465d', fontWeight: 600 }}>end of recording</span>}
+      {atEnd && <span style={{ fontSize: 11, color: 'var(--down)', fontWeight: 600 }}>end of recording</span>}
 
       <button
         onClick={exitReplay}
-        style={{ ...btnStyle, marginLeft: 'auto', color: '#f6465d', border: '1px solid #f6465d' }}
+        style={{ ...btnStyle, marginLeft: 'auto', color: 'var(--down)', border: '1px solid var(--down)' }}
       >
         End Replay
       </button>

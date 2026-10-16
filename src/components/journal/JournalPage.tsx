@@ -69,7 +69,7 @@ export function JournalPage() {
           )}
           {windows.map(w => {
             const isSel = w.id === selectedId;
-            const pnlColor = w.realizedPnl >= 0 ? '#0ecb81' : '#f6465d';
+            const pnlColor = w.realizedPnl >= 0 ? 'var(--up)' : 'var(--down)';
             return (
               <div
                 key={w.id}
@@ -85,7 +85,7 @@ export function JournalPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <span style={{ fontWeight: 700, fontSize: 13 }}>
                     {w.coin}{' '}
-                    <span style={{ color: w.direction === 'long' ? '#0ecb81' : '#f6465d', fontSize: 11 }}>
+                    <span style={{ color: w.direction === 'long' ? 'var(--up)' : 'var(--down)', fontSize: 11 }}>
                       {w.direction.toUpperCase()}
                     </span>
                   </span>
@@ -211,7 +211,7 @@ function NoteCard({
           {!editing && (
             <button onClick={() => { setDraft(text); setEditing(true); }} style={iconBtn}>edit</button>
           )}
-          <button onClick={onDelete} style={{ ...iconBtn, color: '#f6465d' }}>delete</button>
+          <button onClick={onDelete} style={{ ...iconBtn, color: 'var(--down)' }}>delete</button>
         </span>
       </div>
       {editing ? (
@@ -229,7 +229,7 @@ function NoteCard({
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
             <button
               onClick={() => { onEdit(draft); setEditing(false); }}
-              style={{ ...iconBtn, color: '#0ecb81' }}
+              style={{ ...iconBtn, color: 'var(--up)' }}
             >
               save
             </button>

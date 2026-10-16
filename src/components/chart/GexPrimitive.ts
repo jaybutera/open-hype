@@ -9,7 +9,7 @@ import type {
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import { formatGex, type GexData } from '../../services/gex/types.ts';
-import { GEX_NEG_COLOR, GEX_POS_COLOR } from '../../services/gex/levels.ts';
+import { upColor, downColor } from '../../store/useThemeStore.ts';
 
 export interface GexProfile {
   data: GexData;
@@ -143,7 +143,7 @@ class GexRenderer implements ISeriesPrimitivePaneRenderer {
         let left = W;
         if (v !== 0) {
           const w = widthOf(v);
-          const color = v > 0 ? GEX_POS_COLOR : GEX_NEG_COLOR;
+          const color = v > 0 ? upColor() : downColor();
           ctx.fillStyle = rgba(color, 0.28);
           ctx.fillRect(W - w, y - barH / 2, w, barH);
           ctx.fillStyle = rgba(color, 0.9);
@@ -175,7 +175,7 @@ class GexRenderer implements ISeriesPrimitivePaneRenderer {
             ctx.fillText(delta, x, y);
             dx = ctx.measureText(delta).width;
           }
-          ctx.fillStyle = rgba(v > 0 ? GEX_POS_COLOR : GEX_NEG_COLOR, 0.95);
+          ctx.fillStyle = rgba(v > 0 ? upColor() : downColor(), 0.95);
           ctx.fillText(formatGex(v), x - dx, y);
         }
       }

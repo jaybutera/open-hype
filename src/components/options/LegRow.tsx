@@ -49,8 +49,8 @@ export function LegRow({ leg, onSideChange, onQtyChange, onRemove }: Props) {
           style={{
             flex: 1,
             padding: '2px 0',
-            background: buyActive ? 'rgba(246,70,93,0.18)' : 'transparent',
-            color: buyActive ? '#f6465d' : '#8a8f98',
+            background: buyActive ? 'color-mix(in srgb, var(--down) 18%, transparent)' : 'transparent',
+            color: buyActive ? 'var(--down)' : '#8a8f98',
             border: 'none',
             borderRight: '1px solid #2a2f3e',
             fontSize: 10,
@@ -67,8 +67,8 @@ export function LegRow({ leg, onSideChange, onQtyChange, onRemove }: Props) {
           style={{
             flex: 1,
             padding: '2px 0',
-            background: sellActive ? 'rgba(14,203,129,0.18)' : 'transparent',
-            color: sellActive ? '#0ecb81' : '#8a8f98',
+            background: sellActive ? 'color-mix(in srgb, var(--up) 18%, transparent)' : 'transparent',
+            color: sellActive ? 'var(--up)' : '#8a8f98',
             border: 'none',
             fontSize: 10,
             fontWeight: 700,
@@ -92,7 +92,7 @@ export function LegRow({ leg, onSideChange, onQtyChange, onRemove }: Props) {
         >
           {contractLabel}
         </span>
-        <span style={{ color: reliable ? '#8a8f98' : '#f6465d', fontSize: 11 }}>
+        <span style={{ color: reliable ? '#8a8f98' : 'var(--down)', fontSize: 11 }}>
           Mark {mark > 0 ? `$${mark.toFixed(2)}` : '—'}
           {!reliable && mark > 0 && <span style={{ marginLeft: 4 }}>(one-sided)</span>}
         </span>

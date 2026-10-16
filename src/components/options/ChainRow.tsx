@@ -29,10 +29,10 @@ const LEFT_ALIGN: React.CSSProperties = { textAlign: 'left', padding: '6px 8px' 
 const RIGHT_ALIGN: React.CSSProperties = { textAlign: 'right', padding: '6px 8px' };
 const CENTER: React.CSSProperties = { textAlign: 'center', padding: '6px 8px' };
 
-const BID_COLOR = '#0ecb81';
-const ASK_COLOR = '#f6465d';
-const SELECTED_BID_BG = 'rgba(14,203,129,0.22)';
-const SELECTED_ASK_BG = 'rgba(246,70,93,0.22)';
+const BID_COLOR = 'var(--up)';
+const ASK_COLOR = 'var(--down)';
+const SELECTED_BID_BG = 'color-mix(in srgb, var(--up) 22%, transparent)';
+const SELECTED_ASK_BG = 'color-mix(in srgb, var(--down) 22%, transparent)';
 
 function tradeCellStyle(params: {
   base: React.CSSProperties;

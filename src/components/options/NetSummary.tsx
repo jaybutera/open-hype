@@ -31,7 +31,7 @@ export function NetSummary({ legs, underlyingPrice, qtyScalar }: Props) {
   const perShare = useMemo(() => netPerShare(legs), [legs]);
   const total = perShare * CONTRACT_MULTIPLIER * qtyScalar;
   const direction = perShare === 0 ? 'Even' : perShare > 0 ? 'Debit' : 'Credit';
-  const directionColor = perShare > 0 ? '#f6465d' : perShare < 0 ? '#0ecb81' : '#8a8f98';
+  const directionColor = perShare > 0 ? 'var(--down)' : perShare < 0 ? 'var(--up)' : '#8a8f98';
 
   const greeks = useMemo(
     () => netGreeks(legs, underlyingPrice),

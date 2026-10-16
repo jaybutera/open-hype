@@ -74,7 +74,7 @@ function TpSlInput({ position, engine, allMids }: {
         placeholder="TP"
         style={{
           width: 70, padding: '3px 6px', fontSize: 11, background: '#1a1f2e',
-          border: '1px solid #2a2f3e', borderRadius: 0, color: '#0ecb81', outline: 'none',
+          border: '1px solid #2a2f3e', borderRadius: 0, color: 'var(--up)', outline: 'none',
         }}
         onKeyDown={e => e.key === 'Enter' && handleSetTp()}
       />
@@ -85,7 +85,7 @@ function TpSlInput({ position, engine, allMids }: {
         placeholder="SL"
         style={{
           width: 70, padding: '3px 6px', fontSize: 11, background: '#1a1f2e',
-          border: '1px solid #2a2f3e', borderRadius: 0, color: '#f6465d', outline: 'none',
+          border: '1px solid #2a2f3e', borderRadius: 0, color: 'var(--down)', outline: 'none',
         }}
         onKeyDown={e => e.key === 'Enter' && handleSetSl()}
       />
@@ -171,7 +171,7 @@ export function PositionTable({ engine }: Props) {
                   return (
                     <tr key={pos.coin} style={{ borderBottom: '1px solid #1a1f2e' }}>
                       <td style={{ padding: '8px 16px' }}>
-                        <span style={{ color: isLong ? '#0ecb81' : '#f6465d', fontWeight: 600 }}>
+                        <span style={{ color: isLong ? 'var(--up)' : 'var(--down)', fontWeight: 600 }}>
                           {pos.coin} {isLong ? 'LONG' : 'SHORT'}
                         </span>
                       </td>
@@ -189,7 +189,7 @@ export function PositionTable({ engine }: Props) {
                       </td>
                       <td style={{
                         textAlign: 'right', padding: '8px',
-                        color: upnl >= 0 ? '#0ecb81' : '#f6465d',
+                        color: upnl >= 0 ? 'var(--up)' : 'var(--down)',
                         fontWeight: 600,
                       }}>
                         ${upnl.toFixed(2)}
@@ -198,7 +198,7 @@ export function PositionTable({ engine }: Props) {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                           {tpOrder && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
-                              <span style={{ color: '#0ecb81' }}>TP ${(tpOrder.triggerPx ?? tpOrder.price).toFixed(1)}</span>
+                              <span style={{ color: 'var(--up)' }}>TP ${(tpOrder.triggerPx ?? tpOrder.price).toFixed(1)}</span>
                               <button
                                 className="btn-inline"
                                 onClick={() => engine.cancelOrder(tpOrder.id)}
@@ -208,7 +208,7 @@ export function PositionTable({ engine }: Props) {
                           )}
                           {slOrder && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
-                              <span style={{ color: '#f6465d' }}>SL ${(slOrder.triggerPx ?? slOrder.price).toFixed(1)}</span>
+                              <span style={{ color: 'var(--down)' }}>SL ${(slOrder.triggerPx ?? slOrder.price).toFixed(1)}</span>
                               <button
                                 className="btn-inline"
                                 onClick={() => engine.cancelOrder(slOrder.id)}
@@ -250,7 +250,7 @@ export function PositionTable({ engine }: Props) {
               <button
                 className="btn-ghost"
                 onClick={() => engine.cancelAllOrders()}
-                style={{ fontSize: 11, color: '#f6465d' }}
+                style={{ fontSize: 11, color: 'var(--down)' }}
               >
                 Cancel All
               </button>
@@ -275,7 +275,7 @@ export function PositionTable({ engine }: Props) {
                 {orders.map(ord => (
                   <tr key={ord.id} style={{ borderBottom: '1px solid #1a1f2e' }}>
                     <td style={{ padding: '8px 16px' }}>
-                      <span style={{ color: ord.side === 'buy' ? '#0ecb81' : '#f6465d' }}>
+                      <span style={{ color: ord.side === 'buy' ? 'var(--up)' : 'var(--down)' }}>
                         {ord.coin} {ord.side.toUpperCase()}
                       </span>
                     </td>
@@ -330,7 +330,7 @@ export function PositionTable({ engine }: Props) {
                     <td style={{ padding: '6px 8px' }}>{fill.coin}</td>
                     <td style={{
                       padding: '6px 8px',
-                      color: fill.side === 'buy' ? '#0ecb81' : '#f6465d',
+                      color: fill.side === 'buy' ? 'var(--up)' : 'var(--down)',
                     }}>
                       {fill.dir ?? fill.side.toUpperCase()}
                     </td>
@@ -339,7 +339,7 @@ export function PositionTable({ engine }: Props) {
                     <td style={{ textAlign: 'right', padding: '6px 8px', color: '#8a8f98' }}>${parseFloat(fill.fee).toFixed(4)}</td>
                     <td style={{
                       textAlign: 'right', padding: '6px 16px',
-                      color: pnl >= 0 ? '#0ecb81' : '#f6465d',
+                      color: pnl >= 0 ? 'var(--up)' : 'var(--down)',
                     }}>
                       {pnl !== 0 ? `$${pnl.toFixed(2)}` : '-'}
                     </td>

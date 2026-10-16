@@ -21,7 +21,7 @@ function optionSideLabel(kind: LedgerKind | undefined, side: 'buy' | 'sell'): st
 
 function optionSideColor(kind: LedgerKind | undefined, side: 'buy' | 'sell'): string {
   if (kind === 'option-expire') return '#8a8f98';
-  return side === 'buy' ? '#0ecb81' : '#f6465d';
+  return side === 'buy' ? 'var(--up)' : 'var(--down)';
 }
 
 function fmtSignedDollars(n: number): string {
@@ -179,7 +179,7 @@ export function PnlCalendar() {
       }}>
         <span>
           Monthly PnL:{' '}
-          <b style={{ color: monthTotals.pnl >= 0 ? '#0ecb81' : '#f6465d' }}>
+          <b style={{ color: monthTotals.pnl >= 0 ? 'var(--up)' : 'var(--down)' }}>
             ${monthTotals.pnl.toFixed(2)}
           </b>
         </span>
@@ -225,14 +225,14 @@ export function PnlCalendar() {
 
             let bgColor = '#141820';
             if (hasTrades) {
-              bgColor = pnl >= 0 ? '#0ecb8118' : '#f6465d18';
+              bgColor = pnl >= 0 ? 'color-mix(in srgb, var(--up) 9%, transparent)' : 'color-mix(in srgb, var(--down) 9%, transparent)';
             }
             if (isSelected) {
-              bgColor = pnl >= 0 ? '#0ecb8130' : '#f6465d30';
+              bgColor = pnl >= 0 ? 'color-mix(in srgb, var(--up) 19%, transparent)' : 'color-mix(in srgb, var(--down) 19%, transparent)';
             }
 
             let borderColor = '#1a1f2e';
-            if (isSelected) borderColor = pnl >= 0 ? '#0ecb81' : '#f6465d';
+            if (isSelected) borderColor = pnl >= 0 ? 'var(--up)' : 'var(--down)';
             else if (isToday) borderColor = '#3861fb';
 
             return (
@@ -260,7 +260,7 @@ export function PnlCalendar() {
                   <>
                     <div style={{
                       fontSize: 14, fontWeight: 700, marginTop: 4,
-                      color: pnl >= 0 ? '#0ecb81' : '#f6465d',
+                      color: pnl >= 0 ? 'var(--up)' : 'var(--down)',
                     }}>
                       {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
                     </div>
@@ -295,7 +295,7 @@ export function PnlCalendar() {
               </span>
               <span style={{
                 fontWeight: 700, fontSize: 14,
-                color: selectedData.pnl >= 0 ? '#0ecb81' : '#f6465d',
+                color: selectedData.pnl >= 0 ? 'var(--up)' : 'var(--down)',
               }}>
                 PnL: {selectedData.pnl >= 0 ? '+' : ''}${selectedData.pnl.toFixed(2)}
               </span>
@@ -324,7 +324,7 @@ export function PnlCalendar() {
                       : fill.side.toUpperCase();
                     const sideColor = isOption
                       ? optionSideColor(fill.kind, fill.side)
-                      : fill.side === 'buy' ? '#0ecb81' : '#f6465d';
+                      : fill.side === 'buy' ? 'var(--up)' : 'var(--down)';
                     const feeDisplay = isOption ? '-' : `$${parseFloat(fill.fee).toFixed(4)}`;
                     const sizeTitle = isOption
                       ? `${fill.size} contract${fill.size === '1' ? '' : 's'} × 100 shares`
@@ -360,7 +360,7 @@ export function PnlCalendar() {
                         </td>
                         <td style={{
                           textAlign: 'right', padding: '6px 16px',
-                          color: pnl >= 0 ? '#0ecb81' : '#f6465d',
+                          color: pnl >= 0 ? 'var(--up)' : 'var(--down)',
                           fontWeight: 600,
                         }}>
                           {pnl !== 0 ? `$${pnl.toFixed(2)}` : '-'}
@@ -405,7 +405,7 @@ export function PnlCalendar() {
                         </td>
                         <td style={{
                           textAlign: 'right', padding: '6px 16px',
-                          color: showPnl ? (pnl >= 0 ? '#0ecb81' : '#f6465d') : '#8a8f98',
+                          color: showPnl ? (pnl >= 0 ? 'var(--up)' : 'var(--down)') : '#8a8f98',
                           fontWeight: 600,
                         }}>
                           {showPnl && pnl !== 0 ? `$${pnl.toFixed(2)}` : '-'}
@@ -448,7 +448,7 @@ export function PnlCalendar() {
                             </td>
                             <td style={{
                               textAlign: 'right', padding: '6px 16px',
-                              color: lp >= 0 ? '#0ecb81' : '#f6465d',
+                              color: lp >= 0 ? 'var(--up)' : 'var(--down)',
                               fontWeight: 500,
                             }}>
                               {lp !== 0 ? `$${lp.toFixed(2)}` : '-'}

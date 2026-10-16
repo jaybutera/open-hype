@@ -28,7 +28,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
   render() {
     if (this.state.error) {
       return (
-        <div style={{ padding: 40, color: '#f6465d', fontFamily: 'monospace' }}>
+        <div style={{ padding: 40, color: 'var(--down)', fontFamily: 'monospace' }}>
           <h2>Runtime Error</h2>
           <pre style={{ marginTop: 16, color: '#e1e4e8' }}>{this.state.error}</pre>
           <button

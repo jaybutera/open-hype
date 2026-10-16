@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Open Hype</title>
     <style>
+      :root { --up: #0ecb81; --down: #f6465d; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body, #root { height: 100%; width: 100%; }
       body {
@@ -21,22 +22,22 @@
 
       /* Long (green outline) */
       .btn-long {
-        background: transparent; color: #0ecb81;
-        border: 1px solid #0ecb81; font-weight: 600; cursor: pointer;
+        background: transparent; color: var(--up);
+        border: 1px solid var(--up); font-weight: 600; cursor: pointer;
       }
-      .btn-long:hover { background: rgba(14,203,129,0.1); }
-      .btn-long:active { background: rgba(14,203,129,0.18); }
-      .btn-long.filled { background: #0ecb81; color: #0a0e17; }
+      .btn-long:hover { background: color-mix(in srgb, var(--up) 10%, transparent); }
+      .btn-long:active { background: color-mix(in srgb, var(--up) 18%, transparent); }
+      .btn-long.filled { background: var(--up); color: #0a0e17; }
       .btn-long.filled:hover { background: #0bb874; }
 
       /* Short (red outline) */
       .btn-short {
-        background: transparent; color: #f6465d;
-        border: 1px solid #f6465d; font-weight: 600; cursor: pointer;
+        background: transparent; color: var(--down);
+        border: 1px solid var(--down); font-weight: 600; cursor: pointer;
       }
-      .btn-short:hover { background: rgba(246,70,93,0.1); }
-      .btn-short:active { background: rgba(246,70,93,0.18); }
-      .btn-short.filled { background: #f6465d; color: #fff; }
+      .btn-short:hover { background: color-mix(in srgb, var(--down) 10%, transparent); }
+      .btn-short:active { background: color-mix(in srgb, var(--down) 18%, transparent); }
+      .btn-short.filled { background: var(--down); color: #fff; }
       .btn-short.filled:hover { background: #e03e53; }
 
       /* Primary (blue outline) */
@@ -65,11 +66,11 @@
 
       /* Danger (red outline) */
       .btn-danger {
-        background: transparent; color: #f6465d;
-        border: 1px solid rgba(246,70,93,0.3); cursor: pointer;
+        background: transparent; color: var(--down);
+        border: 1px solid color-mix(in srgb, var(--down) 30%, transparent); cursor: pointer;
       }
-      .btn-danger:hover { border-color: #f6465d; background: rgba(246,70,93,0.08); }
-      .btn-danger:active { background: rgba(246,70,93,0.15); }
+      .btn-danger:hover { border-color: var(--down); background: color-mix(in srgb, var(--down) 8%, transparent); }
+      .btn-danger:active { background: color-mix(in srgb, var(--down) 15%, transparent); }
 
       /* Chip (small, subtle border) */
       .btn-chip {
@@ -106,22 +107,22 @@
       }
       .btn-mode-paper:hover { background: rgba(240,185,11,0.1); }
       .btn-mode-live {
-        background: transparent; color: #e74c3c; border: 1px solid #e74c3c;
+        background: transparent; color: var(--down); border: 1px solid var(--down);
       }
-      .btn-mode-live:hover { background: rgba(231,76,60,0.1); }
+      .btn-mode-live:hover { background: color-mix(in srgb, var(--down) 10%, transparent); }
 
       /* TP/SL set buttons */
       .btn-tp-set {
-        background: transparent; color: #0ecb81;
-        border: 1px solid rgba(14,203,129,0.3); cursor: pointer; font-size: 10px;
+        background: transparent; color: var(--up);
+        border: 1px solid color-mix(in srgb, var(--up) 30%, transparent); cursor: pointer; font-size: 10px;
       }
-      .btn-tp-set:hover { border-color: #0ecb81; background: rgba(14,203,129,0.08); }
+      .btn-tp-set:hover { border-color: var(--up); background: color-mix(in srgb, var(--up) 8%, transparent); }
 
       .btn-sl-set {
-        background: transparent; color: #f6465d;
-        border: 1px solid rgba(246,70,93,0.3); cursor: pointer; font-size: 10px;
+        background: transparent; color: var(--down);
+        border: 1px solid color-mix(in srgb, var(--down) 30%, transparent); cursor: pointer; font-size: 10px;
       }
-      .btn-sl-set:hover { border-color: #f6465d; background: rgba(246,70,93,0.08); }
+      .btn-sl-set:hover { border-color: var(--down); background: color-mix(in srgb, var(--down) 8%, transparent); }
     </style>
   </head>
   <body>

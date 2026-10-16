@@ -195,9 +195,9 @@ export function OptionsPage({ engine }: Props) {
           style={{
             fontSize: 11, fontWeight: 700, padding: '3px 8px',
             borderRadius: 0,
-            color: open ? '#0ecb81' : '#f6465d',
-            background: open ? 'rgba(14,203,129,0.10)' : 'rgba(246,70,93,0.10)',
-            border: `1px solid ${open ? '#0ecb81' : '#f6465d'}`,
+            color: open ? 'var(--up)' : 'var(--down)',
+            background: open ? 'color-mix(in srgb, var(--up) 10%, transparent)' : 'color-mix(in srgb, var(--down) 10%, transparent)',
+            border: `1px solid ${open ? 'var(--up)' : 'var(--down)'}`,
             letterSpacing: 0.5,
           }}
         >
@@ -232,7 +232,7 @@ export function OptionsPage({ engine }: Props) {
           <span
             style={{
               fontSize: 11,
-              color: open ? '#8a8f98' : '#f6465d',
+              color: open ? '#8a8f98' : 'var(--down)',
               fontStyle: open ? 'normal' : 'italic',
             }}
             title={
@@ -258,7 +258,7 @@ export function OptionsPage({ engine }: Props) {
           </span>
         )}
         {error && !loading && (
-          <span style={{ fontSize: 12, color: '#f6465d' }} title={`kind: ${error.kind}`}>
+          <span style={{ fontSize: 12, color: 'var(--down)' }} title={`kind: ${error.kind}`}>
             {error.message}
           </span>
         )}
@@ -295,7 +295,7 @@ export function OptionsPage({ engine }: Props) {
             </span>
           )}
           {symbol && open && !loading && error && (
-            <span style={{ color: error.kind === 'not_found' ? '#8a8f98' : '#f6465d' }}>
+            <span style={{ color: error.kind === 'not_found' ? '#8a8f98' : 'var(--down)' }}>
               {error.kind === 'not_found'
                 ? `No options listed for ${symbol}. Try a different ticker.`
                 : `Could not load ${symbol}: ${error.message}`}

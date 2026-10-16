@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type HistogramData, type Time, type IPriceLine, LineStyle } from 'lightweight-charts';
 import { useMarketStore, type PaneId } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
+import { useThemeStore, upColor, downColor, withAlpha, candleColors } from '../../store/useThemeStore.ts';
 import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useChartStore, type DraftOrder } from '../../store/useChartStore.ts';
@@ -40,8 +41,6 @@ interface Props {
 }
 
 const VOLUME_KEY = 'hl-volume';
-const VOLUME_UP = 'rgba(14, 203, 129, 0.35)';
-const VOLUME_DOWN = 'rgba(246, 70, 93, 0.35)';
 
 export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -90,6 +89,9 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const loadCandles = useMarketStore(s => s.loadCandles);
   const loadMoreCandles = useMarketStore(s => s.loadMoreCandles);
   const mode = useSettingsStore(s => s.mode);
+  const up = useThemeStore(s => s.up);
+  const down = useThemeStore(s => s.down);
+  const showGrid = useThemeStore(s => s.showGrid);
   const paperPositions = useAccountStore(s => s.paperPositions);
   const paperOrders = useAccountStore(s => s.paperOrders);
   const livePositions = useLiveAccountStore(s => s.positions);
@@ -128,8 +130,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         textColor: '#8a8f98',
       },
       grid: {
-        vertLines: { color: '#1a1f2e' },
-        horzLines: { color: '#1a1f2e' },
+        vertLines: { color: '#1a1f2e', visible: useThemeStore.getState().showGrid },
+        horzLines: { color: '#1a1f2e', visible: useThemeStore.getState().showGrid },
       },
       crosshair: { mode: 0 },
       timeScale: { borderColor: '#2a2f3e', timeVisible: true },
@@ -137,12 +139,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     });
 
     const series = chart.addCandlestickSeries({
-      upColor: '#0ecb81',
-      downColor: '#f6465d',
-      borderUpColor: '#0ecb81',
-      borderDownColor: '#f6465d',
-      wickUpColor: '#0ecb81',
-      wickDownColor: '#f6465d',
+      ...candleColors(upColor(), downColor()),
     });
 
     // Hyperliquid volume per bar, on its own overlay scale along the bottom fifth of the pane
@@ -226,14 +223,20 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       volumeSeriesRef.current?.setData(plottedRef.current.map((c, i): HistogramData => ({
         time: data[i].time,
         value: c.v,
-        color: c.c >= c.o ? VOLUME_UP : VOLUME_DOWN,
+        color: withAlpha(c.c >= c.o ? up : down, 0.35),
       })));
     } catch (e) {
       console.warn('Chart volume setData error:', e);
     }
 
     sessionPrimitiveRef.current?.setCandleData(data);
-  }, [candles]);
+  }, [candles, up, down]);
+
+  // Settings: candle colours and grid. applyOptions also repaints the primitives, which read the colours at draw time.
+  useEffect(() => {
+    seriesRef.current?.applyOptions(candleColors(up, down));
+    chartRef.current?.applyOptions({ grid: { vertLines: { visible: showGrid }, horzLines: { visible: showGrid } } });
+  }, [up, down, showGrid]);
 
   useEffect(() => {
     volumeSeriesRef.current?.applyOptions({ visible: volumeOn });
@@ -276,7 +279,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         try {
           priceLinesRef.current.push(series.createPriceLine({
             price: pos.entryPx.toNumber(),
-            color: isLong ? '#0ecb81' : '#f6465d',
+            color: isLong ? up : down,
             lineWidth: 2,
             lineStyle: LineStyle.Solid,
             axisLabelVisible: true,
@@ -287,7 +290,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           if (liqPx) {
             priceLinesRef.current.push(series.createPriceLine({
               price: liqPx.toNumber(),
-              color: '#ff4444',
+              color: down,
               lineWidth: 1,
               lineStyle: LineStyle.SparseDotted,
               axisLabelVisible: true,
@@ -307,7 +310,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         try {
           priceLinesRef.current.push(series.createPriceLine({
             price: pos.entryPx,
-            color: isLong ? '#0ecb81' : '#f6465d',
+            color: isLong ? up : down,
             lineWidth: 2,
             lineStyle: LineStyle.Solid,
             axisLabelVisible: true,
@@ -316,7 +319,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           if (pos.liquidationPx) {
             priceLinesRef.current.push(series.createPriceLine({
               price: pos.liquidationPx,
-              color: '#ff4444',
+              color: down,
               lineWidth: 1,
               lineStyle: LineStyle.SparseDotted,
               axisLabelVisible: true,
@@ -332,7 +335,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         try {
           priceLinesRef.current.push(series.createPriceLine({
             price: px,
-            color: o.side === 'buy' ? '#0ecb81' : '#f6465d',
+            color: o.side === 'buy' ? up : down,
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
             axisLabelVisible: true,
@@ -347,7 +350,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       try {
         priceLinesRef.current.push(series.createPriceLine({
           price: draftOrder.price,
-          color: draftOrder.side === 'buy' ? '#0ecb81' : '#f6465d',
+          color: draftOrder.side === 'buy' ? up : down,
           lineWidth: 2,
           lineStyle: LineStyle.SparseDotted,
           axisLabelVisible: true,
@@ -371,7 +374,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
 
     // Pending setup click markers — only on the active pane (where it's being drawn)
     if (pendingSetup && isActive) {
-      const color = pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d';
+      const color = pendingSetup.side === 'buy' ? up : down;
       for (const clickPrice of pendingSetup.clicks) {
         try {
           priceLinesRef.current.push(series.createPriceLine({
@@ -385,7 +388,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         } catch {}
       }
     }
-  }, [mode, paperPositions, livePositions, liveOrders, draftOrder, pendingSetup, currentAsset, fibFirstClick, isActive, engine]);
+  }, [mode, paperPositions, livePositions, liveOrders, draftOrder, pendingSetup, currentAsset, fibFirstClick, isActive, engine, up, down]);
 
   // Mouse down: pane becomes active, then handle trade box / setup / shift+click
   const handleChartClick = useCallback((e: React.MouseEvent) => {
@@ -695,7 +698,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     const set = gexLevelSet(currentAsset, gexData, interval, gexOffset);
     if (prim) prim.setSet(set);
     else { const p = new AiOverlayPrimitive(set); series.attachPrimitive(p); gexLevelPrimRef.current = p; }
-  }, [gexLevelsOn, gexData, gexOffset, currentAsset, interval]);
+  }, [gexLevelsOn, gexData, gexOffset, currentAsset, interval, up, down]);
 
   // GEX strike profile: bars off the price axis, behind the candles
   useEffect(() => {
@@ -921,7 +924,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           </button>
         )}
         <GexToolbar ticker={gexTicker} interval={interval} />
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: fibMode ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: fibMode ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? 'var(--up)' : 'var(--down)') : '#555', alignSelf: 'center' }}>
           {fibMode
             ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')
             : (pendingSetup && isActive)

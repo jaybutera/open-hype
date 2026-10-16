@@ -25,10 +25,10 @@ function TriggerInput({ pos, run }: { pos: LivePosition; run: (f: () => Promise<
   const input = { width: 70, padding: '3px 6px', fontSize: 11, background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 0, outline: 'none' };
   return (
     <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-      <input value={tp} onChange={e => setTp(e.target.value)} placeholder="TP" style={{ ...input, color: '#0ecb81' }}
+      <input value={tp} onChange={e => setTp(e.target.value)} placeholder="TP" style={{ ...input, color: 'var(--up)' }}
         onKeyDown={e => e.key === 'Enter' && send('tp', tp, () => setTp(''))} />
       <button className="btn-tp-set" onClick={() => send('tp', tp, () => setTp(''))} style={{ padding: '3px 6px' }}>Set</button>
-      <input value={sl} onChange={e => setSl(e.target.value)} placeholder="SL" style={{ ...input, color: '#f6465d' }}
+      <input value={sl} onChange={e => setSl(e.target.value)} placeholder="SL" style={{ ...input, color: 'var(--down)' }}
         onKeyDown={e => e.key === 'Enter' && send('sl', sl, () => setSl(''))} />
       <button className="btn-sl-set" onClick={() => send('sl', sl, () => setSl(''))} style={{ padding: '3px 6px' }}>Set</button>
     </div>
@@ -41,7 +41,7 @@ const HISTORY_PAGE = 200;
 // Aggregated fills carry a volume-weighted price with float noise; show what a price ladder would.
 const fmtPx = (n: number) => n.toLocaleString(undefined, { maximumSignificantDigits: 6 });
 const fmtSz = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 6 });
-const pnlColor = (n: number) => (n > 0 ? '#0ecb81' : n < 0 ? '#f6465d' : '#8a8f98');
+const pnlColor = (n: number) => (n > 0 ? 'var(--up)' : n < 0 ? 'var(--down)' : '#8a8f98');
 const fmtTime = (t: number) => {
   const d = new Date(t);
   return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour12: false })}`;
@@ -68,7 +68,7 @@ function TradeHistory({ fills, loaded }: { fills: LiveFill[]; loaded: boolean })
             <tr key={f.tid} data-testid={`live-fill-${f.tid}`} style={{ borderBottom: '1px solid #1a1f2e' }}>
               <td style={{ ...td, textAlign: 'left', paddingLeft: 16, color: '#8a8f98', whiteSpace: 'nowrap' }}>{fmtTime(f.time)}</td>
               <td style={{ ...td, textAlign: 'left' }}>{f.coin}</td>
-              <td style={{ ...td, textAlign: 'left', color: f.side === 'buy' ? '#0ecb81' : '#f6465d' }}>{f.dir}</td>
+              <td style={{ ...td, textAlign: 'left', color: f.side === 'buy' ? 'var(--up)' : 'var(--down)' }}>{f.dir}</td>
               <td style={td}>{fmtPx(f.px)}</td>
               <td style={td}>{fmtSz(f.sz)}</td>
               <td style={td}>${fmt(f.px * f.sz)}</td>
@@ -195,12 +195,12 @@ export function LivePositionTable() {
         <span>Spot: <b style={{ color: '#e1e4e8' }}>${fmt(spotValue)}</b></span>
         <span>Available: <b style={{ color: '#e1e4e8' }}>${fmt(withdrawable)}</b></span>
         <span>Margin used: <b style={{ color: '#e1e4e8' }}>${fmt(marginUsed)}</b></span>
-        <span style={{ color: syncError ? '#f6465d' : '#555' }}>
+        <span style={{ color: syncError ? 'var(--down)' : '#555' }}>
           {syncError ? `Sync failed: ${syncError}` : lastSync ? `Synced ${new Date(lastSync).toLocaleTimeString()}` : 'Loading…'}
         </span>
         {busy && <span style={{ color: '#f0b90b' }}>Sending…</span>}
         {result && (
-          <span data-testid="live-result" style={{ color: result.ok ? '#0ecb81' : '#f6465d' }}>{result.message}</span>
+          <span data-testid="live-result" style={{ color: result.ok ? 'var(--up)' : 'var(--down)' }}>{result.message}</span>
         )}
       </div>
 
@@ -235,13 +235,13 @@ export function LivePositionTable() {
                   return (
                     <tr key={pos.coin} style={{ borderBottom: '1px solid #1a1f2e' }}>
                       <td style={{ ...td, textAlign: 'left', paddingLeft: 16 }}>
-                        <span style={{ color: isLong ? '#0ecb81' : '#f6465d', fontWeight: 600 }}>{pos.coin} {isLong ? 'LONG' : 'SHORT'}</span>
+                        <span style={{ color: isLong ? 'var(--up)' : 'var(--down)', fontWeight: 600 }}>{pos.coin} {isLong ? 'LONG' : 'SHORT'}</span>
                         <div style={{ fontSize: 10, color: '#555' }}>{pos.leverage.value}x {pos.leverage.type}</div>
                       </td>
                       <td style={td}>{Math.abs(pos.szi)}<div style={{ fontSize: 10, color: '#555' }}>${fmt(pos.positionValue, 0)}</div></td>
                       <td style={td}>{pos.entryPx}</td>
                       <td style={td}>{allMids[pos.coin] ?? '-'}</td>
-                      <td style={{ ...td, color: pos.unrealizedPnl >= 0 ? '#0ecb81' : '#f6465d', fontWeight: 600 }}>${fmt(pos.unrealizedPnl)}</td>
+                      <td style={{ ...td, color: pos.unrealizedPnl >= 0 ? 'var(--up)' : 'var(--down)', fontWeight: 600 }}>${fmt(pos.unrealizedPnl)}</td>
                       <td style={td}>{pos.liquidationPx ?? '-'}</td>
                       <td style={{ padding: 8 }}>{tradingReady && <TriggerInput pos={pos} run={run} />}</td>
                       <td style={{ ...td, paddingRight: 16 }}>
@@ -266,7 +266,7 @@ export function LivePositionTable() {
           <div style={{ padding: '8px 16px', fontWeight: 600, borderBottom: '1px solid #1a1f2e', display: 'flex', justifyContent: 'space-between' }}>
             <span>Open Orders</span>
             {openOrders.length > 0 && tradingReady && (
-              <button className="btn-ghost" disabled={busy} onClick={() => run(() => cancelLiveOrders(openOrders))} style={{ fontSize: 11, color: '#f6465d' }}>
+              <button className="btn-ghost" disabled={busy} onClick={() => run(() => cancelLiveOrders(openOrders))} style={{ fontSize: 11, color: 'var(--down)' }}>
                 Cancel All
               </button>
             )}
@@ -284,7 +284,7 @@ export function LivePositionTable() {
               <tbody>
                 {openOrders.map(o => (
                   <tr key={o.oid} data-testid={`live-order-${o.oid}`} style={{ borderBottom: '1px solid #1a1f2e' }}>
-                    <td style={{ ...td, textAlign: 'left', paddingLeft: 16, color: o.side === 'buy' ? '#0ecb81' : '#f6465d' }}>
+                    <td style={{ ...td, textAlign: 'left', paddingLeft: 16, color: o.side === 'buy' ? 'var(--up)' : 'var(--down)' }}>
                       {o.coin} {o.side.toUpperCase()}
                     </td>
                     <td style={td}>{o.orderType}{o.reduceOnly ? ' (RO)' : ''}</td>
@@ -292,7 +292,7 @@ export function LivePositionTable() {
                     <td style={td}>{o.sz}{o.sz !== o.origSz && <span style={{ color: '#555' }}> / {o.origSz}</span>}</td>
                     <td style={{ ...td, paddingRight: 16 }}>
                       {tradingReady && (
-                        <button className="btn-inline" disabled={busy} onClick={() => run(() => cancelLiveOrders([o]))} style={{ fontSize: 11, color: '#f6465d' }}>
+                        <button className="btn-inline" disabled={busy} onClick={() => run(() => cancelLiveOrders([o]))} style={{ fontSize: 11, color: 'var(--down)' }}>
                           Cancel
                         </button>
                       )}

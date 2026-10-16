@@ -4,6 +4,7 @@ import { PaperAccountSelector } from '../common/PaperAccountSelector.tsx';
 import { WalletConnect } from '../account/WalletConnect.tsx';
 import { LiveAccountSelector } from '../account/LiveAccountSelector.tsx';
 import { NetworkToggle } from '../common/NetworkToggle.tsx';
+import { SettingsMenu } from '../common/SettingsMenu.tsx';
 import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useWalletStore } from '../../store/useWalletStore.ts';
 import { Logo } from './Logo.tsx';
@@ -165,7 +166,7 @@ export function Header() {
             <span
               data-testid="live-balance"
               title={liveSyncError ? `Sync error: ${liveSyncError}` : `Perps $${livePerp.toFixed(2)} + Spot $${liveSpot.toFixed(2)}; available $${liveWithdrawable.toFixed(2)}`}
-              style={{ fontSize: 13, color: liveSyncError ? '#f6465d' : '#0ecb81', fontWeight: 600, flexShrink: 0 }}
+              style={{ fontSize: 13, color: liveSyncError ? 'var(--down)' : 'var(--up)', fontWeight: 600, flexShrink: 0 }}
             >
               LIVE ${liveValue.toFixed(2)}
             </span>
@@ -173,8 +174,9 @@ export function Header() {
         </>
       )}
 
-      <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
+      <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', gap: 8, alignItems: 'center' }}>
         <WalletConnect />
+        <SettingsMenu />
       </div>
     </header>
   );

@@ -404,7 +404,7 @@ export function OrderPanel({ engine }: Props) {
       </div>
       {pendingSetup && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
-          <span style={{ color: pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d' }}>
+          <span style={{ color: pendingSetup.side === 'buy' ? 'var(--up)' : 'var(--down)' }}>
             Click chart: {pendingSetup.clicks.length}/3 levels
           </span>
           <button
@@ -422,19 +422,19 @@ export function OrderPanel({ engine }: Props) {
         <div key={setup.id} style={{
           background: '#1a1f2e', borderRadius: 0, padding: '8px 10px',
           fontSize: 11, color: '#e1e4e8',
-          borderLeft: `2px solid ${setup.side === 'buy' ? '#0ecb81' : '#f6465d'}`,
+          borderLeft: `2px solid ${setup.side === 'buy' ? 'var(--up)' : 'var(--down)'}`,
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ fontWeight: 700, color: setup.side === 'buy' ? '#0ecb81' : '#f6465d' }}>
+            <span style={{ fontWeight: 700, color: setup.side === 'buy' ? 'var(--up)' : 'var(--down)' }}>
               {setup.side === 'buy' ? 'LONG' : 'SHORT'} {setup.asset ?? currentAsset}
             </span>
             <span style={{ color: '#8a8f98' }}>R:R {setup.rr.toFixed(1)}</span>
           </div>
           <div>Entry: {setup.entryPrice.toFixed(2)} | Size: {setup.assetSize.toPrecision(4)}</div>
           <div>
-            <span style={{ color: '#0ecb81' }}>TP: {setup.tpPrice.toFixed(2)} (+${setup.potentialPnl.toFixed(2)})</span>
+            <span style={{ color: 'var(--up)' }}>TP: {setup.tpPrice.toFixed(2)} (+${setup.potentialPnl.toFixed(2)})</span>
             {' · '}
-            <span style={{ color: '#f6465d' }}>SL: {setup.slPrice.toFixed(2)} (-${setup.potentialLoss.toFixed(2)})</span>
+            <span style={{ color: 'var(--down)' }}>SL: {setup.slPrice.toFixed(2)} (-${setup.potentialLoss.toFixed(2)})</span>
           </div>
           <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
             <button
@@ -503,7 +503,7 @@ export function OrderPanel({ engine }: Props) {
       {/* TP/SL */}
       <div style={{ display: 'flex', gap: 6 }}>
         <div style={{ flex: 1 }}>
-          <label style={{ ...labelStyle, color: '#0ecb81' }}>Take Profit</label>
+          <label style={{ ...labelStyle, color: 'var(--up)' }}>Take Profit</label>
           <input
             value={tpPrice}
             onChange={e => setTpPrice(e.target.value)}
@@ -512,7 +512,7 @@ export function OrderPanel({ engine }: Props) {
           />
         </div>
         <div style={{ flex: 1 }}>
-          <label style={{ ...labelStyle, color: '#f6465d' }}>Stop Loss</label>
+          <label style={{ ...labelStyle, color: 'var(--down)' }}>Stop Loss</label>
           <input
             value={slPrice}
             onChange={e => setSlPrice(e.target.value)}
@@ -568,8 +568,8 @@ export function OrderPanel({ engine }: Props) {
         </div>
       )}
 
-      {error && <div ref={errorRef} style={{ color: '#f6465d', fontSize: 12 }}>{error}</div>}
-      {success && <div ref={successRef} style={{ color: '#0ecb81', fontSize: 12 }}>{success}</div>}
+      {error && <div ref={errorRef} style={{ color: 'var(--down)', fontSize: 12 }}>{error}</div>}
+      {success && <div ref={successRef} style={{ color: 'var(--up)', fontSize: 12 }}>{success}</div>}
 
       <AiTradePanel />
       <AiOverlayPanel />

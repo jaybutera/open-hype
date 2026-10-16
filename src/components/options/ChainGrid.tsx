@@ -137,11 +137,11 @@ export function ChainGrid({ chain, legs, onCellClick }: Props) {
           <tr>
             <th style={{ ...HEADER_CELL, textAlign: 'right' }}>{metricHeaderLabel(metrics[0])}</th>
             <th style={{ ...HEADER_CELL, textAlign: 'right' }}>{metricHeaderLabel(metrics[1])}</th>
-            <th style={{ ...HEADER_CELL, textAlign: 'right', color: '#0ecb81' }}>Bid</th>
-            <th style={{ ...HEADER_CELL, textAlign: 'right', color: '#f6465d' }}>Ask</th>
+            <th style={{ ...HEADER_CELL, textAlign: 'right', color: 'var(--up)' }}>Bid</th>
+            <th style={{ ...HEADER_CELL, textAlign: 'right', color: 'var(--down)' }}>Ask</th>
             <th style={{ ...HEADER_CELL, textAlign: 'center', color: '#e1e4e8' }}>Strike</th>
-            <th style={{ ...HEADER_CELL, textAlign: 'left', color: '#0ecb81' }}>Bid</th>
-            <th style={{ ...HEADER_CELL, textAlign: 'left', color: '#f6465d' }}>Ask</th>
+            <th style={{ ...HEADER_CELL, textAlign: 'left', color: 'var(--up)' }}>Bid</th>
+            <th style={{ ...HEADER_CELL, textAlign: 'left', color: 'var(--down)' }}>Ask</th>
             <th style={{ ...HEADER_CELL, textAlign: 'left' }}>{metricHeaderLabel(metrics[1])}</th>
             <th style={{ ...HEADER_CELL, textAlign: 'left' }}>{metricHeaderLabel(metrics[0])}</th>
           </tr>

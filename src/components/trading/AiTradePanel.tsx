@@ -17,7 +17,7 @@ const REFRESH_MS = 3000;
 const etTime = (ms: number) => formatEt(ms).slice(11);
 
 const STATUS_COLOR: Record<string, string> = {
-  done: '#0ecb81', failed: '#f6465d', rejected: '#8a8f98', withdrawn: '#8a8f98', expired: '#8a8f98',
+  done: 'var(--up)', failed: 'var(--down)', rejected: '#8a8f98', withdrawn: '#8a8f98', expired: '#8a8f98',
 };
 
 function ProposalCard({ trade }: { trade: TradeProposal }) {
@@ -82,7 +82,7 @@ function ProposalCard({ trade }: { trade: TradeProposal }) {
   const header = (
     <div style={{ fontSize: 11, display: 'flex', gap: 6, alignItems: 'baseline' }}>
       <span style={{ fontWeight: 700, color: '#c49bff' }}>Claude proposes</span>
-      <span style={{ color: isLive ? '#f6465d' : '#f0b90b' }}>{isLive ? 'LIVE' : 'PAPER'}</span>
+      <span style={{ color: isLive ? 'var(--down)' : '#f0b90b' }}>{isLive ? 'LIVE' : 'PAPER'}</span>
       <span style={{ marginLeft: 'auto', color: '#555', fontSize: 10 }}>until {etTime(trade.expiresAt)}</span>
     </div>
   );
@@ -110,7 +110,7 @@ function ProposalCard({ trade }: { trade: TradeProposal }) {
         {note}
         {extra}
         <LiveOrderConfirm order={preview.prepared} busy={busy} onConfirm={() => void run('user')} onCancel={() => void reject(trade.id)} />
-        {error && <div style={{ fontSize: 11, color: '#f6465d' }}>{error}</div>}
+        {error && <div style={{ fontSize: 11, color: 'var(--down)' }}>{error}</div>}
       </div>
     );
   }
@@ -121,7 +121,7 @@ function ProposalCard({ trade }: { trade: TradeProposal }) {
       {note}
       {!preview && <div style={{ fontSize: 11, color: '#e1e4e8' }}>{describeAction(trade.action)}</div>}
       {extra}
-      {error && <div data-testid="ai-trade-error" style={{ fontSize: 11, color: '#f6465d' }}>{error}</div>}
+      {error && <div data-testid="ai-trade-error" style={{ fontSize: 11, color: 'var(--down)' }}>{error}</div>}
       <div style={{ display: 'flex', gap: 6 }}>
         <button
           className={trade.action.kind === 'order' && trade.action.side === 'sell' ? 'btn-short' : 'btn-long'}
@@ -141,7 +141,7 @@ function ProposalCard({ trade }: { trade: TradeProposal }) {
 
 function cardStyle(isLive: boolean) {
   return {
-    border: `1px solid ${isLive ? '#f6465d' : '#f0b90b'}`, padding: 8, background: '#11151f',
+    border: `1px solid ${isLive ? 'var(--down)' : '#f0b90b'}`, padding: 8, background: '#11151f',
     display: 'flex', flexDirection: 'column' as const, gap: 6,
   };
 }

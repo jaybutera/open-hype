@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { Leg } from '../../services/options/types.ts';
 import { analyticalBreakevens, buildPayoffCurve, expirationExtrema } from '../../services/options/payoff.ts';
+import { useThemeStore } from '../../store/useThemeStore.ts';
 
 interface Props {
   legs: Leg[];
@@ -14,8 +15,6 @@ interface Props {
   height?: number;
 }
 
-const COL_SELL = '#0ecb81'; // green — profit
-const COL_BUY = '#f6465d'; // red — loss
 const COL_AXIS = '#2a2f3e';
 const COL_GRID = '#1a1f2e';
 const COL_TEXT = '#8a8f98';
@@ -34,6 +33,8 @@ function fmtPrice(v: number): string {
 export function PayoffDiagram({
   legs, underlyingPrice, qtyScalar, nowSec, width = 316, height = 160,
 }: Props) {
+  const COL_SELL = useThemeStore(s => s.up); // green: profit
+  const COL_BUY = useThemeStore(s => s.down); // red: loss
   const curve = useMemo(
     () => buildPayoffCurve(legs, underlyingPrice, { qtyScalar, nowSec, samples: 121 }),
     [legs, underlyingPrice, qtyScalar, nowSec],

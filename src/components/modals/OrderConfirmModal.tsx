@@ -116,7 +116,7 @@ export function OrderConfirmModal({ engine }: Props) {
     ? 'Limit'
     : draftOrder.type === 'tp' ? 'Take Profit' : 'Stop Loss';
 
-  const sideColor = draftOrder.side === 'buy' ? '#0ecb81' : '#f6465d';
+  const sideColor = draftOrder.side === 'buy' ? 'var(--up)' : 'var(--down)';
 
   return (
     <div style={{
@@ -178,12 +178,12 @@ export function OrderConfirmModal({ engine }: Props) {
           </div>
         )}
         {isLive && (
-          <div style={{ fontSize: 12, fontWeight: 700, color: NETWORK === 'mainnet' ? '#f6465d' : '#f0b90b', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: NETWORK === 'mainnet' ? 'var(--down)' : '#f0b90b', marginBottom: 12 }}>
             {NETWORK === 'mainnet' ? 'Live order on Hyperliquid mainnet' : 'Testnet order'}
           </div>
         )}
 
-        {error && <div role="alert" style={{ color: '#f6465d', fontSize: 12, marginBottom: 12 }}>{error}</div>}
+        {error && <div role="alert" style={{ color: 'var(--down)', fontSize: 12, marginBottom: 12 }}>{error}</div>}
 
         {prepared ? (
           <LiveOrderConfirm order={prepared} busy={busy} onConfirm={() => void sendPrepared()} onCancel={() => setPrepared(null)} />

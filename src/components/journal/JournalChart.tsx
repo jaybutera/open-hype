@@ -12,6 +12,7 @@ import { fetchCandles } from '../../services/api/info.ts';
 import { utcToChartTime } from '../chart/TradingChart.tsx';
 import type { CandleInterval } from '../../types/market.ts';
 import type { TradeWindow } from '../../services/journal/tradeWindows.ts';
+import { useThemeStore, upColor, downColor, candleColors } from '../../store/useThemeStore.ts';
 
 interface Props {
   trade: TradeWindow;
@@ -36,6 +37,9 @@ export function JournalChart({ trade }: Props) {
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const up = useThemeStore(s => s.up);
+  const down = useThemeStore(s => s.down);
+  const showGrid = useThemeStore(s => s.showGrid);
 
   // Create chart once.
   useEffect(() => {
@@ -47,16 +51,12 @@ export function JournalChart({ trade }: Props) {
       width: container.clientWidth,
       height: container.clientHeight,
       layout: { background: { color: '#0a0e17' }, textColor: '#8a8f98' },
-      grid: { vertLines: { color: '#1a1f2e' }, horzLines: { color: '#1a1f2e' } },
+      grid: { vertLines: { color: '#1a1f2e', visible: useThemeStore.getState().showGrid }, horzLines: { color: '#1a1f2e', visible: useThemeStore.getState().showGrid } },
       crosshair: { mode: 0 },
       timeScale: { borderColor: '#2a2f3e', timeVisible: true },
       rightPriceScale: { borderColor: '#2a2f3e' },
     });
-    const series = chart.addCandlestickSeries({
-      upColor: '#0ecb81', downColor: '#f6465d',
-      borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
-      wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
-    });
+    const series = chart.addCandlestickSeries(candleColors(upColor(), downColor()));
     chartRef.current = chart;
     seriesRef.current = series;
 
@@ -72,6 +72,11 @@ export function JournalChart({ trade }: Props) {
       seriesRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    seriesRef.current?.applyOptions(candleColors(up, down));
+    chartRef.current?.applyOptions({ grid: { vertLines: { visible: showGrid }, horzLines: { visible: showGrid } } });
+  }, [up, down, showGrid]);
 
   // Load candles + markers whenever the selected trade changes.
   useEffect(() => {
@@ -107,7 +112,7 @@ export function JournalChart({ trade }: Props) {
         // Entry / exit price lines.
         series.createPriceLine({
           price: trade.entryPx,
-          color: trade.direction === 'long' ? '#0ecb81' : '#f6465d',
+          color: trade.direction === 'long' ? upColor() : downColor(),
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
@@ -129,7 +134,7 @@ export function JournalChart({ trade }: Props) {
         markers.push({
           time: utcToChartTime(Math.floor(trade.entryTime / 1000)) as Time,
           position: 'belowBar',
-          color: trade.direction === 'long' ? '#0ecb81' : '#f6465d',
+          color: trade.direction === 'long' ? upColor() : downColor(),
           shape: trade.direction === 'long' ? 'arrowUp' : 'arrowDown',
           text: trade.direction === 'long' ? 'LONG' : 'SHORT',
         });
@@ -174,7 +179,7 @@ export function JournalChart({ trade }: Props) {
         <div style={overlayStyle}>Loading {trade.coin} candles…</div>
       )}
       {error && (
-        <div style={{ ...overlayStyle, color: '#f6465d' }}>{error}</div>
+        <div style={{ ...overlayStyle, color: 'var(--down)' }}>{error}</div>
       )}
     </div>
   );

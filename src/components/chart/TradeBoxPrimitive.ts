@@ -11,14 +11,11 @@ import type {
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import type { TradeSetup } from '../../store/useTradeSetupStore.ts';
+import { upColor, downColor, withAlpha } from '../../store/useThemeStore.ts';
 
 type DragField = 'entry' | 'sl' | 'tp';
 
 const LINE_HIT_TOLERANCE = 6;
-const PROFIT_FILL = 'rgba(14, 203, 129, 0.22)';
-const LOSS_FILL = 'rgba(246, 70, 93, 0.22)';
-const TP_LINE = '#0ecb81';
-const SL_LINE = '#f6465d';
 const ENTRY_LINE = '#3861fb';
 const CHIP_BG = 'rgba(10, 14, 23, 0.92)';
 const LABEL_COLOR = '#e1e4e8';
@@ -322,13 +319,13 @@ class TradeBoxRenderer implements ISeriesPrimitivePaneRenderer {
       }
 
       // Profit zone (entry → TP) and loss zone (entry → SL)
-      ctx.fillStyle = PROFIT_FILL;
+      ctx.fillStyle = withAlpha(upColor(), 0.22);
       ctx.fillRect(x1, Math.min(entryY, tpY), bw, Math.abs(tpY - entryY));
-      ctx.fillStyle = LOSS_FILL;
+      ctx.fillStyle = withAlpha(downColor(), 0.22);
       ctx.fillRect(x1, Math.min(entryY, slY), bw, Math.abs(slY - entryY));
 
       // Level edges inside the box, dotted on to the price scale
-      for (const [yy, color, lw] of [[tpY, TP_LINE, 1], [slY, SL_LINE, 1], [entryY, ENTRY_LINE, 1.5]] as const) {
+      for (const [yy, color, lw] of [[tpY, upColor(), 1], [slY, downColor(), 1], [entryY, ENTRY_LINE, 1.5]] as const) {
         drawDashedLine(ctx, x1, x2, yy, color, lw, []);
         drawDashedLine(ctx, x2, w, yy, color, 1, [1, 3]);
       }
@@ -343,10 +340,10 @@ class TradeBoxRenderer implements ISeriesPrimitivePaneRenderer {
     const chipAt = (text: string) => (L.chipsLeft ? x1 - 6 - textW(text) : L.execute.x - BTN_GAP - textW(L.info));
     const tpText = `+${fmtUsd(setup.potentialPnl)} USD`;
     const slText = `−${fmtUsd(setup.potentialLoss)} USD`;
-    drawChip(ctx, chipAt(tpText), tpY, tpText, TP_LINE);
-    drawChip(ctx, chipAt(slText), slY, slText, SL_LINE);
+    drawChip(ctx, chipAt(tpText), tpY, tpText, upColor());
+    drawChip(ctx, chipAt(slText), slY, slText, downColor());
     drawChip(ctx, L.execute.x - BTN_GAP - textW(L.info), entryY, L.info, ENTRY_LINE);
-    drawButton(ctx, L.execute, isLong ? TP_LINE : SL_LINE, 'EXECUTE');
+    drawButton(ctx, L.execute, isLong ? upColor() : downColor(), 'EXECUTE');
     drawButton(ctx, L.remove, '#2a2f3e', '✕');
   }
 }
@@ -372,7 +369,7 @@ class LevelAxisView implements ISeriesPrimitiveAxisView {
   text(): string { return fmtPrice(this._price()); }
   textColor(): string { return '#ffffff'; }
   backColor(): string {
-    return this._field === 'entry' ? ENTRY_LINE : this._field === 'tp' ? TP_LINE : SL_LINE;
+    return this._field === 'entry' ? ENTRY_LINE : this._field === 'tp' ? upColor() : downColor();
   }
 }
 

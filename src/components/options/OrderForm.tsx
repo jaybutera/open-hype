@@ -126,8 +126,8 @@ export function OrderForm({
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {legs.length === 0 ? (
           <div style={{ padding: 16, color: '#8a8f98', fontSize: 12 }}>
-            No legs selected. Click a <span style={{ color: '#0ecb81' }}>bid</span> cell to sell
-            or an <span style={{ color: '#f6465d' }}>ask</span> cell to buy. Up to {MAX_LEGS} legs.
+            No legs selected. Click a <span style={{ color: 'var(--up)' }}>bid</span> cell to sell
+            or an <span style={{ color: 'var(--down)' }}>ask</span> cell to buy. Up to {MAX_LEGS} legs.
           </div>
         ) : (
           legs.map((leg, i) => (
@@ -213,8 +213,8 @@ export function OrderForm({
           style={{
             padding: '8px 12px',
             borderTop: '1px solid #1a1f2e',
-            background: feedback.kind === 'success' ? 'rgba(14,203,129,0.08)' : 'rgba(246,70,93,0.08)',
-            color: feedback.kind === 'success' ? '#0ecb81' : '#f6465d',
+            background: feedback.kind === 'success' ? 'color-mix(in srgb, var(--up) 8%, transparent)' : 'color-mix(in srgb, var(--down) 8%, transparent)',
+            color: feedback.kind === 'success' ? 'var(--up)' : 'var(--down)',
             fontSize: 11,
             lineHeight: 1.35,
           }}
@@ -290,7 +290,7 @@ export function OrderForm({
               />
               <span style={{ fontSize: 10, color: '#8a8f98' }}>
                 Total {isDebit ? 'debit' : isCredit ? 'credit' : 'cost'}:{' '}
-                <span style={{ color: isDebit ? '#f6465d' : isCredit ? '#0ecb81' : '#8a8f98' }}>
+                <span style={{ color: isDebit ? 'var(--down)' : isCredit ? 'var(--up)' : '#8a8f98' }}>
                   ${Math.abs(totalCost).toFixed(2)}
                 </span>
               </span>
@@ -321,7 +321,7 @@ export function OrderForm({
               : 'Open Spread'}
           </button>
           {!marketOpen && (
-            <span style={{ gridColumn: '1 / -1', fontSize: 10, color: '#f6465d', textAlign: 'center' }}>
+            <span style={{ gridColumn: '1 / -1', fontSize: 10, color: 'var(--down)', textAlign: 'center' }}>
               Market closed — submission disabled.
             </span>
           )}

@@ -10,18 +10,17 @@ import type {
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import type { PaperOrder } from '../../engine/paper/matching.ts';
+import { upColor, downColor } from '../../store/useThemeStore.ts';
 
 const LINE_HIT_TOLERANCE = 6;
-const TP_LINE = '#0ecb81';
-const SL_LINE = '#f6465d';
 const BUY_LINE = '#3861fb';
 const SELL_LINE = '#e67e22';
 const LABEL_BG = 'rgba(10, 14, 23, 0.85)';
 const LABEL_COLOR = '#e1e4e8';
 
 function orderColor(ord: PaperOrder): string {
-  if (ord.tpsl === 'tp') return TP_LINE;
-  if (ord.tpsl === 'sl') return SL_LINE;
+  if (ord.tpsl === 'tp') return upColor();
+  if (ord.tpsl === 'sl') return downColor();
   return ord.side === 'buy' ? BUY_LINE : SELL_LINE;
 }
 

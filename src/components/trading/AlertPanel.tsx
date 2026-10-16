@@ -24,16 +24,16 @@ export function AlertPanel() {
         <span style={{ fontSize: 11, color: '#8a8f98', fontWeight: 600 }}>Alerts</span>
         <span style={{ fontSize: 10, color: '#3a4050', marginLeft: 6 }}>alt+click chart to add</span>
       </div>
-      {error && <div style={{ fontSize: 10, color: '#f6465d', marginBottom: 4 }}>{error}</div>}
+      {error && <div style={{ fontSize: 10, color: 'var(--down)', marginBottom: 4 }}>{error}</div>}
       {alerts.map(a => {
         const fired = a.status === 'fired';
         return (
           <div
             key={a.id}
             title={a.note ?? ''}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '2px 0', color: fired ? '#f6465d' : '#e1e4e8' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '2px 0', color: fired ? 'var(--down)' : '#e1e4e8' }}
           >
-            <span style={{ color: fired ? '#f6465d' : '#f0b90b' }}>⏰</span>
+            <span style={{ color: fired ? 'var(--down)' : '#f0b90b' }}>⏰</span>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{describeAlert(a)}</span>
             <span style={{ marginLeft: 'auto', color: '#8a8f98', fontSize: 10, whiteSpace: 'nowrap' }}>
               {fired && a.firedAt !== undefined ? `fired ${a.firedPrice} ${etTime(a.firedAt)}` : 'armed'}

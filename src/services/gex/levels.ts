@@ -1,9 +1,8 @@
 import type { HLineShape, OverlaySet } from '../ai/types.ts';
 import { formatGex, type GexData } from './types.ts';
 import { GEX_PRIOR_MINUTES, lookbackLabel, lookbacksFor } from './lookbacks.ts';
+import { upColor, downColor } from '../../store/useThemeStore.ts';
 
-export const GEX_POS_COLOR = '#0ecb81';
-export const GEX_NEG_COLOR = '#f6465d';
 export const GEX_ZERO_COLOR = '#c9ced6';
 
 interface Level { price: number; text: string; color: string; style: 'solid' | 'dashed' }
@@ -12,10 +11,10 @@ interface Level { price: number; text: string; color: string; style: 'solid' | '
 export function gexLevelShapes(d: GexData, offset = 0): HLineShape[] {
   const levels: Array<Omit<Level, 'price'> & { price: number | null }> = [
     { price: d.zeroGamma, text: `0γ ${d.zeroGamma}`, color: GEX_ZERO_COLOR, style: 'dashed' },
-    { price: d.majorPosVol, text: `+γ vol ${d.majorPosVol}`, color: GEX_POS_COLOR, style: 'solid' },
-    { price: d.majorNegVol, text: `-γ vol ${d.majorNegVol}`, color: GEX_NEG_COLOR, style: 'solid' },
-    { price: d.majorPosOi, text: `+γ OI ${d.majorPosOi}`, color: GEX_POS_COLOR, style: 'dashed' },
-    { price: d.majorNegOi, text: `-γ OI ${d.majorNegOi}`, color: GEX_NEG_COLOR, style: 'dashed' },
+    { price: d.majorPosVol, text: `+γ vol ${d.majorPosVol}`, color: upColor(), style: 'solid' },
+    { price: d.majorNegVol, text: `-γ vol ${d.majorNegVol}`, color: downColor(), style: 'solid' },
+    { price: d.majorPosOi, text: `+γ OI ${d.majorPosOi}`, color: upColor(), style: 'dashed' },
+    { price: d.majorNegOi, text: `-γ OI ${d.majorNegOi}`, color: downColor(), style: 'dashed' },
   ];
   const byPrice = new Map<number, Level>();
   for (const l of levels) {
@@ -77,8 +76,8 @@ export function gexPastLevelShapes(d: GexData, interval: string | null | undefin
     const from = d.timestamp - minutes * 60_000;
     const alpha = LOOKBACK_ALPHA[i] ?? '66';
     const lines: Array<[number | null, number | null, string, string]> = [
-      [p.majorPosVol, d.majorPosVol, '+γ vol', GEX_POS_COLOR],
-      [p.majorNegVol, d.majorNegVol, '-γ vol', GEX_NEG_COLOR],
+      [p.majorPosVol, d.majorPosVol, '+γ vol', upColor()],
+      [p.majorNegVol, d.majorNegVol, '-γ vol', downColor()],
     ];
     for (const [past, now, name, color] of lines) {
       if (past === null || past === now) continue;
