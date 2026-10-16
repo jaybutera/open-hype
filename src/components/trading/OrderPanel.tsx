@@ -103,6 +103,25 @@ export function OrderPanel({ engine }: Props) {
     }
   };
 
+  /** Setup Execute in live mode: no confirm card, the order goes straight to the exchange. */
+  const executeLive = async (input: LiveOrderInput, setupId: string) => {
+    setError(null);
+    setSuccess(null);
+    if (tradingStatus !== 'ready') {
+      setError(walletAddress ? 'Enable trading in the wallet menu first' : 'Connect a wallet first');
+      return;
+    }
+    setLiveBusy(true);
+    try {
+      const r = await submitPrepared(await prepareOrder(input));
+      if (r.ok) { removeSetup(setupId); setSuccess(r.message); } else setError(r.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
   const confirmLive = async () => {
     if (!pendingLive) return;
     setLiveBusy(true);
@@ -137,7 +156,7 @@ export function OrderPanel({ engine }: Props) {
     const setupAsset = setup.asset ?? currentAsset;
 
     if (isLive) {
-      void stageLive({
+      void executeLive({
         coin: setupAsset, side: setup.side, size: assetSize, kind: 'limit', price: setup.entryPrice,
         tp: setup.tpPrice, sl: setup.slPrice, leverage,
       }, id);

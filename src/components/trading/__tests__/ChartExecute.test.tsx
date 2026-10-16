@@ -92,7 +92,7 @@ describe('chart trade box Execute', () => {
     expect(scrolled).toContain(err);
   });
 
-  it('live: stages the confirm card and scrolls it into view; sends nothing yet', async () => {
+  it('live: sends the order straight to the exchange with no confirm card', async () => {
     useSettingsStore.setState({ mode: 'live' });
     (window as any).ethereum = new MockWalletProvider([new Wallet('0x' + '55'.repeat(32))]);
     const net = stubHyperliquidFetch();
@@ -104,11 +104,8 @@ describe('chart trade box Execute', () => {
 
     clickExecute(chartBox());
 
-    const confirm = await screen.findByTestId('live-confirm');
-    expect(confirm).toHaveTextContent('REAL ORDER on Hyperliquid mainnet');
-    expect(screen.getByText('Confirm & send')).toBeInTheDocument();
-    await waitFor(() => expect(scrolled.some(el => el.contains(confirm))).toBe(true));
-    expect(net.exchangeCalls()).toHaveLength(0);
+    await waitFor(() => expect(net.exchangeCalls().some(c => c.action.type === 'order')).toBe(true));
+    expect(screen.queryByTestId('live-confirm')).toBeNull();
     expect(placeOrder).not.toHaveBeenCalled();
     delete (window as any).ethereum;
     act(() => useWalletStore.getState().disconnect());
