@@ -7,7 +7,7 @@ import { valueSpot, type RawSpotBalance } from '../services/hl/balances.ts';
 import { approveAgentTypedData, recoverApproveAgentSigner, splitSignature } from '../services/hl/signing.ts';
 import { submitApproveAgent, ExchangeError } from '../services/hl/exchange.ts';
 import {
-  findWallet, requestAccounts, existingAccounts, chainIdOf, signTypedDataV4,
+  findWallet, pickAccounts, existingAccounts, chainIdOf, signTypedDataV4,
   describeWalletError, type Eip1193Provider,
 } from '../services/wallet/eip1193.ts';
 
@@ -185,11 +185,15 @@ export const useWalletStore = create<WalletStore>((set, get) => {
       if (interactive) set({ error: 'Wallet not found. Install or unlock a browser wallet and reload.' });
       return;
     }
-    set({ status: 'connecting', error: null });
+    // Switching account on a live browser session: keep it if the picker is cancelled.
+    const prev = get();
+    const keep = prev.status === 'connected' && prev.source === 'browser' && prev.walletId === w.id;
+    set(keep ? { error: null } : { status: 'connecting', error: null });
+    const fail = (error: string | null) => set(keep ? { error } : { status: 'disconnected', error });
     try {
-      const accounts = interactive ? await requestAccounts(w.provider) : await existingAccounts(w.provider);
+      const accounts = interactive ? await pickAccounts(w.provider) : await existingAccounts(w.provider);
       if (!accounts.length) {
-        set({ status: 'disconnected', error: interactive ? 'Wallet returned no accounts' : null });
+        fail(interactive ? 'Wallet returned no accounts' : null);
         return;
       }
       const chainId = await chainIdOf(w.provider).catch(() => null);
@@ -198,7 +202,7 @@ export const useWalletStore = create<WalletStore>((set, get) => {
       try { localStorage.setItem(LAST_WALLET_KEY, w.id); } catch {}
       await adoptAccount(accounts[0]);
     } catch (e) {
-      set({ status: 'disconnected', error: describeWalletError(e) });
+      fail(describeWalletError(e));
     }
   };
 

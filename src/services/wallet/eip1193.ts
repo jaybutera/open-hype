@@ -70,6 +70,29 @@ export async function requestAccounts(p: Eip1193Provider): Promise<string[]> {
   return (await p.request({ method: 'eth_requestAccounts' })) as string[];
 }
 
+function isUnsupportedMethod(err: unknown): boolean {
+  const e = err as { code?: number; message?: string };
+  if (e?.code === -32601 || e?.code === 4200) return true;
+  return /method.*(not.*(found|supported|exist)|unsupported)|unsupported method|does not exist/i.test(e?.message ?? '');
+}
+
+/**
+ * Interactive connect that always opens the wallet's account picker.
+ * eth_requestAccounts returns the already-authorised account silently, so a
+ * user who selected a different account in MetaMask could never switch to it.
+ * wallet_requestPermissions (EIP-2255) re-prompts; wallets without it fall
+ * back to eth_requestAccounts. A user rejection (4001) is rethrown.
+ */
+export async function pickAccounts(p: Eip1193Provider): Promise<string[]> {
+  try {
+    await p.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });
+  } catch (err) {
+    if (isUnsupportedMethod(err)) return requestAccounts(p);
+    throw err;
+  }
+  return existingAccounts(p);
+}
+
 /** Accounts already authorised for this site; never opens a prompt. */
 export async function existingAccounts(p: Eip1193Provider): Promise<string[]> {
   return (await p.request({ method: 'eth_accounts' })) as string[];

@@ -40,6 +40,57 @@ describe('browser wallet connection', () => {
     expect(useWalletStore.getState()).toMatchObject({ status: 'disconnected', error: 'Request rejected in wallet' });
   });
 
+  it('opens the account picker on connect, then reads the picked account', async () => {
+    stubHyperliquidFetch();
+    provider.accounts = [user, user2];
+    provider.authorised = true; // site already authorised for `user`
+    provider.pick = [user2];
+    await useWalletStore.getState().connectBrowser('injected');
+    expect(provider.calls.slice(0, 2)).toEqual(['wallet_requestPermissions', 'eth_accounts']);
+    expect(provider.calls).not.toContain('eth_requestAccounts');
+    expect(useWalletStore.getState().address).toBe(user2.address);
+  });
+
+  it.each([
+    { code: -32601, message: 'Method not found' },
+    { code: 4200, message: 'Unsupported method' },
+    { message: 'The method "wallet_requestPermissions" does not exist / is not available.' },
+  ])('falls back to eth_requestAccounts when the wallet lacks wallet_requestPermissions ($message)', async (err) => {
+    stubHyperliquidFetch();
+    provider.permissionsError = err;
+    await useWalletStore.getState().connectBrowser('injected');
+    expect(provider.calls.slice(0, 2)).toEqual(['wallet_requestPermissions', 'eth_requestAccounts']);
+    expect(useWalletStore.getState()).toMatchObject({ status: 'connected', address: user.address, error: null });
+  });
+
+  it('a rejected account picker surfaces as a rejection, not a fallback', async () => {
+    provider.permissionsError = { code: 4001, message: 'User rejected the request.' };
+    await useWalletStore.getState().connectBrowser('injected');
+    expect(useWalletStore.getState()).toMatchObject({ status: 'disconnected', error: 'Request rejected in wallet' });
+    expect(provider.calls).not.toContain('eth_requestAccounts');
+  });
+
+  it('switch account re-opens the picker; cancelling keeps the current session', async () => {
+    stubHyperliquidFetch();
+    provider.accounts = [user, user2];
+    await useWalletStore.getState().connectBrowser('injected');
+    expect(useWalletStore.getState().address).toBe(user.address);
+
+    provider.rejectNext = { code: 4001, message: 'User rejected the request.' };
+    await useWalletStore.getState().connectBrowser('injected');
+    expect(useWalletStore.getState()).toMatchObject({ status: 'connected', address: user.address, error: 'Request rejected in wallet' });
+
+    provider.pick = [user2];
+    await useWalletStore.getState().connectBrowser('injected');
+    expect(useWalletStore.getState()).toMatchObject({ status: 'connected', address: user2.address, error: null });
+  });
+
+  it('restore() never opens a prompt', async () => {
+    localStorage.setItem('hl-last-wallet', 'injected');
+    await useWalletStore.getState().restore();
+    expect(provider.calls).toEqual(['eth_accounts']);
+  });
+
   it('reports a missing wallet', async () => {
     delete (window as any).ethereum;
     await useWalletStore.getState().connectBrowser('injected');

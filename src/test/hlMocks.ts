@@ -11,10 +11,17 @@ export class MockWalletProvider implements Eip1193Provider {
   authorised = false;
   rejectNext: { code: number; message: string } | null = null;
   signedTypedData: unknown[] = [];
+  /** Methods requested, in order. */
+  calls: string[] = [];
+  /** Error thrown for wallet_requestPermissions, to simulate wallets without EIP-2255. */
+  permissionsError: { code?: number; message: string } | null = null;
+  /** Accounts the picker grants on wallet_requestPermissions (defaults to all). */
+  pick: Wallet[] | null = null;
 
   constructor(public accounts: Wallet[], public chainId = 42161) {}
 
   async request({ method, params }: { method: string; params?: unknown[] | object }): Promise<unknown> {
+    this.calls.push(method);
     if (this.rejectNext) {
       const e = this.rejectNext;
       this.rejectNext = null;
@@ -22,6 +29,12 @@ export class MockWalletProvider implements Eip1193Provider {
     }
     switch (method) {
       case 'eth_requestAccounts': this.authorised = true; return this.accounts.map(a => a.address);
+      case 'wallet_requestPermissions': {
+        if (this.permissionsError) throw Object.assign(new Error(this.permissionsError.message), { code: this.permissionsError.code });
+        this.authorised = true;
+        if (this.pick) this.accounts = [...this.pick, ...this.accounts.filter(a => !this.pick!.includes(a))];
+        return [{ parentCapability: 'eth_accounts' }];
+      }
       case 'eth_accounts': return this.authorised ? this.accounts.map(a => a.address) : [];
       case 'eth_chainId': return '0x' + this.chainId.toString(16);
       case 'eth_signTypedData_v4': {

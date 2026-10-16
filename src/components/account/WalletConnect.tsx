@@ -92,6 +92,8 @@ export function WalletConnect() {
   const address = useWalletStore(s => s.address);
   const source = useWalletStore(s => s.source);
   const walletName = useWalletStore(s => s.walletName);
+  const walletId = useWalletStore(s => s.walletId);
+  const connectBrowser = useWalletStore(s => s.connectBrowser);
   const tradingStatus = useWalletStore(s => s.tradingStatus);
   const enableTrading = useWalletStore(s => s.enableTrading);
   const disconnect = useWalletStore(s => s.disconnect);
@@ -131,6 +133,16 @@ export function WalletConnect() {
       <span data-testid="wallet-address" title={`${address} via ${walletName ?? source}`} style={{ fontSize: 12, color: '#8a8f98' }}>
         {short(address)}
       </span>
+      {source === 'browser' && walletId && (
+        <button
+          className="btn-secondary"
+          onClick={() => void connectBrowser(walletId)}
+          title="Open the wallet's account picker to connect a different account"
+          style={{ padding: '4px 10px', fontSize: 11 }}
+        >
+          Switch account
+        </button>
+      )}
       {source === 'browser' && tradingStatus === 'none' && (
         <button
           className="btn-primary"
