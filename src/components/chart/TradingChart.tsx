@@ -6,7 +6,7 @@ import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useChartStore, type DraftOrder } from '../../store/useChartStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
-import { TradeBoxPrimitive } from './TradeBoxPrimitive.ts';
+import { TradeBoxPrimitive, chartXToTime } from './TradeBoxPrimitive.ts';
 import { OrderLinePrimitive } from './OrderLinePrimitive.ts';
 import { SessionPrimitive } from './SessionPrimitive.ts';
 import { FibPrimitive, type FibRetracement } from './FibPrimitive.ts';
@@ -448,7 +448,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
 
     const pending = useTradeSetupStore.getState().pendingSetup;
     if (pending) {
-      addClick(priceNum);
+      addClick(priceNum, chartRef.current ? chartXToTime(chartRef.current, seriesRef.current, x) : null);
       return;
     }
 

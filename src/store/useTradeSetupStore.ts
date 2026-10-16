@@ -19,6 +19,8 @@ export interface TradeSetup {
   paneId: PaneId;
   /** Asset snapshotted at draw-time — execution targets this regardless of active pane */
   asset: string;
+  /** Bar time (s) of the first click; the box starts here. */
+  startTime?: number;
 }
 
 interface PendingSetup {
@@ -26,13 +28,14 @@ interface PendingSetup {
   clicks: number[];
   paneId: PaneId;
   asset: string;
+  startTime?: number;
 }
 
 interface TradeSetupStore {
   activeSetups: TradeSetup[];
   pendingSetup: PendingSetup | null;
   startSetup: (side: Side) => void;
-  addClick: (price: number) => TradeSetup | null;
+  addClick: (price: number, time?: number | null) => TradeSetup | null;
   updateSetup: (id: string, field: 'entry' | 'sl' | 'tp', price: number) => void;
   removeSetup: (id: string) => void;
   clearPending: () => void;
@@ -53,7 +56,7 @@ function resolveClicks(side: Side, clicks: number[]): { entry: number; sl: numbe
   return { tp: sorted[0], entry: sorted[1], sl: sorted[2] };
 }
 
-function calcSetup(side: Side, entry: number, sl: number, tp: number, riskUsdc: number, paneId: PaneId, asset: string): TradeSetup {
+function calcSetup(side: Side, entry: number, sl: number, tp: number, riskUsdc: number, paneId: PaneId, asset: string, startTime?: number): TradeSetup {
   const riskPerUnit = Math.abs(entry - sl);
   const assetSize = riskPerUnit > 0 ? riskUsdc / riskPerUnit : 0;
   const potentialPnl = assetSize * Math.abs(tp - entry);
@@ -73,6 +76,7 @@ function calcSetup(side: Side, entry: number, sl: number, tp: number, riskUsdc: 
     rr,
     paneId,
     asset,
+    ...(startTime !== undefined ? { startTime } : {}),
   };
 }
 
@@ -96,9 +100,10 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
     set({ pendingSetup: { side, clicks: [], paneId, asset: pane.asset } });
   },
 
-  addClick: (price) => {
-    const pending = get().pendingSetup;
+  addClick: (price, time) => {
+    let pending = get().pendingSetup;
     if (!pending) return null;
+    if (pending.clicks.length === 0 && time != null) pending = { ...pending, startTime: time };
 
     const clicks = [...pending.clicks, price];
     if (clicks.length < 3) {
@@ -109,7 +114,7 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
     // 3 clicks collected — resolve and create setup, frozen to the originating pane/asset
     const { entry, sl, tp } = resolveClicks(pending.side, clicks);
     const riskUsdc = parseFloat(useSettingsStore.getState().riskUsdc) || 0;
-    const setup = calcSetup(pending.side, entry, sl, tp, riskUsdc, pending.paneId, pending.asset);
+    const setup = calcSetup(pending.side, entry, sl, tp, riskUsdc, pending.paneId, pending.asset, pending.startTime);
 
     set(s => ({
       pendingSetup: null,

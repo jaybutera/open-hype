@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { Wallet } from 'ethers';
 import { OrderPanel } from '../OrderPanel.tsx';
-import { TradeBoxPrimitive, tradeBoxButtonRects } from '../../chart/TradeBoxPrimitive.ts';
+import { TradeBoxPrimitive } from '../../chart/TradeBoxPrimitive.ts';
 import { useTradeSetupStore, type TradeSetup } from '../../../store/useTradeSetupStore.ts';
 import { useSettingsStore } from '../../../store/useSettingsStore.ts';
 import { useMarketStore } from '../../../store/useMarketStore.ts';
@@ -36,7 +36,7 @@ function chartBox() {
 }
 
 function clickExecute(prim: TradeBoxPrimitive) {
-  const r = tradeBoxButtonRects(WIDTH, ENTRY_Y).execute;
+  const r = prim.layout()!.execute;
   let took = false;
   act(() => { took = prim.handleButtonClick(r.x + r.w / 2, r.y + r.h / 2); });
   return took;
