@@ -94,6 +94,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const addClick = useTradeSetupStore(s => s.addClick);
   const updateSetup = useTradeSetupStore(s => s.updateSetup);
   const removeSetup = useTradeSetupStore(s => s.removeSetup);
+  const requestExecute = useTradeSetupStore(s => s.requestExecute);
   const clearPending = useTradeSetupStore(s => s.clearPending);
 
   const isActive = activePaneId === paneId;
@@ -369,6 +370,10 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     const priceNum = Number(price);
 
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
+      if (prim.handleButtonClick(x, y)) return;
+    }
+
+    for (const prim of tradeBoxPrimitivesRef.current.values()) {
       if (prim.handleMouseDown(x, y)) {
         chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
         return;
@@ -516,12 +521,11 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       const existing = primMap.get(setup.id);
       if (existing) {
         existing.updateSetup(setup);
-        existing.updateCallbacks(removeSetup, updateSetup);
+        existing.updateCallbacks(requestExecute, removeSetup, updateSetup);
       } else {
-        const noop = () => {};
         const prim = new TradeBoxPrimitive(
           setup,
-          noop,
+          requestExecute,
           removeSetup,
           updateSetup,
         );
@@ -529,7 +533,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         primMap.set(setup.id, prim);
       }
     }
-  }, [paneSetups, removeSetup, updateSetup]);
+  }, [paneSetups, requestExecute, removeSetup, updateSetup]);
 
   const handleOrderDragDone = useCallback((orderId: string, newPrice: number) => {
     const ord = paperOrders.find(o => o.id === orderId);

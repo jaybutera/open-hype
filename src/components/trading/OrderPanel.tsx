@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
@@ -217,6 +217,31 @@ export function OrderPanel({ engine }: Props) {
       setTimeout(() => setSuccess(null), 2000);
     }
   };
+
+  // Execute clicked on the chart's trade box: run it here, then scroll the
+  // outcome (live confirm card, error, success) into view, since the chart
+  // is not where the card renders.
+  const executeSetupRef = useRef(handleExecuteSetup);
+  executeSetupRef.current = handleExecuteSetup;
+  const scrollOnOutcomeRef = useRef(false);
+  const liveConfirmRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
+  const executeRequest = useTradeSetupStore(s => s.executeRequest);
+  useEffect(() => {
+    if (!executeRequest) return;
+    const req = useTradeSetupStore.getState().takeExecuteRequest();
+    if (!req) return; // another OrderPanel took it
+    scrollOnOutcomeRef.current = true;
+    executeSetupRef.current(req.id);
+  }, [executeRequest]);
+  useEffect(() => {
+    if (!scrollOnOutcomeRef.current) return;
+    const el = (pendingLive && liveConfirmRef.current) || (error && errorRef.current) || (success && successRef.current);
+    if (!el) return;
+    scrollOnOutcomeRef.current = false;
+    el.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, [pendingLive, error, success]);
 
   const handleSubmit = () => {
     setError(null);
@@ -506,7 +531,9 @@ export function OrderPanel({ engine }: Props) {
 
       {/* Submit */}
       {pendingLive ? (
-        <LiveOrderConfirm order={pendingLive.order} busy={liveBusy} onConfirm={() => void confirmLive()} onCancel={() => setPendingLive(null)} />
+        <div ref={liveConfirmRef}>
+          <LiveOrderConfirm order={pendingLive.order} busy={liveBusy} onConfirm={() => void confirmLive()} onCancel={() => setPendingLive(null)} />
+        </div>
       ) : (
         <button
           className={isBuy ? 'btn-long' : 'btn-short'}
@@ -522,8 +549,8 @@ export function OrderPanel({ engine }: Props) {
         </div>
       )}
 
-      {error && <div style={{ color: '#f6465d', fontSize: 12 }}>{error}</div>}
-      {success && <div style={{ color: '#0ecb81', fontSize: 12 }}>{success}</div>}
+      {error && <div ref={errorRef} style={{ color: '#f6465d', fontSize: 12 }}>{error}</div>}
+      {success && <div ref={successRef} style={{ color: '#0ecb81', fontSize: 12 }}>{success}</div>}
 
       <AiTradePanel />
       <AiOverlayPanel />

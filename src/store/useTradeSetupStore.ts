@@ -36,6 +36,11 @@ interface TradeSetupStore {
   updateSetup: (id: string, field: 'entry' | 'sl' | 'tp', price: number) => void;
   removeSetup: (id: string) => void;
   clearPending: () => void;
+  /** Execute request from the chart's trade box; an OrderPanel takes it and runs it. */
+  executeRequest: { id: string; nonce: number } | null;
+  requestExecute: (id: string) => void;
+  /** Returns and clears the pending request, so exactly one taker runs it. */
+  takeExecuteRequest: () => { id: string; nonce: number } | null;
 }
 
 function resolveClicks(side: Side, clicks: number[]): { entry: number; sl: number; tp: number } {
@@ -131,6 +136,14 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
   },
 
   clearPending: () => set({ pendingSetup: null }),
+
+  executeRequest: null,
+  requestExecute: (id) => set(s => ({ executeRequest: { id, nonce: (s.executeRequest?.nonce ?? 0) + 1 } })),
+  takeExecuteRequest: () => {
+    const req = get().executeRequest;
+    if (req) set({ executeRequest: null });
+    return req;
+  },
 }));
 
 // Recompute all active setups when riskUsdc changes

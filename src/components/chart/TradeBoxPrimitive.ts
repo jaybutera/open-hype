@@ -21,6 +21,22 @@ const SL_LINE = '#f6465d';
 const ENTRY_LINE = '#3861fb';
 const LABEL_BG = 'rgba(10, 14, 23, 0.85)';
 const LABEL_COLOR = '#e1e4e8';
+const EXEC_W = 64;
+const CLOSE_W = 20;
+const BTN_H = 18;
+const BTN_GAP = 4;
+
+interface Rect { x: number; y: number; w: number; h: number }
+const inRect = (r: Rect, x: number, y: number) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+
+/** Execute and ✕ buttons sit left of the entry label (label starts at w - 200 - 6). */
+export function tradeBoxButtonRects(width: number, entryY: number): { execute: Rect; remove: Rect } {
+  const right = width - 200 - 6 - BTN_GAP;
+  const y = entryY - 7;
+  const execute = { x: right - EXEC_W, y, w: EXEC_W, h: BTN_H };
+  const remove = { x: execute.x - BTN_GAP - CLOSE_W, y, w: CLOSE_W, h: BTN_H };
+  return { execute, remove };
+}
 
 export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
   private _setup: TradeSetup;
@@ -33,6 +49,8 @@ export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
 
   // Drag state
   private _dragging: DragField | null = null;
+  /** Pane width from the last draw, for button hit tests. */
+  _width = 0;
 
   constructor(
     setup: TradeSetup,
@@ -56,9 +74,11 @@ export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
   }
 
   updateCallbacks(
+    onExecute: (id: string) => void,
     onRemove: (id: string) => void,
     onDrag: (id: string, field: DragField, price: number) => void,
   ) {
+    this._onExecute = onExecute;
     this._onRemove = onRemove;
     this._onDrag = onDrag;
   }
@@ -79,8 +99,31 @@ export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
     // Called when viewport changes — pane view will re-render using latest coords
   }
 
+  private _buttons() {
+    if (!this._series || this._width <= 0) return null;
+    const entryY = this._series.priceToCoordinate(this._setup.entryPrice);
+    if (entryY === null) return null;
+    return tradeBoxButtonRects(this._width, entryY);
+  }
+
+  /** Click on the drawn Execute / ✕ buttons. Returns true when a button took the click. */
+  handleButtonClick(x: number, y: number): boolean {
+    const b = this._buttons();
+    if (!b) return false;
+    if (inRect(b.execute, x, y)) { this._onExecute(this._setup.id); return true; }
+    if (inRect(b.remove, x, y)) { this._onRemove(this._setup.id); return true; }
+    return false;
+  }
+
   hitTest(x: number, y: number): PrimitiveHoveredItem | null {
     if (!this._series) return null;
+    const b = this._buttons();
+    if (b && inRect(b.execute, x, y)) {
+      return { cursorStyle: 'pointer', externalId: `execute-${this._setup.id}` } as PrimitiveHoveredItem;
+    }
+    if (b && inRect(b.remove, x, y)) {
+      return { cursorStyle: 'pointer', externalId: `remove-${this._setup.id}` } as PrimitiveHoveredItem;
+    }
     const entryY = this._series.priceToCoordinate(this._setup.entryPrice);
     const slY = this._series.priceToCoordinate(this._setup.slPrice);
     const tpY = this._series.priceToCoordinate(this._setup.tpPrice);
@@ -98,7 +141,7 @@ export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
     return null;
   }
 
-  // Called externally from chart mouse handlers (drag only — buttons are HTML overlays)
+  // Called externally from chart mouse handlers (drag only; buttons go through handleButtonClick)
   handleMouseDown(_x: number, y: number): boolean {
     if (!this._series) return false;
     const entryY = this._series.priceToCoordinate(this._setup.entryPrice);
@@ -218,7 +261,11 @@ class TradeBoxRenderer implements ISeriesPrimitivePaneRenderer {
         `R:R ${setup.rr.toFixed(1)}`,
       ], '#8a8f98');
 
-      // Buttons are rendered as HTML overlays in TradingChart.tsx
+      // Execute / ✕ buttons, hit-tested in handleButtonClick
+      this._primitive._width = w;
+      const btn = tradeBoxButtonRects(w, entryY);
+      drawButton(ctx, btn.execute, isLong ? TP_LINE : SL_LINE, 'EXECUTE');
+      drawButton(ctx, btn.remove, '#2a2f3e', '✕');
     });
   }
 }
@@ -236,6 +283,20 @@ function drawDashedLine(
   ctx.moveTo(x1, y);
   ctx.lineTo(x2, y);
   ctx.stroke();
+  ctx.restore();
+}
+
+function drawButton(ctx: CanvasRenderingContext2D, r: Rect, bg: string, text: string) {
+  ctx.save();
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(r.x, r.y, r.w, r.h, 3);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, r.x + r.w / 2, r.y + r.h / 2 + 1);
   ctx.restore();
 }
 
