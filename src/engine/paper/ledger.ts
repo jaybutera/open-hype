@@ -14,6 +14,20 @@ export interface LedgerEntry {
   balanceAfter: string;
   kind?: LedgerKind;
   spreadId?: string;
+  /** Hyperliquid-style direction for perp fills, e.g. "Open Long", "Close Short", "Long > Short". */
+  dir?: string;
+}
+
+/** Direction label for a perp fill against the position size (signed) before it. */
+export function fillDir(prevSzi: Decimal, side: 'buy' | 'sell', size: Decimal): string {
+  const next = side === 'buy' ? prevSzi.add(size) : prevSzi.sub(size);
+  if (prevSzi.isZero()) return side === 'buy' ? 'Open Long' : 'Open Short';
+  if (prevSzi.gt(0)) {
+    if (side === 'buy') return 'Open Long';
+    return next.lt(0) ? 'Long > Short' : 'Close Long';
+  }
+  if (side === 'sell') return 'Open Short';
+  return next.gt(0) ? 'Short > Long' : 'Close Short';
 }
 
 let nextId = 1;
@@ -27,12 +41,14 @@ export function createLedgerEntry(
   realizedPnl: Decimal,
   balanceAfter: Decimal,
   timestamp: number = Date.now(),
+  dir?: string,
 ): LedgerEntry {
   return {
     id: `paper-${nextId++}`,
     timestamp,
     coin,
     side,
+    ...(dir ? { dir } : {}),
     size: size.toString(),
     price: price.toString(),
     fee: fee.toString(),

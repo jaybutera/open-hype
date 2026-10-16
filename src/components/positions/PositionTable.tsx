@@ -314,7 +314,7 @@ export function PositionTable({ engine }: Props) {
               <tr style={{ color: '#8a8f98', fontSize: 11 }}>
                 <th style={{ padding: '4px 16px', textAlign: 'left' }}>Time</th>
                 <th style={{ textAlign: 'left', padding: '4px 8px' }}>Asset</th>
-                <th style={{ textAlign: 'left', padding: '4px 8px' }}>Side</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px' }}>Direction</th>
                 <th style={{ textAlign: 'right', padding: '4px 8px' }}>Price</th>
                 <th style={{ textAlign: 'right', padding: '4px 8px' }}>Size</th>
                 <th style={{ textAlign: 'right', padding: '4px 8px' }}>Fee</th>
@@ -332,7 +332,7 @@ export function PositionTable({ engine }: Props) {
                       padding: '6px 8px',
                       color: fill.side === 'buy' ? '#0ecb81' : '#f6465d',
                     }}>
-                      {fill.side.toUpperCase()}
+                      {fill.dir ?? fill.side.toUpperCase()}
                     </td>
                     <td style={{ textAlign: 'right', padding: '6px 8px' }}>${parseFloat(fill.price).toFixed(2)}</td>
                     <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fill.size}</td>
