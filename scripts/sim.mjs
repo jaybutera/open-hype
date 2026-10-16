@@ -25,6 +25,7 @@
  */
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,13 +90,23 @@ function shiftFor(startMs, target) {
   return parseTime(`${day} 00:00 ET`) - parseTime(`${etDate(startMs)} 00:00 ET`);
 }
 
-function findChrome() {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-  const base = join(homedir(), '.cache/puppeteer/chrome');
-  for (const v of existsSync(base) ? readdirSync(base).sort().reverse() : []) {
-    const p = join(base, v, 'chrome-linux64/chrome');
+/** Newest `<dir>/<version>/chrome-linux64/chrome` under a cache dir, filtered by version prefix. */
+function newestChrome(dir, prefix = '') {
+  const vs = existsSync(dir) ? readdirSync(dir).filter(v => v.startsWith(prefix)) : [];
+  vs.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  for (const v of vs) {
+    const p = join(dir, v, 'chrome-linux64/chrome');
     if (existsSync(p)) return p;
   }
+  return null;
+}
+
+function findChrome() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const p = newestChrome(join(homedir(), '.cache/puppeteer/chrome'))
+    ?? newestChrome(join(homedir(), '.cache/ms-playwright'), 'chromium-')
+    ?? ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome'].find(existsSync);
+  if (p) return p;
   throw new Error('no Chrome found; set CHROME_PATH');
 }
 
@@ -106,7 +117,7 @@ const recStart = parseTime(args.start);
 const shift = shiftFor(recStart, args.shift);
 const start = recStart + shift;
 const end = parseTime(args.end) + shift;
-const runId = `${etDate(recStart)}-${Date.now().toString(36)}`;
+const runId = `${etDate(recStart)}-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 const out = resolve(args.out ?? join('/tmp/hl-sim', runId));
 const BASE = `http://127.0.0.1:${args.port}`;
 mkdirSync(join(out, 'shots'), { recursive: true });
@@ -156,6 +167,8 @@ browser = await puppeteer.launch({ executablePath: findChrome(), headless: true,
 const page = await browser.newPage();
 await page.setViewport({ width: 1600, height: 1000 });
 page.on('pageerror', e => log(`page error: ${e.message}`));
+// SIM_PAGE_LOG=1 forwards the page's console (replay/sim debugging).
+if (process.env.SIM_PAGE_LOG) page.on('console', m => log(`page ${m.type()}: ${m.text()}`));
 await page.goto(BASE, { waitUntil: 'networkidle2', timeout: 120_000 });
 
 // 3. Enter replay.

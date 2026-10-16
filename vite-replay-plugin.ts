@@ -52,6 +52,14 @@ interface CoinCache {
 
 const cache = new Map<string, CoinCache>();
 
+/** Files already reported as unreadable, so the log isn't spammed on every /assets call. */
+const warned = new Set<string>();
+function warnOnce(key: string, msg: string): void {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(msg);
+}
+
 /**
  * Files eligible for replay: plain `<COIN>_1m.parquet` snapshots for coins the
  * frontend can chart (HL perps + xyz dex). Excludes collector intermediates
@@ -281,7 +289,15 @@ export function replayDataPlugin(): Plugin {
             const tickCoins = discoverTickCoins();
             const assets = await Promise.all(
               Array.from(files.entries()).map(async ([coin, path]) => {
-                const { rows } = await loadCoin(coin, path);
+                // One unreadable file (e.g. a ZSTD parquet hyparquet can't
+                // decode) must not take the whole asset list down with it.
+                let rows: Row1m[];
+                try {
+                  ({ rows } = await loadCoin(coin, path));
+                } catch (e) {
+                  warnOnce(coin, `[replay] skipping ${basename(path)}: ${(e as Error)?.message ?? e}`);
+                  return null;
+                }
                 if (rows.length === 0) return null;
                 const tickDir = tickCoins.get(coin);
                 const ticks = tickDir ? tickCoverage(tickDir) : null;

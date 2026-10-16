@@ -206,6 +206,14 @@ export function startAiLink(engine?: PaperEngine): void {
     try {
       const replay = useReplayStore.getState();
       await replay.loadAssets();
+      // loadAssets keeps its error in the store; without coverage every advance
+      // reports end of data, so fail the start instead.
+      const { assets, assetsError } = useReplayStore.getState();
+      const cov = assets.find(a => a.coin === data.asset);
+      if (!cov) throw new Error(assetsError ? `replay assets: ${assetsError}` : `no replay data for ${data.asset}`);
+      if (data.start < cov.firstTs || data.start > cov.lastTs) {
+        throw new Error(`${data.asset} recording covers ${new Date(cov.firstTs).toISOString()} to ${new Date(cov.lastTs).toISOString()}`);
+      }
       await replay.enterReplay(data.start);
       const market = useMarketStore.getState();
       market.setAsset(data.asset, 'primary');
