@@ -166,9 +166,10 @@ class GexRenderer implements ISeriesPrimitivePaneRenderer {
           const x = left - 4;
           const longest = slots.length > 0 ? s.priors[slots[slots.length - 1]] : undefined;
           let dx = 0;
-          if (longest !== undefined && Number.isFinite(longest)) {
-            const d = v - longest;
-            const delta = `  ${d > 0 ? '+' : ''}${formatGex(d)}`;
+          // Changes too small to show at this scale are left off rather than printed as "-0.0".
+          const dText = longest !== undefined && Number.isFinite(longest) ? formatGex(v - longest) : '';
+          if (dText && !/^-?0(\.0+)?$/.test(dText)) {
+            const delta = `  ${v - longest! > 0 ? '+' : ''}${dText}`;
             ctx.fillStyle = MUTED;
             ctx.fillText(delta, x, y);
             dx = ctx.measureText(delta).width;
