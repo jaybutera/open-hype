@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type Time, type IPriceLine, LineStyle } from 'lightweight-charts';
+import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type HistogramData, type Time, type IPriceLine, LineStyle } from 'lightweight-charts';
 import { useMarketStore, type PaneId } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
@@ -38,10 +38,15 @@ interface Props {
   paneId?: PaneId;
 }
 
+const VOLUME_KEY = 'hl-volume';
+const VOLUME_UP = 'rgba(14, 203, 129, 0.35)';
+const VOLUME_DOWN = 'rgba(246, 70, 93, 0.35)';
+
 export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const tradeBoxPrimitivesRef = useRef<Map<string, TradeBoxPrimitive>>(new Map());
   const orderLinePrimitivesRef = useRef<Map<string, OrderLinePrimitive>>(new Map());
@@ -49,6 +54,9 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const fibPrimitiveRef = useRef<FibPrimitive | null>(null);
   const [sessionsOn, setSessionsOn] = useState(true);
   const [alertsOn, setAlertsOn] = useState(true);
+  const [volumeOn, setVolumeOn] = useState(() => {
+    try { return localStorage.getItem(VOLUME_KEY) === '1'; } catch { return false; }
+  });
   const [fibMode, setFibMode] = useState(false);
   const [fibFirstClick, setFibFirstClick] = useState<{ price: number; time: number } | null>(null);
   const [fibs, setFibs] = useState<FibRetracement[]>([]);
@@ -136,8 +144,19 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       wickDownColor: '#f6465d',
     });
 
+    // Hyperliquid volume per bar, on its own overlay scale along the bottom fifth of the pane
+    const volumeSeries = chart.addHistogramSeries({
+      priceScaleId: 'volume',
+      priceFormat: { type: 'volume' },
+      lastValueVisible: false,
+      priceLineVisible: false,
+      visible: false,
+    });
+    chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+
     chartRef.current = chart;
     seriesRef.current = series;
+    volumeSeriesRef.current = volumeSeries;
 
     const sessionPrim = new SessionPrimitive();
     series.attachPrimitive(sessionPrim);
@@ -161,6 +180,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      volumeSeriesRef.current = null;
       priceLinesRef.current = [];
       tradeBoxPrimitivesRef.current.clear();
       orderLinePrimitivesRef.current.clear();
@@ -201,9 +221,23 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     } catch (e) {
       console.warn('Chart setData error:', e);
     }
+    try {
+      volumeSeriesRef.current?.setData(plottedRef.current.map((c, i): HistogramData => ({
+        time: data[i].time,
+        value: c.v,
+        color: c.c >= c.o ? VOLUME_UP : VOLUME_DOWN,
+      })));
+    } catch (e) {
+      console.warn('Chart volume setData error:', e);
+    }
 
     sessionPrimitiveRef.current?.setCandleData(data);
   }, [candles]);
+
+  useEffect(() => {
+    volumeSeriesRef.current?.applyOptions({ visible: volumeOn });
+    try { localStorage.setItem(VOLUME_KEY, volumeOn ? '1' : '0'); } catch {}
+  }, [volumeOn]);
 
   // Load more candles when scrolling to the left edge
   useEffect(() => {
@@ -838,6 +872,21 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           }}
         >
           Alerts
+        </button>
+        <button
+          onClick={() => setVolumeOn(v => !v)}
+          title="Volume traded per bar on this Hyperliquid market (not options volume)"
+          style={{
+            padding: '4px 10px',
+            fontSize: 12,
+            background: volumeOn ? '#1a1f2e' : 'transparent',
+            border: volumeOn ? '1px solid #2a2f3e' : '1px solid transparent',
+            borderRadius: 4,
+            color: volumeOn ? '#e1e4e8' : '#8a8f98',
+            cursor: 'pointer',
+          }}
+        >
+          Vol
         </button>
         <button
           onClick={() => { setFibMode(v => !v); setFibFirstClick(null); }}
