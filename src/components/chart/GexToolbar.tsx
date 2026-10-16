@@ -21,7 +21,7 @@ export function toolbarButtonStyle(active: boolean, extra?: CSSProperties): CSSP
 interface Props {
   /** GEXBot ticker the pane's asset maps to; the toolbar renders nothing for null. */
   ticker: string | null;
-  /** The pane's candle interval; sets the lookbacks the levels and γ vol outlines show. */
+  /** The pane's candle interval; sets the lookbacks the levels and γ vol dots show. */
   interval: string;
 }
 
@@ -65,7 +65,7 @@ export function GexToolbar({ ticker, interval }: Props) {
       </button>
       <button
         onClick={() => setStrikes(strikes === 'vol' ? 'off' : 'vol')}
-        title={`Per-strike gamma exposure from today's traded volume, as bars off the price axis; the thinner rows under each bar are the bar ${lookbacksFor(interval)[0].minutes} and ${lookbacksFor(interval)[1].minutes} minutes ago for this interval`}
+        title={`Per-strike gamma exposure from today's traded volume, as bars off the price axis; the white dots mark where each bar ended ${lookbacksFor(interval)[0].minutes} (brighter) and ${lookbacksFor(interval)[1].minutes} minutes ago for this interval`}
         style={toolbarButtonStyle(strikes === 'vol')}
       >
         γ vol
