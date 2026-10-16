@@ -37,11 +37,17 @@ function saveTheme(t: ThemeValues) {
   try { localStorage.setItem(THEME_KEY, JSON.stringify(t)); } catch {}
 }
 
+// Written as a stylesheet rule rather than inline on <html>: extensions that
+// rewrite page CSS (Dark Reader) track stylesheets but not inline variables.
 function applyCssVars(t: ThemeValues) {
   if (typeof document === 'undefined') return;
-  const root = document.documentElement.style;
-  root.setProperty('--up', t.up);
-  root.setProperty('--down', t.down);
+  let el = document.getElementById('hl-theme-vars');
+  if (!el) {
+    el = document.createElement('style');
+    el.id = 'hl-theme-vars';
+    document.head.appendChild(el);
+  }
+  el.textContent = `:root { --up: ${t.up}; --down: ${t.down}; }`;
 }
 
 interface ThemeStore extends ThemeValues {
