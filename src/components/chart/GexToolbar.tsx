@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { useGexStore } from '../../store/useGexStore.ts';
 import { GEX_DTES, formatGex } from '../../services/gex/types.ts';
 import { formatEt } from '../../utils/chartTime.ts';
@@ -28,7 +28,7 @@ interface Props {
 /**
  * GEX layer toggles for the chart toolbar, next to KZ and Fib: the headline
  * levels, the per-strike profile (by volume or by open interest), the expiry
- * they come from, and a price offset for when the perp trades away from cash.
+ * they come from.
  */
 export function GexToolbar({ ticker, interval }: Props) {
   const levels = useGexStore(s => s.levels);
@@ -37,25 +37,21 @@ export function GexToolbar({ ticker, interval }: Props) {
   const setLevels = useGexStore(s => s.setLevels);
   const setStrikes = useGexStore(s => s.setStrikes);
   const setDte = useGexStore(s => s.setDte);
-  const setOffset = useGexStore(s => s.setOffset);
-  const offset = useGexStore(s => (ticker ? s.offsetFor(ticker) : 0));
   const data = useGexStore(s => (ticker ? s.current(ticker) : undefined));
   const error = useGexStore(s => (ticker ? s.errors[`${ticker}/${s.dte}`] : undefined));
-  const [offsetText, setOffsetText] = useState<string | null>(null);
 
   if (!ticker) return null;
   const anyOn = levels || strikes !== 'off';
 
-  const commitOffset = () => {
-    if (offsetText === null) return;
-    const n = parseFloat(offsetText);
-    setOffset(ticker, Number.isFinite(n) ? n : 0);
-    setOffsetText(null);
-  };
-
   return (
     <span data-testid="gex-toolbar" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 8 }}>
-      <span style={{ fontSize: 11, color: '#555', marginRight: 2 }} title={`GEXBot ticker for ${ticker}`}>GEX</span>
+      <span aria-hidden style={{ width: 1, height: 14, background: '#2a2f3e', margin: '0 6px 0 2px' }} />
+      <span
+        style={{ fontSize: 10, letterSpacing: 1, color: '#555', textTransform: 'uppercase', marginRight: 4, userSelect: 'none' }}
+        title={`GEXBot ticker for ${ticker}`}
+      >
+        GEX
+      </span>
       <button
         onClick={() => setLevels(!levels)}
         title={`Zero gamma and the major positive/negative gamma strikes, by volume (solid) and open interest (dashed), plus the volume majors ${lookbacksFor(interval)[0].minutes} and ${lookbacksFor(interval)[1].minutes} minutes ago when they differ (faint dotted)`}
@@ -91,22 +87,6 @@ export function GexToolbar({ ticker, interval }: Props) {
               </button>
             ))}
           </span>
-          <label
-            title="Added to every GEXBot price before drawing; use it when the perp trades away from cash"
-            style={{ fontSize: 11, color: '#555', display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 4 }}
-          >
-            offset
-            <input
-              type="number"
-              step="any"
-              value={offsetText ?? (offset === 0 ? '' : String(offset))}
-              placeholder="0"
-              onChange={e => setOffsetText(e.target.value)}
-              onBlur={commitOffset}
-              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-              style={{ width: 56, fontSize: 11, padding: '3px 4px', background: '#0a0e17', color: '#e1e4e8', border: '1px solid #2a2f3e', borderRadius: 4 }}
-            />
-          </label>
           {data && (
             <span
               style={{ fontSize: 11, color: '#555', marginLeft: 6 }}

@@ -27,7 +27,8 @@ function loadSettings(): GexSettings {
       levels: j.levels === true,
       strikes: j.strikes === 'vol' || j.strikes === 'oi' ? j.strikes : 'off',
       dte: j.dte === 'one' || j.dte === 'full' ? j.dte : 'zero',
-      offsets: j.offsets && typeof j.offsets === 'object' ? j.offsets : {},
+      // The offset input left the toolbar; saved offsets are not applied any more.
+      offsets: {},
     };
   } catch {
     return DEFAULTS;
