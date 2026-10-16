@@ -316,7 +316,7 @@ export function PositionTable({ engine }: Props) {
               </tr>
             </thead>
             <tbody>
-              {[...paperFills].reverse().slice(0, 10).map((fill, idx) => {
+              {[...paperFills].reverse().map((fill, idx) => {
                 const pnl = parseFloat(fill.realizedPnl);
                 return (
                   <tr key={fill.id} className="fill-row" style={{ borderBottom: '1px solid #1a1f2e' }}>
