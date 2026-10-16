@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { useGexStore } from '../../store/useGexStore.ts';
 import { GEX_DTES, formatGex } from '../../services/gex/types.ts';
 import { formatEt } from '../../utils/chartTime.ts';
-import { priorSlotFor } from '../../services/gex/lookbacks.ts';
+import { lookbacksFor } from '../../services/gex/lookbacks.ts';
 
 /** Same look as the KZ / Fib buttons in the chart toolbar. */
 export function toolbarButtonStyle(active: boolean, extra?: CSSProperties): CSSProperties {
@@ -21,7 +21,7 @@ export function toolbarButtonStyle(active: boolean, extra?: CSSProperties): CSSP
 interface Props {
   /** GEXBot ticker the pane's asset maps to; the toolbar renders nothing for null. */
   ticker: string | null;
-  /** The pane's candle interval; sets the prior the γ vol outline shows. */
+  /** The pane's candle interval; sets the lookbacks the levels and γ vol outlines show. */
   interval: string;
 }
 
@@ -34,8 +34,6 @@ export function GexToolbar({ ticker, interval }: Props) {
   const levels = useGexStore(s => s.levels);
   const strikes = useGexStore(s => s.strikes);
   const dte = useGexStore(s => s.dte);
-  const trail = useGexStore(s => s.trail);
-  const setTrail = useGexStore(s => s.setTrail);
   const setLevels = useGexStore(s => s.setLevels);
   const setStrikes = useGexStore(s => s.setStrikes);
   const setDte = useGexStore(s => s.setDte);
@@ -60,23 +58,14 @@ export function GexToolbar({ ticker, interval }: Props) {
       <span style={{ fontSize: 11, color: '#555', marginRight: 2 }} title={`GEXBot ticker for ${ticker}`}>GEX</span>
       <button
         onClick={() => setLevels(!levels)}
-        title="Zero gamma and the major positive/negative gamma strikes, by volume (solid) and open interest (dashed)"
+        title={`Zero gamma and the major positive/negative gamma strikes, by volume (solid) and open interest (dashed), plus the volume majors ${lookbacksFor(interval)[0].minutes} and ${lookbacksFor(interval)[1].minutes} minutes ago when they differ (faint dashed)`}
         style={toolbarButtonStyle(levels)}
       >
         Levels
       </button>
-      {levels && (
-        <button
-          onClick={() => setTrail(!trail)}
-          title="Where the GEX levels were earlier in the session, with dots at the two lookbacks for this candle interval"
-          style={toolbarButtonStyle(trail)}
-        >
-          Trail
-        </button>
-      )}
       <button
         onClick={() => setStrikes(strikes === 'vol' ? 'off' : 'vol')}
-        title={`Per-strike gamma exposure from today's traded volume, as bars off the price axis; the outline is the bar ${priorSlotFor(interval).minutes} minutes ago`}
+        title={`Per-strike gamma exposure from today's traded volume, as bars off the price axis; the outlines are the bar ${lookbacksFor(interval)[0].minutes} and ${lookbacksFor(interval)[1].minutes} minutes ago for this interval`}
         style={toolbarButtonStyle(strikes === 'vol')}
       >
         γ vol

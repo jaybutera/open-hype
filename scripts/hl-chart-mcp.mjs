@@ -105,8 +105,8 @@ const TOOLS = [
       '`overlays` lists the overlay sets already pushed and whether the user has each one toggled on.',
       '`gex` (xyz:SP500, xyz:XYZ100 and xyz single names only, once the user has a GEX layer on) carries the GEXBot',
       'reading: spot, zeroGamma, major +/- gamma strikes by volume and OI, net GEX, and the heaviest strikes; `asOf` is its',
-      'UTC ms and `offset` is already applied by the chart but not to these numbers. `gex.lookbacks` (when the Levels trail is on)',
-      'says where the levels were at the two lookbacks for the pane interval, from the dev server\'s 1-minute samples.',
+      'UTC ms and `offset` is already applied by the chart but not to these numbers. `gex.lookbacks` gives the major +/- volume',
+      'gamma strikes 1/5 (1m pane), 5/10 (5m) or 15/30 minutes (15m and up) before `asOf`, from GEXBot\'s per-strike priors.',
       '`stale: true` means the page did not answer in time and this is the last view it reported.',
       'Call this before push_overlays so times and prices refer to real bars.',
     ].join(' '),
@@ -173,10 +173,10 @@ const TOOLS = [
       '`asOf` is the reading\'s UTC ms and ET time; the feed freezes at the 16:00 ET close. Prices are cash index prices; the',
       'charted perp (xyz:SP500 -> SPX, xyz:XYZ100 -> NDX, xyz single names -> their ticker) may trade away from them after hours.',
       'Omit `ticker` to use the charted asset\'s mapping; the answer says which ticker it used.',
-      '`lookbacks` rows say where zeroGamma and the four major strikes were N minutes before the latest sample (`asOf` is the',
-      'sample used). GEXBot has no level history: these come from the dev server\'s own 1-minute samples (all fresh readings, plus',
-      'SPX, NDX, TSLA, SPY, QQQ every minute in RTH), kept for the last 5 trading days only; a lookback older than that is left out.',
-      'Default minutes follow the charted pane\'s interval (1m: 15,30; 5m: 30,60; 15m: 60,120; 1h and up: 120,240), or 60,120 with no pane.',
+      '`lookbacks` rows give the major +/- volume gamma strikes N minutes before `asOf`, worked out from each strike\'s GEXBot',
+      'priors (its volume GEX 1, 5, 10, 15 and 30 minutes earlier); GEXBot has no history of zero gamma or OI, and nothing',
+      'older than 30 minutes. Default minutes follow the charted pane\'s interval (1m: 1,5; 5m: 5,10; 15m and up: 15,30), or',
+      '15,30 with no pane. `biggestBuild` is GEXBot\'s max_priors: the strike with the biggest volume-GEX build over each window.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -184,7 +184,7 @@ const TOOLS = [
         ticker: { type: 'string', description: 'GEXBot ticker (SPX, NDX, SPY, QQQ, ES_SPX, NQ_NDX, TSLA...). Default: the charted asset\'s GEXBot ticker.' },
         dte: { type: 'string', enum: ['zero', 'one', 'full'], description: 'zero = expiring today (default), one = tomorrow, full = all expirations GEXBot tracks.' },
         strikes: { type: 'string', enum: ['near', 'all', 'none'], description: 'How many strike rows: near (default) = the 40 around spot, all = every strike, none = levels only.' },
-        lookbacks: { type: 'array', items: { type: 'number', exclusiveMinimum: 0 }, maxItems: 10, description: 'Minutes back for the level history rows. Default: the two for the charted interval.' },
+        lookbacks: { type: 'array', items: { type: 'number', enum: [1, 5, 10, 15, 30] }, maxItems: 5, description: 'Minutes back for the past major strike rows. Default: the two for the charted interval.' },
       },
       additionalProperties: false,
     },
@@ -595,6 +595,33 @@ async function getCandles(args) {
 const NEAR_STRIKES = 40;
 
 /** GEXBot's raw classic response -> levels plus [strike, gexVol, gexOi] rows. */
+// Plain JS copy of src/services/gex/lookbacks.ts and priorMajors in levels.ts.
+/** Minutes back of each value in a strike row's priors (row[3]), in GEXBot's order. */
+const GEX_PRIOR_MINUTES = [1, 5, 10, 15, 30];
+/** Minutes back of each max_priors entry, in GEXBot's order. */
+const GEX_MAX_PRIOR_MINUTES = [1, 5, 10, 15, 30, 60];
+const GEX_LOOKBACKS = { '1m': [1, 5], '5m': [5, 10], '15m': [15, 30] };
+
+function gexLookbackMinutes(interval) {
+  return (interval && GEX_LOOKBACKS[interval]) || [15, 30];
+}
+
+/** Major +/- volume gamma strikes `minutes` before the reading, from each strike's priors. */
+function gexPriorMajors(raw, minutes) {
+  const slot = GEX_PRIOR_MINUTES.indexOf(minutes);
+  let pos = null, neg = null, maxPos = 0, minNeg = 0;
+  for (const r of raw.strikes ?? []) {
+    if (!Array.isArray(r) || !Array.isArray(r[3])) continue;
+    const strike = Number(r[0]);
+    const v = r[3][slot] == null ? NaN : Number(r[3][slot]);
+    if (!Number.isFinite(strike) || !Number.isFinite(v)) continue;
+    if (v > maxPos) { maxPos = v; pos = strike; }
+    if (v < minNeg) { minNeg = v; neg = strike; }
+  }
+  const ms = Number(raw.timestamp) * 1000 - minutes * 60_000;
+  return { minutes, asOf: { ms, et: etOf(ms) }, majorPosVol: pos, majorNegVol: neg };
+}
+
 function compactGex(raw, dte, which, asset) {
   const rows = (raw.strikes ?? [])
     .filter(r => Array.isArray(r) && r.length >= 3)
@@ -622,6 +649,11 @@ function compactGex(raw, dte, which, asset) {
     majorNegOi: raw.major_neg_oi,
     sumGexVol: raw.sum_gex_vol,
     sumGexOi: raw.sum_gex_oi,
+    biggestBuild: (Array.isArray(raw.max_priors) ? raw.max_priors : [])
+      .map((p, i) => (Array.isArray(p) && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1])) && i < GEX_MAX_PRIOR_MINUTES.length
+        ? { minutes: GEX_MAX_PRIOR_MINUTES[i], strike: Number(p[0]), gex: Number(p[1]) }
+        : null))
+      .filter(Boolean),
     strikesTotal: rows.length,
     columns: ['strike', 'gexVol', 'gexOi'],
     strikes,
@@ -664,15 +696,12 @@ async function callTool(name, args = {}) {
     const { status, json } = await http('GET', `/api/gex/${encodeURIComponent(ticker)}/${dte}`);
     if (status !== 200 || json.error) return textResult({ status, ticker, dte, ...json }, true);
     const out = compactGex(json, dte, args.strikes || 'near', asset);
-    const minutes = Array.isArray(args.lookbacks) && args.lookbacks.length > 0
-      ? args.lookbacks.map(Number).filter(n => Number.isFinite(n) && n > 0)
-      : null;
-    const q = minutes ? `lookbacks=${minutes.join(',')}` : interval ? `interval=${encodeURIComponent(interval)}` : 'lookbacks=60,120';
-    const hist = await http('GET', `/api/gex/${encodeURIComponent(ticker)}/${dte}/history?from=${Date.now()}&${q}`).catch(() => null);
-    out.lookbacks = hist?.status === 200 && Array.isArray(hist.json?.lookbacks)
-      ? hist.json.lookbacks.map(r => ({ ...r, asOf: { ms: r.asOf, et: etOf(r.asOf) } }))
+    const asked = Array.isArray(args.lookbacks)
+      ? [...new Set(args.lookbacks.map(Number))].filter(n => GEX_PRIOR_MINUTES.includes(n)).sort((a, b) => a - b)
       : [];
-    if (interval && !minutes) out.lookbackInterval = interval;
+    const minutes = asked.length > 0 ? asked : gexLookbackMinutes(interval);
+    out.lookbacks = minutes.map(m => gexPriorMajors(json, m));
+    if (interval && asked.length === 0) out.lookbackInterval = interval;
     return textResult(out);
   }
   if (name === 'clear_overlays') {

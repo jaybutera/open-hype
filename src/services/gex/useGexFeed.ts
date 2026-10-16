@@ -12,7 +12,6 @@ export function useGexFeed(asset: string): string | null {
   const dte = useGexStore(s => s.dte);
   const wanted = useGexStore(s => s.levels || s.strikes !== 'off');
   const ticker = useGexStore(s => s.tickerFor(asset));
-  const trailWanted = useGexStore(s => s.levels && s.trail);
 
   useEffect(() => {
     if (tickers === null) void useGexStore.getState().loadTickers();
@@ -25,15 +24,6 @@ export function useGexFeed(asset: string): string | null {
     const id = window.setInterval(tick, POLL_MS);
     return () => window.clearInterval(id);
   }, [wanted, ticker, dte]);
-
-  useEffect(() => {
-    if (!trailWanted || !ticker) return;
-    // After the reading refresh, so the history request knows which session it is in.
-    const tick = () => void useGexStore.getState().refresh(ticker).then(() => useGexStore.getState().refreshHistory(ticker));
-    tick();
-    const id = window.setInterval(tick, POLL_MS);
-    return () => window.clearInterval(id);
-  }, [trailWanted, ticker, dte]);
 
   return ticker;
 }

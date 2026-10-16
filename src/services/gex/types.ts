@@ -33,7 +33,7 @@ export interface GexData {
   sumGexOi: number;
   deltaRiskReversal: number;
   strikes: GexStrike[];
-  /** [strike, gex] of the top volume strike over the last few snapshots. */
+  /** [strike, gex] of the biggest volume-GEX build over the last 1, 5, 10, 15, 30 and 60 minutes, in that order (GEX_MAX_PRIOR_MINUTES). */
   maxPriors: Array<[number, number]>;
 }
 

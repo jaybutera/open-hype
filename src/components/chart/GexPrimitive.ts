@@ -18,18 +18,19 @@ export interface GexProfile {
   /** Added to each strike before mapping to y. */
   offset: number;
   /**
-   * In vol mode, the GexStrike.priors slot to outline each bar as it was
-   * earlier (see priorSlotFor); omit for no outline.
+   * In vol mode, the GexStrike.priors slots to outline each bar as it was
+   * earlier, shorter lookback first (see lookbacksFor); omit for no outline.
    */
-  priorIndex?: number;
+  priorSlots?: readonly number[];
 }
 
 /**
  * Per-strike gamma exposure as horizontal bars growing left from the price
  * axis, behind the candles: green for positive, red for negative, widest bar
  * a quarter of the pane. Strikes outside the visible price range are skipped.
- * In vol mode with `priorIndex`, a 1 px outline over each bar shows its width
- * at that prior reading, on the same scale, so build and bleed read at a glance.
+ * In vol mode with `priorSlots`, a 1 px outline over each bar shows its width
+ * at each prior reading on the same scale (the shorter lookback brighter), so
+ * build and bleed read at a glance.
  */
 export class GexPrimitive implements ISeriesPrimitive<Time> {
   private _series: ISeriesApi<SeriesType, Time> | null = null;
@@ -87,6 +88,8 @@ const FONT = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const MAX_WIDTH_FRAC = 0.25;
 /** Bars at or above this share of the biggest one get a value label. */
 const LABEL_FRAC = 0.2;
+/** Outline alpha per prior slot, shorter lookback first. */
+const OUTLINE_ALPHA = [0.7, 0.4];
 
 class GexRenderer implements ISeriesPrimitivePaneRenderer {
   private _primitive: GexPrimitive;
@@ -97,8 +100,8 @@ class GexRenderer implements ISeriesPrimitivePaneRenderer {
 
   draw(target: CanvasRenderingTarget2D): void {
     const series = this._primitive.series;
-    const { data, mode, offset, priorIndex } = this._primitive.profile;
-    const outline = mode === 'vol' && priorIndex !== undefined;
+    const { data, mode, offset, priorSlots } = this._primitive.profile;
+    const slots = mode === 'vol' && priorSlots ? priorSlots : [];
     if (!series || data.strikes.length === 0) return;
     const yOf = (p: number) => series.priceToCoordinate(p + offset);
 
@@ -142,15 +145,18 @@ class GexRenderer implements ISeriesPrimitivePaneRenderer {
           ctx.fillText(formatGex(v), W - w - 4, y);
         }
       }
-      if (outline) {
-        ctx.lineWidth = 1;
+      ctx.lineWidth = 1;
+      // Longer lookback first so the brighter, shorter one draws on top.
+      for (let k = slots.length - 1; k >= 0; k--) {
+        const slot = slots[k];
+        const alpha = OUTLINE_ALPHA[k] ?? 0.4;
         for (const s of data.strikes) {
-          const pv = s.priors[priorIndex];
+          const pv = s.priors[slot];
           if (pv === undefined || !Number.isFinite(pv) || pv === 0) continue;
           const y = yOf(s.strike);
           if (y === null || y < -barH || y > H + barH) continue;
           const w = Math.min(W, Math.max(1, (Math.abs(pv) / maxAbs) * maxW));
-          ctx.strokeStyle = rgba(pv > 0 ? GEX_POS_COLOR : GEX_NEG_COLOR, 0.6);
+          ctx.strokeStyle = rgba(pv > 0 ? GEX_POS_COLOR : GEX_NEG_COLOR, alpha);
           ctx.strokeRect(Math.round(W - w) + 0.5, Math.round(y - barH / 2) + 0.5, Math.round(w) - 1, Math.max(1, Math.round(barH) - 1));
         }
       }
