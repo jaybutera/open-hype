@@ -10,7 +10,7 @@ interface Level { price: number; text: string; color: string; style: 'solid' | '
 
 /** Zero gamma and the four major strikes as labelled lines. Same-price levels share one line. */
 export function gexLevelShapes(d: GexData, offset = 0): HLineShape[] {
-  const levels: Level[] = [
+  const levels: Array<Omit<Level, 'price'> & { price: number | null }> = [
     { price: d.zeroGamma, text: `0γ ${d.zeroGamma}`, color: GEX_ZERO_COLOR, style: 'dashed' },
     { price: d.majorPosVol, text: `+γ vol ${d.majorPosVol}`, color: GEX_POS_COLOR, style: 'solid' },
     { price: d.majorNegVol, text: `-γ vol ${d.majorNegVol}`, color: GEX_NEG_COLOR, style: 'solid' },
@@ -19,9 +19,11 @@ export function gexLevelShapes(d: GexData, offset = 0): HLineShape[] {
   ];
   const byPrice = new Map<number, Level>();
   for (const l of levels) {
+    // No level yet (e.g. no volume before the open): draw nothing rather than a line at 0.
+    if (l.price === null) continue;
     const prev = byPrice.get(l.price);
     if (prev) prev.text = `${prev.text} · ${l.text.replace(/ [\d.]+$/, '')}`;
-    else byPrice.set(l.price, { ...l });
+    else byPrice.set(l.price, { ...l, price: l.price });
   }
   return [...byPrice.values()].map(l => ({
     type: 'hline',
@@ -74,7 +76,7 @@ export function gexPastLevelShapes(d: GexData, interval: string | null | undefin
     const p = priorMajors(d, slot);
     const from = d.timestamp - minutes * 60_000;
     const alpha = LOOKBACK_ALPHA[i] ?? '66';
-    const lines: Array<[number | null, number, string, string]> = [
+    const lines: Array<[number | null, number | null, string, string]> = [
       [p.majorPosVol, d.majorPosVol, '+γ vol', GEX_POS_COLOR],
       [p.majorNegVol, d.majorNegVol, '-γ vol', GEX_NEG_COLOR],
     ];
@@ -116,16 +118,20 @@ export interface GexSummary {
   /** Added to every GEXBot price before drawing (user setting; 0 unless the perp trades away from cash). */
   offset: number;
   spot: number;
-  zeroGamma: number;
-  majorPosVol: number;
-  majorNegVol: number;
-  majorPosOi: number;
-  majorNegOi: number;
+  /** Null when GEXBot has no level yet (the volume ones before the session has volume). */
+  zeroGamma: number | null;
+  majorPosVol: number | null;
+  majorNegVol: number | null;
+  majorPosOi: number | null;
+  majorNegOi: number | null;
   sumGexVol: number;
   sumGexOi: number;
   /** Set when the reading is an ETF's rescaled to the perp coin; all prices here are then coin prices. */
   proxy?: GexData['proxy'];
-  /** Largest |volume GEX| strikes, biggest first; `vol`/`oi` are rounded strings like "1.28M". */
+  /**
+   * Largest |volume GEX| strikes, biggest first (then |OI GEX|); strikes with
+   * neither are left out. `vol`/`oi` are rounded strings like "1.28M".
+   */
   topStrikes: Array<{ strike: number; vol: string; oi: string }>;
   /**
    * The major +/- volume gamma strikes at the two lookbacks for the chart's
@@ -136,8 +142,10 @@ export interface GexSummary {
 }
 
 export function gexSummary(d: GexData, offset: number, top = 8, interval?: string | null): GexSummary {
-  const topStrikes = [...d.strikes]
-    .sort((a, b) => Math.abs(b.vol) - Math.abs(a.vol))
+  // Before the session has volume every vol is 0; sorting on that alone would list the lowest strikes.
+  const topStrikes = d.strikes
+    .filter(s => s.vol !== 0 || s.oi !== 0)
+    .sort((a, b) => Math.abs(b.vol) - Math.abs(a.vol) || Math.abs(b.oi) - Math.abs(a.oi))
     .slice(0, top)
     .map(s => ({ strike: s.strike, vol: formatGex(s.vol), oi: formatGex(s.oi) }));
   return {

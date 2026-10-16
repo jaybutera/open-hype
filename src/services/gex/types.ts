@@ -24,11 +24,15 @@ export interface GexData {
   /** UTC ms of the snapshot. */
   timestamp: number;
   spot: number;
-  zeroGamma: number;
-  majorPosVol: number;
-  majorPosOi: number;
-  majorNegVol: number;
-  majorNegOi: number;
+  /**
+   * Zero gamma and the major strikes; null when GEXBot sends 0, which it does
+   * for the volume levels before the session has any volume (early morning).
+   */
+  zeroGamma: number | null;
+  majorPosVol: number | null;
+  majorPosOi: number | null;
+  majorNegVol: number | null;
+  majorNegOi: number | null;
   sumGexVol: number;
   sumGexOi: number;
   deltaRiskReversal: number;
@@ -62,14 +66,15 @@ export function scaleGex(d: GexData, coin: string, coinPrice: number): GexData {
   const factor = coinPrice / d.spot;
   if (!Number.isFinite(factor) || factor <= 0) throw new Error(`gex: cannot scale ${d.ticker} to ${coin}`);
   const px = (v: number) => sig5(v * factor);
+  const lvl = (v: number | null) => (v === null ? null : px(v));
   return {
     ...d,
     spot: px(d.spot),
-    zeroGamma: px(d.zeroGamma),
-    majorPosVol: px(d.majorPosVol),
-    majorPosOi: px(d.majorPosOi),
-    majorNegVol: px(d.majorNegVol),
-    majorNegOi: px(d.majorNegOi),
+    zeroGamma: lvl(d.zeroGamma),
+    majorPosVol: lvl(d.majorPosVol),
+    majorPosOi: lvl(d.majorPosOi),
+    majorNegVol: lvl(d.majorNegVol),
+    majorNegOi: lvl(d.majorNegOi),
     strikes: d.strikes.map(s => ({ ...s, strike: px(s.strike) })),
     maxPriors: d.maxPriors.map(([k, g]) => [px(k), g]),
     proxy: { coin, factor, coinPrice, etfSpot: d.spot },
@@ -80,6 +85,12 @@ function num(v: unknown, name: string): number {
   const n = typeof v === 'number' ? v : Number(v);
   if (!Number.isFinite(n)) throw new Error(`gex: ${name} is not a number`);
   return n;
+}
+
+/** A price level from GEXBot: 0 (or below) means it has none yet, never a real price. */
+function level(v: unknown, name: string): number | null {
+  const n = num(v ?? 0, name);
+  return n > 0 ? n : null;
 }
 
 /** Turn a raw GEXBot response into GexData; throws when the shape is off. */
@@ -103,7 +114,8 @@ export function parseGex(raw: unknown, dte: GexDte): GexData {
   const maxPriors: Array<[number, number]> = [];
   if (Array.isArray(r.max_priors)) {
     for (const p of r.max_priors) {
-      if (Array.isArray(p) && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))) {
+      // GEXBot sends [0, 0] for a window with no build yet.
+      if (Array.isArray(p) && Number(p[0]) > 0 && Number.isFinite(Number(p[1]))) {
         maxPriors.push([Number(p[0]), Number(p[1])]);
       }
     }
@@ -113,11 +125,11 @@ export function parseGex(raw: unknown, dte: GexDte): GexData {
     dte,
     timestamp: num(r.timestamp, 'timestamp') * 1000,
     spot: num(r.spot, 'spot'),
-    zeroGamma: num(r.zero_gamma, 'zero_gamma'),
-    majorPosVol: num(r.major_pos_vol, 'major_pos_vol'),
-    majorPosOi: num(r.major_pos_oi, 'major_pos_oi'),
-    majorNegVol: num(r.major_neg_vol, 'major_neg_vol'),
-    majorNegOi: num(r.major_neg_oi, 'major_neg_oi'),
+    zeroGamma: level(r.zero_gamma, 'zero_gamma'),
+    majorPosVol: level(r.major_pos_vol, 'major_pos_vol'),
+    majorPosOi: level(r.major_pos_oi, 'major_pos_oi'),
+    majorNegVol: level(r.major_neg_vol, 'major_neg_vol'),
+    majorNegOi: level(r.major_neg_oi, 'major_neg_oi'),
     sumGexVol: num(r.sum_gex_vol ?? 0, 'sum_gex_vol'),
     sumGexOi: num(r.sum_gex_oi ?? 0, 'sum_gex_oi'),
     deltaRiskReversal: num(r.delta_risk_reversal ?? 0, 'delta_risk_reversal'),

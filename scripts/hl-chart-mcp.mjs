@@ -107,6 +107,7 @@ const TOOLS = [
       'reading: spot, zeroGamma, major +/- gamma strikes by volume and OI, net GEX, and the heaviest strikes; `asOf` is its',
       'UTC ms and `offset` is already applied by the chart but not to these numbers. `gex.lookbacks` gives the major +/- volume',
       'gamma strikes 1/5 (1m pane), 5/10 (5m) or 15/30 minutes (15m and up) before `asOf`, from GEXBot\'s per-strike priors.',
+      'A null level (zeroGamma, the majors) means GEXBot has none yet: early in the session, before volume, only the OI levels exist.',
       '`stale: true` means the page did not answer in time and this is the last view it reported.',
       'Call this before push_overlays so times and prices refer to real bars.',
     ].join(' '),
@@ -179,6 +180,7 @@ const TOOLS = [
       'priors (its volume GEX 1, 5, 10, 15 and 30 minutes earlier); GEXBot has no history of zero gamma or OI, and nothing',
       'older than 30 minutes. Default minutes follow the charted pane\'s interval (1m: 1,5; 5m: 5,10; 15m and up: 15,30), or',
       '15,30 with no pane. `biggestBuild` is GEXBot\'s max_priors: the strike with the biggest volume-GEX build over each window.',
+      'A null zeroGamma or major means GEXBot has no such level yet (before the session has volume only the OI majors are set).',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -655,6 +657,9 @@ async function coinPriceAt(coin, ms) {
   return price;
 }
 
+/** A GEXBot price level, or null: it sends 0 when it has none (the volume levels before the session has volume). */
+const gexLevel = v => (Number(v) > 0 ? Number(v) : null);
+
 function compactGex(raw, dte, which, asset) {
   const rows = (raw.strikes ?? [])
     .filter(r => Array.isArray(r) && r.length >= 3)
@@ -675,15 +680,16 @@ function compactGex(raw, dte, which, asset) {
     ...(asset ? { asset } : {}),
     asOf: { ms, et: etOf(ms) },
     spot: raw.spot,
-    zeroGamma: raw.zero_gamma,
-    majorPosVol: raw.major_pos_vol,
-    majorNegVol: raw.major_neg_vol,
-    majorPosOi: raw.major_pos_oi,
-    majorNegOi: raw.major_neg_oi,
+    zeroGamma: gexLevel(raw.zero_gamma),
+    majorPosVol: gexLevel(raw.major_pos_vol),
+    majorNegVol: gexLevel(raw.major_neg_vol),
+    majorPosOi: gexLevel(raw.major_pos_oi),
+    majorNegOi: gexLevel(raw.major_neg_oi),
     sumGexVol: raw.sum_gex_vol,
     sumGexOi: raw.sum_gex_oi,
     biggestBuild: (Array.isArray(raw.max_priors) ? raw.max_priors : [])
-      .map((p, i) => (Array.isArray(p) && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1])) && i < GEX_MAX_PRIOR_MINUTES.length
+      // [0, 0] is GEXBot's "no build in this window yet".
+      .map((p, i) => (Array.isArray(p) && Number(p[0]) > 0 && Number.isFinite(Number(p[1])) && Number(p[1]) !== 0 && i < GEX_MAX_PRIOR_MINUTES.length
         ? { minutes: GEX_MAX_PRIOR_MINUTES[i], strike: Number(p[0]), gex: Number(p[1]) }
         : null))
       .filter(Boolean),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseGex, formatGex, scaleGex } from '../types.ts';
-import { gexLevelShapes, gexSummary } from '../levels.ts';
+import { gexLevelShapes, gexPastLevelShapes, gexSummary } from '../levels.ts';
 import { gexTickerFor, proxyCoinFor } from '../symbols.ts';
 
 const raw = {
@@ -121,5 +121,62 @@ describe('formatGex', () => {
     expect(formatGex(1284909.29)).toBe('1.28M');
     expect(formatGex(-94338.61)).toBe('-94.3K');
     expect(formatGex(3.38)).toBe('3.4');
+  });
+});
+
+describe('a reading before the session has volume', () => {
+  // IBIT full, 2026-10-16 08:00:39 ET: GEXBot rolled to the new session with no volume yet.
+  const early = {
+    timestamp: 1792152039,
+    ticker: 'IBIT',
+    spot: 46.77,
+    zero_gamma: 0,
+    major_pos_vol: 0,
+    major_pos_oi: 47,
+    major_neg_vol: 0,
+    major_neg_oi: 45,
+    sum_gex_vol: 0,
+    sum_gex_oi: 144.267,
+    delta_risk_reversal: 0,
+    strikes: [
+      [1, 0, 0, [0, 0, 0, 0, 0]],
+      [2, 0, 0, [0, 0, 0, 0, 0]],
+      [3, 0, 0, [0, 0, 0, 0, 0]],
+      [4, 0, 0, [0, 0, 0, 0, 0]],
+      [44, 0, -5.99, [0, 0, 0, 0, 0]],
+      [45, 0, -13.24, [0, 0, 0, 0, 0]],
+      [46.5, 0, 2.2, [0, 0, 0, 0, 0]],
+      [47, 0, 60.93, [0, 0, 0, 0, 0]],
+      [48, 0, 27.44, [0, 0, 0, 0, 0]],
+    ],
+    max_priors: [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+  };
+  // BTC / IBIT spot was 1766.5 at the reading.
+  const d = scaleGex(parseGex(early, 'full'), 'BTC', 46.77 * 1766.5);
+
+  it('has no zero gamma or volume majors, keeps the OI majors', () => {
+    expect(d.zeroGamma).toBeNull();
+    expect(d.majorPosVol).toBeNull();
+    expect(d.majorNegVol).toBeNull();
+    expect(d.majorPosOi).toBeCloseTo(83026, -1);
+    expect(d.majorNegOi).toBeCloseTo(79493, -1);
+    expect(d.maxPriors).toEqual([]);
+  });
+
+  it('draws only the OI lines', () => {
+    const shapes = gexLevelShapes(d);
+    expect(shapes.map(s => s.text)).toEqual([`+γ OI ${d.majorPosOi}`, `-γ OI ${d.majorNegOi}`]);
+    expect(shapes.every(s => s.price > 1000)).toBe(true);
+    expect(gexPastLevelShapes(d, '5m')).toEqual([]);
+  });
+
+  it('lists only strikes with gamma, heaviest OI first when there is no volume', () => {
+    const s = gexSummary(d, 0, 8, '5m');
+    expect(s.zeroGamma).toBeNull();
+    expect(s.majorPosVol).toBeNull();
+    expect(s.majorNegVol).toBeNull();
+    expect(s.topStrikes.map(t => t.oi)).toEqual(['60.9', '27.4', '-13.2', '-6.0', '2.2']);
+    expect(s.topStrikes.every(t => t.strike > 70000)).toBe(true);
+    expect(s.lookbacks.every(l => l.majorPosVol === null && l.majorNegVol === null)).toBe(true);
   });
 });
