@@ -90,9 +90,9 @@ export function GexToolbar({ ticker, interval }: Props) {
           {data && (
             <span
               style={{ fontSize: 11, color: '#555', marginLeft: 6 }}
-              title={`Time of the GEXBot reading on the chart; it updates about once a minute in the session and stops at the 16:00 ET close. Spot ${data.spot}, net GEX ${formatGex(data.sumGexVol)} by volume / ${formatGex(data.sumGexOi)} by OI`}
+              title={`Time of the GEXBot reading on the chart; it updates about once a minute in the session and stops at the 16:00 ET close. Spot ${data.spot}, net GEX ${formatGex(data.sumGexVol)} by volume / ${formatGex(data.sumGexOi)} by OI${data.proxy ? `. ${data.ticker} strikes scaled to ${data.proxy.coin}: ${data.proxy.coin} ${data.proxy.coinPrice} / ${data.ticker} ${data.proxy.etfSpot} = ×${data.proxy.factor.toFixed(2)} at the reading` : ''}`}
             >
-              as of {clockEt(data.timestamp)} ET
+              {data.proxy ? `${data.ticker} ×${data.proxy.factor.toFixed(1)} · ` : ''}as of {clockEt(data.timestamp)} ET
             </span>
           )}
           {error && <span style={{ fontSize: 11, color: '#f6465d', marginLeft: 6 }} title={error}>GEX error</span>}

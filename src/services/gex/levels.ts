@@ -123,6 +123,8 @@ export interface GexSummary {
   majorNegOi: number;
   sumGexVol: number;
   sumGexOi: number;
+  /** Set when the reading is an ETF's rescaled to the perp coin; all prices here are then coin prices. */
+  proxy?: GexData['proxy'];
   /** Largest |volume GEX| strikes, biggest first; `vol`/`oi` are rounded strings like "1.28M". */
   topStrikes: Array<{ strike: number; vol: string; oi: string }>;
   /**
@@ -151,6 +153,7 @@ export function gexSummary(d: GexData, offset: number, top = 8, interval?: strin
     majorNegOi: d.majorNegOi,
     sumGexVol: d.sumGexVol,
     sumGexOi: d.sumGexOi,
+    ...(d.proxy ? { proxy: d.proxy } : {}),
     topStrikes,
     lookbacks: lookbacksFor(interval).map(({ minutes, slot }) => ({ minutes, ...priorMajors(d, slot) })),
   };

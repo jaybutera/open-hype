@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import { parseGex, type GexData, type GexDte } from '../services/gex/types.ts';
-import { gexTickerFor } from '../services/gex/symbols.ts';
+import { parseGex, scaleGex, type GexData, type GexDte } from '../services/gex/types.ts';
+import { gexTickerFor, proxyCoinFor } from '../services/gex/symbols.ts';
+import { fetchCandles } from '../services/api/info.ts';
 
 export type GexStrikeMode = 'off' | 'vol' | 'oi';
 
@@ -119,7 +120,9 @@ export const useGexStore = create<GexStore>((set, get) => ({
         const raw: unknown = await res.json();
         const err = (raw as { error?: unknown })?.error;
         if (!res.ok || typeof err === 'string') throw new Error(typeof err === 'string' ? err : `HTTP ${res.status}`);
-        const parsed = parseGex(raw, dte);
+        let parsed = parseGex(raw, dte);
+        const coin = proxyCoinFor(ticker);
+        if (coin) parsed = scaleGex(parsed, coin, await coinPriceAt(coin, parsed.timestamp));
         set(s => ({ data: { ...s.data, [key]: parsed }, errors: omit(s.errors, key) }));
       } catch (e) {
         set(s => ({ errors: { ...s.errors, [key]: String((e as Error)?.message || e) } }));
@@ -131,6 +134,15 @@ export const useGexStore = create<GexStore>((set, get) => ({
     return p;
   },
 }));
+
+/** The coin's 1m close for the minute holding `ms` (the forming bar's last price when that minute is now). */
+async function coinPriceAt(coin: string, ms: number): Promise<number> {
+  const bars = await fetchCandles(coin, '1m', ms - 5 * 60_000, ms);
+  const bar = [...bars].reverse().find(b => b.t <= ms);
+  const price = bar ? Number(bar.c) : NaN;
+  if (!Number.isFinite(price)) throw new Error(`no ${coin} price at the GEX reading`);
+  return price;
+}
 
 function omit<T extends Record<string, unknown>>(o: T, k: string): T {
   if (!(k in o)) return o;

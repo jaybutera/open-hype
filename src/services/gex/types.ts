@@ -35,6 +35,45 @@ export interface GexData {
   strikes: GexStrike[];
   /** [strike, gex] of the biggest volume-GEX build over the last 1, 5, 10, 15, 30 and 60 minutes, in that order (GEX_MAX_PRIOR_MINUTES). */
   maxPriors: Array<[number, number]>;
+  /** Set when the reading is an ETF's, rescaled to a perp coin's price (scaleGex); every price above is then in coin terms. */
+  proxy?: GexProxy;
+}
+
+export interface GexProxy {
+  /** Perp coin the strikes were rescaled to, e.g. BTC. */
+  coin: string;
+  /** coinPrice / etfSpot: one ETF dollar in coin dollars. */
+  factor: number;
+  /** The coin's 1m close at the reading's time. */
+  coinPrice: number;
+  /** The ETF's spot in the reading, before scaling. */
+  etfSpot: number;
+}
+
+/** 5 significant digits: 82644.37 -> 82644, 3123.456 -> 3123.5. */
+const sig5 = (v: number) => Number(v.toPrecision(5));
+
+/**
+ * Rescale an ETF's reading to its coin: every price (spot, zero gamma, the
+ * majors, strikes, maxPriors strikes) times coinPrice / spot. GEX values are
+ * left as they are.
+ */
+export function scaleGex(d: GexData, coin: string, coinPrice: number): GexData {
+  const factor = coinPrice / d.spot;
+  if (!Number.isFinite(factor) || factor <= 0) throw new Error(`gex: cannot scale ${d.ticker} to ${coin}`);
+  const px = (v: number) => sig5(v * factor);
+  return {
+    ...d,
+    spot: px(d.spot),
+    zeroGamma: px(d.zeroGamma),
+    majorPosVol: px(d.majorPosVol),
+    majorPosOi: px(d.majorPosOi),
+    majorNegVol: px(d.majorNegVol),
+    majorNegOi: px(d.majorNegOi),
+    strikes: d.strikes.map(s => ({ ...s, strike: px(s.strike) })),
+    maxPriors: d.maxPriors.map(([k, g]) => [px(k), g]),
+    proxy: { coin, factor, coinPrice, etfSpot: d.spot },
+  };
 }
 
 function num(v: unknown, name: string): number {

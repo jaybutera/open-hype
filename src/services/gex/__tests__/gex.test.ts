@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseGex, formatGex } from '../types.ts';
+import { parseGex, formatGex, scaleGex } from '../types.ts';
 import { gexLevelShapes, gexSummary } from '../levels.ts';
-import { gexTickerFor } from '../symbols.ts';
+import { gexTickerFor, proxyCoinFor } from '../symbols.ts';
 
 const raw = {
   timestamp: 1792008000,
@@ -68,10 +68,51 @@ describe('gexTickerFor', () => {
     expect(gexTickerFor('xyz:TSLA', known)).toBe('TSLA');
     expect(gexTickerFor('xyz:GOLD', known)).toBeNull();
     expect(gexTickerFor('BTC', known)).toBeNull();
+    expect(gexTickerFor('ETH', known)).toBeNull();
+  });
+  it('maps BTC to IBIT when GEXBot lists it, and back', () => {
+    expect(gexTickerFor('BTC', new Set(['IBIT']))).toBe('IBIT');
+    expect(gexTickerFor('BTC', null)).toBe('IBIT');
+    expect(proxyCoinFor('IBIT')).toBe('BTC');
+    expect(proxyCoinFor('SPX')).toBeNull();
   });
   it('trusts the index aliases before the list has loaded, nothing else', () => {
     expect(gexTickerFor('xyz:SP500', null)).toBe('SPX');
     expect(gexTickerFor('xyz:TSLA', null)).toBeNull();
+  });
+});
+
+describe('scaleGex', () => {
+  // IBIT at the 2026-10-15 close against the BTC perp's 15:59 ET close.
+  const ibit = parseGex({
+    ...raw,
+    ticker: 'IBIT',
+    spot: 46.59,
+    zero_gamma: 46.75,
+    major_pos_vol: 47,
+    major_pos_oi: 47,
+    major_neg_vol: 46.45,
+    major_neg_oi: 44,
+    strikes: [[46.5, -23.54, -1.03, [12, 20]], [47, 23.06, 39.83, []]],
+    max_priors: [[46.5, 12.242]],
+  }, 'full');
+
+  it('moves every price onto the coin and leaves GEX alone', () => {
+    const d = scaleGex(ibit, 'BTC', 82361);
+    expect(d.spot).toBe(82361);
+    expect(d.zeroGamma).toBe(82644);
+    expect(d.majorPosVol).toBe(83086);
+    expect(d.majorNegOi).toBe(77782);
+    expect(d.strikes.map(s => s.strike)).toEqual([82202, 83086]);
+    expect(d.strikes[0].vol).toBe(-23.54);
+    expect(d.strikes[0].priors).toEqual([12, 20]);
+    expect(d.maxPriors).toEqual([[82202, 12.242]]);
+    expect(d.proxy).toMatchObject({ coin: 'BTC', coinPrice: 82361, etfSpot: 46.59 });
+    expect(d.proxy!.factor).toBeCloseTo(1767.78, 2);
+  });
+
+  it('refuses a price it cannot scale by', () => {
+    expect(() => scaleGex(ibit, 'BTC', NaN)).toThrow(/cannot scale/);
   });
 });
 

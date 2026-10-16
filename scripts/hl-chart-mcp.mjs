@@ -103,7 +103,7 @@ const TOOLS = [
       '`setups` holds the long/short plans the user drew with "Set Up Long/Short" (side, entry, sl, tp, size, riskUsdc, rr);',
       '`pendingSetup` is a setup still being clicked in.',
       '`overlays` lists the overlay sets already pushed and whether the user has each one toggled on.',
-      '`gex` (xyz:SP500, xyz:XYZ100 and xyz single names only, once the user has a GEX layer on) carries the GEXBot',
+      '`gex` (xyz:SP500, xyz:XYZ100, xyz single names, and BTC via IBIT scaled to BTC prices, only once the user has a GEX layer on) carries the GEXBot',
       'reading: spot, zeroGamma, major +/- gamma strikes by volume and OI, net GEX, and the heaviest strikes; `asOf` is its',
       'UTC ms and `offset` is already applied by the chart but not to these numbers. `gex.lookbacks` gives the major +/- volume',
       'gamma strikes 1/5 (1m pane), 5/10 (5m) or 15/30 minutes (15m and up) before `asOf`, from GEXBot\'s per-strike priors.',
@@ -172,6 +172,8 @@ const TOOLS = [
       'netted per strike). `vol` is from today\'s trading and moves intraday; `oi` is positions open at the start of the day.',
       '`asOf` is the reading\'s UTC ms and ET time; the feed freezes at the 16:00 ET close. Prices are cash index prices; the',
       'charted perp (xyz:SP500 -> SPX, xyz:XYZ100 -> NDX, xyz single names -> their ticker) may trade away from them after hours.',
+      'BTC maps to IBIT: its prices come back rescaled to BTC (times BTC\'s 1m close at the reading / IBIT spot), and `proxy` gives',
+      'that factor. Pass ticker IBIT for the unscaled ETF prices.',
       'Omit `ticker` to use the charted asset\'s mapping; the answer says which ticker it used.',
       '`lookbacks` rows give the major +/- volume gamma strikes N minutes before `asOf`, worked out from each strike\'s GEXBot',
       'priors (its volume GEX 1, 5, 10, 15 and 30 minutes earlier); GEXBot has no history of zero gamma or OI, and nothing',
@@ -181,7 +183,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        ticker: { type: 'string', description: 'GEXBot ticker (SPX, NDX, SPY, QQQ, ES_SPX, NQ_NDX, TSLA...). Default: the charted asset\'s GEXBot ticker.' },
+        ticker: { type: 'string', description: 'GEXBot ticker (SPX, NDX, SPY, QQQ, ES_SPX, NQ_NDX, TSLA...), or BTC for IBIT scaled to BTC. Default: the charted asset\'s GEXBot ticker.' },
         dte: { type: 'string', enum: ['zero', 'one', 'full'], description: 'zero = expiring today (default), one = tomorrow, full = all expirations GEXBot tracks.' },
         strikes: { type: 'string', enum: ['near', 'all', 'none'], description: 'How many strike rows: near (default) = the 40 around spot, all = every strike, none = levels only.' },
         lookbacks: { type: 'array', items: { type: 'number', enum: [1, 5, 10, 15, 30] }, maxItems: 5, description: 'Minutes back for the past major strike rows. Default: the two for the charted interval.' },
@@ -382,8 +384,11 @@ function compactView(view) {
 
 /** Mirrors src/services/gex/symbols.ts: which GEXBot ticker a chart asset's options are on. */
 const GEX_INDEX_ALIASES = { 'xyz:SP500': 'SPX', 'xyz:XYZ100': 'NDX', 'xyz:VIX': 'VIX' };
+/** Perp coin -> spot ETF whose options stand in for the coin's; prices are rescaled to the coin (scaleRawGex). */
+const GEX_PROXIES = { BTC: 'IBIT' };
 function gexTickerFor(asset) {
   if (!asset) return null;
+  if (GEX_PROXIES[asset]) return GEX_PROXIES[asset];
   if (GEX_INDEX_ALIASES[asset]) return GEX_INDEX_ALIASES[asset];
   return asset.startsWith('xyz:') ? asset.slice(4) : null;
 }
@@ -622,6 +627,34 @@ function gexPriorMajors(raw, minutes) {
   return { minutes, asOf: { ms, et: etOf(ms) }, majorPosVol: pos, majorNegVol: neg };
 }
 
+/** 5 significant digits, as src/services/gex/types.ts scaleGex rounds. */
+const sig5 = v => Number(Number(v).toPrecision(5));
+
+/** Mirrors scaleGex: the raw GEXBot body with every price times factor; GEX values untouched. */
+function scaleRawGex(raw, factor) {
+  const px = v => (v == null || !Number.isFinite(Number(v)) ? v : sig5(Number(v) * factor));
+  return {
+    ...raw,
+    spot: px(raw.spot),
+    zero_gamma: px(raw.zero_gamma),
+    major_pos_vol: px(raw.major_pos_vol),
+    major_pos_oi: px(raw.major_pos_oi),
+    major_neg_vol: px(raw.major_neg_vol),
+    major_neg_oi: px(raw.major_neg_oi),
+    strikes: (raw.strikes ?? []).map(r => (Array.isArray(r) ? [px(r[0]), ...r.slice(1)] : r)),
+    max_priors: (raw.max_priors ?? []).map(p => (Array.isArray(p) ? [px(p[0]), ...p.slice(1)] : p)),
+  };
+}
+
+/** The coin's 1m close for the minute holding ms. */
+async function coinPriceAt(coin, ms) {
+  const bars = await fetchCandles(coin, '1m', ms - 5 * 60_000, ms);
+  const bar = [...bars].reverse().find(b => b.t <= ms);
+  const price = bar ? Number(bar.c) : NaN;
+  if (!Number.isFinite(price)) throw new Error(`no ${coin} 1m close at the GEX reading (${etOf(ms)})`);
+  return price;
+}
+
 function compactGex(raw, dte, which, asset) {
   const rows = (raw.strikes ?? [])
     .filter(r => Array.isArray(r) && r.length >= 3)
@@ -684,23 +717,35 @@ async function callTool(name, args = {}) {
   if (name === 'get_gex') {
     let ticker = args.ticker ? String(args.ticker).toUpperCase() : null;
     let asset = null;
+    let coin = ticker && GEX_PROXIES[ticker] ? ticker : null;
+    if (coin) ticker = GEX_PROXIES[coin];
     // Without a ticker the view is required (unreachable server throws); with one it only supplies the interval.
     const view = ticker ? await http('GET', '/api/ai/view').catch(() => ({ status: 0, json: null })) : await http('GET', '/api/ai/view');
     const interval = view.status === 200 ? view.json?.interval ?? null : null;
     if (!ticker) {
       asset = view.json?.asset ?? null;
       ticker = gexTickerFor(asset);
+      if (GEX_PROXIES[asset]) coin = asset;
       if (!ticker) return textResult(`The charted asset (${asset ?? 'none'}) has no GEXBot ticker; pass \`ticker\` (SPX, NDX, SPY, QQQ, ES_SPX, NQ_NDX, or a stock).`, true);
     }
     const dte = args.dte || 'zero';
     const { status, json } = await http('GET', `/api/gex/${encodeURIComponent(ticker)}/${dte}`);
     if (status !== 200 || json.error) return textResult({ status, ticker, dte, ...json }, true);
-    const out = compactGex(json, dte, args.strikes || 'near', asset);
+    let raw = json;
+    let proxy = null;
+    if (coin) {
+      const coinPrice = await coinPriceAt(coin, Number(json.timestamp) * 1000);
+      const factor = coinPrice / Number(json.spot);
+      raw = scaleRawGex(json, factor);
+      proxy = { coin, factor: Number(factor.toFixed(4)), coinPrice, etfSpot: json.spot, note: `${ticker} prices times ${coin} ${coinPrice} / ${ticker} ${json.spot} at asOf; GEX values are ${ticker}'s` };
+    }
+    const out = compactGex(raw, dte, args.strikes || 'near', asset);
+    if (proxy) out.proxy = proxy;
     const asked = Array.isArray(args.lookbacks)
       ? [...new Set(args.lookbacks.map(Number))].filter(n => GEX_PRIOR_MINUTES.includes(n)).sort((a, b) => a - b)
       : [];
     const minutes = asked.length > 0 ? asked : gexLookbackMinutes(interval);
-    out.lookbacks = minutes.map(m => gexPriorMajors(json, m));
+    out.lookbacks = minutes.map(m => gexPriorMajors(raw, m));
     if (interval && asked.length === 0) out.lookbackInterval = interval;
     return textResult(out);
   }
