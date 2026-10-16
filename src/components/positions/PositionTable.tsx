@@ -10,6 +10,11 @@ interface Props {
   engine: PaperEngine;
 }
 
+const fmtTime = (t: number) => {
+  const d = new Date(t);
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour12: false })}`;
+};
+
 function TpSlInput({ position, engine, allMids }: {
   position: PaperPosition;
   engine: PaperEngine;
@@ -307,7 +312,8 @@ export function PositionTable({ engine }: Props) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ color: '#8a8f98', fontSize: 11 }}>
-                <th style={{ padding: '4px 16px', textAlign: 'left' }}>Asset</th>
+                <th style={{ padding: '4px 16px', textAlign: 'left' }}>Time</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px' }}>Asset</th>
                 <th style={{ textAlign: 'left', padding: '4px 8px' }}>Side</th>
                 <th style={{ textAlign: 'right', padding: '4px 8px' }}>Price</th>
                 <th style={{ textAlign: 'right', padding: '4px 8px' }}>Size</th>
@@ -320,7 +326,8 @@ export function PositionTable({ engine }: Props) {
                 const pnl = parseFloat(fill.realizedPnl);
                 return (
                   <tr key={fill.id} className="fill-row" style={{ borderBottom: '1px solid #1a1f2e' }}>
-                    <td style={{ padding: '6px 16px' }}>{fill.coin}</td>
+                    <td style={{ padding: '6px 16px', color: '#8a8f98', whiteSpace: 'nowrap' }}>{fmtTime(fill.timestamp)}</td>
+                    <td style={{ padding: '6px 8px' }}>{fill.coin}</td>
                     <td style={{
                       padding: '6px 8px',
                       color: fill.side === 'buy' ? '#0ecb81' : '#f6465d',
