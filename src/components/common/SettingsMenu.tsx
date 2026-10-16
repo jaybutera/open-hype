@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useThemeStore, DEFAULT_UP, DEFAULT_DOWN } from '../../store/useThemeStore.ts';
+import { useThemeStore, DEFAULT_UP, DEFAULT_DOWN, DEFAULT_CHART_BG } from '../../store/useThemeStore.ts';
 
 const rowStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -14,9 +14,11 @@ const swatchStyle: React.CSSProperties = {
 export function SettingsMenu() {
   const up = useThemeStore(s => s.up);
   const down = useThemeStore(s => s.down);
+  const chartBg = useThemeStore(s => s.chartBg);
   const showGrid = useThemeStore(s => s.showGrid);
   const setUp = useThemeStore(s => s.setUp);
   const setDown = useThemeStore(s => s.setDown);
+  const setChartBg = useThemeStore(s => s.setChartBg);
   const setShowGrid = useThemeStore(s => s.setShowGrid);
   const resetColors = useThemeStore(s => s.resetColors);
 
@@ -31,7 +33,7 @@ export function SettingsMenu() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const isDefault = up === DEFAULT_UP && down === DEFAULT_DOWN;
+  const isDefault = up === DEFAULT_UP && down === DEFAULT_DOWN && chartBg === DEFAULT_CHART_BG;
 
   return (
     <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
@@ -63,6 +65,10 @@ export function SettingsMenu() {
               onChange={e => setShowGrid(e.target.checked)}
               style={{ cursor: 'pointer' }}
             />
+          </label>
+          <label style={rowStyle}>
+            Chart background
+            <input type="color" value={chartBg} onChange={e => setChartBg(e.target.value)} style={swatchStyle} />
           </label>
 
           <div style={{ padding: '10px 12px 6px', fontSize: 10, fontWeight: 700, color: '#8a8f98', letterSpacing: 0.5, borderTop: '1px solid #1a1f2e', marginTop: 4 }}>

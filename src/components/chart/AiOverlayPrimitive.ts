@@ -12,6 +12,7 @@ import type {
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import type { OverlaySet, OverlayShape } from '../../services/ai/types.ts';
 import { utcToChartTime } from '../../utils/chartTime.ts';
+import { chartBgColor, withAlpha } from '../../store/useThemeStore.ts';
 
 /**
  * Draws one AI overlay set (boxes, lines, arrows, labels) on a series.
@@ -145,7 +146,7 @@ class AiOverlayRenderer implements ISeriesPrimitivePaneRenderer {
         if (bg) {
           const w = ctx.measureText(s).width;
           const left = align === 'left' ? x - 3 : align === 'right' ? x - w - 3 : x - w / 2 - 3;
-          ctx.fillStyle = 'rgba(10, 14, 23, 0.8)';
+          ctx.fillStyle = withAlpha(chartBgColor(), 0.8);
           ctx.fillRect(left, y - 8, w + 6, 16);
         }
         ctx.fillStyle = color;

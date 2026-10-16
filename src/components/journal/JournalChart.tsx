@@ -40,6 +40,7 @@ export function JournalChart({ trade }: Props) {
   const up = useThemeStore(s => s.up);
   const down = useThemeStore(s => s.down);
   const showGrid = useThemeStore(s => s.showGrid);
+  const chartBg = useThemeStore(s => s.chartBg);
 
   // Create chart once.
   useEffect(() => {
@@ -50,7 +51,7 @@ export function JournalChart({ trade }: Props) {
     const chart = createChart(container, {
       width: container.clientWidth,
       height: container.clientHeight,
-      layout: { background: { color: '#0a0e17' }, textColor: '#8a8f98' },
+      layout: { background: { color: useThemeStore.getState().chartBg }, textColor: '#8a8f98' },
       grid: { vertLines: { color: '#1a1f2e', visible: useThemeStore.getState().showGrid }, horzLines: { color: '#1a1f2e', visible: useThemeStore.getState().showGrid } },
       crosshair: { mode: 0 },
       timeScale: { borderColor: '#2a2f3e', timeVisible: true },
@@ -75,8 +76,11 @@ export function JournalChart({ trade }: Props) {
 
   useEffect(() => {
     seriesRef.current?.applyOptions(candleColors(up, down));
-    chartRef.current?.applyOptions({ grid: { vertLines: { visible: showGrid }, horzLines: { visible: showGrid } } });
-  }, [up, down, showGrid]);
+    chartRef.current?.applyOptions({
+      layout: { background: { color: chartBg } },
+      grid: { vertLines: { visible: showGrid }, horzLines: { visible: showGrid } },
+    });
+  }, [up, down, showGrid, chartBg]);
 
   // Load candles + markers whenever the selected trade changes.
   useEffect(() => {

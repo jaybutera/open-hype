@@ -11,13 +11,12 @@ import type {
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import type { TradeSetup } from '../../store/useTradeSetupStore.ts';
-import { upColor, downColor, withAlpha } from '../../store/useThemeStore.ts';
+import { upColor, downColor, chartBgColor, withAlpha } from '../../store/useThemeStore.ts';
 
 type DragField = 'entry' | 'sl' | 'tp';
 
 const LINE_HIT_TOLERANCE = 6;
 const ENTRY_LINE = '#3861fb';
-const CHIP_BG = 'rgba(10, 14, 23, 0.92)';
 const LABEL_COLOR = '#e1e4e8';
 const EXEC_W = 64;
 const CLOSE_W = 20;
@@ -407,7 +406,7 @@ function drawButton(ctx: CanvasRenderingContext2D, r: Rect, bg: string, text: st
 function drawChip(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: string) {
   const r = { x, y: y - CHIP_H / 2, w: textW(text), h: CHIP_H };
   ctx.save();
-  ctx.fillStyle = CHIP_BG;
+  ctx.fillStyle = withAlpha(chartBgColor(), 0.92);
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   ctx.beginPath();

@@ -5,16 +5,18 @@ import { create } from 'zustand';
 // them from this store, since a canvas cannot resolve var().
 export const DEFAULT_UP = '#0ecb81';
 export const DEFAULT_DOWN = '#f6465d';
+export const DEFAULT_CHART_BG = '#0a0e17';
 
 const THEME_KEY = 'hl-theme';
 
 interface ThemeValues {
   up: string;
   down: string;
+  chartBg: string;
   showGrid: boolean;
 }
 
-const DEFAULTS: ThemeValues = { up: DEFAULT_UP, down: DEFAULT_DOWN, showGrid: false };
+const DEFAULTS: ThemeValues = { up: DEFAULT_UP, down: DEFAULT_DOWN, chartBg: DEFAULT_CHART_BG, showGrid: false };
 
 function isHex(v: unknown): v is string {
   return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
@@ -28,6 +30,7 @@ function loadTheme(): ThemeValues {
     return {
       up: isHex(p.up) ? p.up : DEFAULT_UP,
       down: isHex(p.down) ? p.down : DEFAULT_DOWN,
+      chartBg: isHex(p.chartBg) ? p.chartBg : DEFAULT_CHART_BG,
       showGrid: typeof p.showGrid === 'boolean' ? p.showGrid : false,
     };
   } catch { return DEFAULTS; }
@@ -53,6 +56,7 @@ function applyCssVars(t: ThemeValues) {
 interface ThemeStore extends ThemeValues {
   setUp: (c: string) => void;
   setDown: (c: string) => void;
+  setChartBg: (c: string) => void;
   setShowGrid: (v: boolean) => void;
   resetColors: () => void;
 }
@@ -62,8 +66,8 @@ applyCssVars(initial);
 
 export const useThemeStore = create<ThemeStore>((set, get) => {
   const update = (patch: Partial<ThemeValues>) => {
-    const { up, down, showGrid } = { ...get(), ...patch };
-    const next = { up, down, showGrid };
+    const { up, down, chartBg, showGrid } = { ...get(), ...patch };
+    const next = { up, down, chartBg, showGrid };
     saveTheme(next);
     applyCssVars(next);
     set(next);
@@ -72,8 +76,9 @@ export const useThemeStore = create<ThemeStore>((set, get) => {
     ...initial,
     setUp: (up) => update({ up }),
     setDown: (down) => update({ down }),
+    setChartBg: (chartBg) => update({ chartBg }),
     setShowGrid: (showGrid) => update({ showGrid }),
-    resetColors: () => update({ up: DEFAULT_UP, down: DEFAULT_DOWN }),
+    resetColors: () => update({ up: DEFAULT_UP, down: DEFAULT_DOWN, chartBg: DEFAULT_CHART_BG }),
   };
 });
 
@@ -81,6 +86,8 @@ export const useThemeStore = create<ThemeStore>((set, get) => {
 export const upColor = () => useThemeStore.getState().up;
 /** Current down (red) colour, for canvas code that draws outside React. */
 export const downColor = () => useThemeStore.getState().down;
+/** Current chart background, for canvas labels drawn over the chart. */
+export const chartBgColor = () => useThemeStore.getState().chartBg;
 
 /** "#rrggbb" at the given alpha, as rgba(). */
 export function withAlpha(hex: string, alpha: number): string {

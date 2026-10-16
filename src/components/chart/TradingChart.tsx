@@ -92,6 +92,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const up = useThemeStore(s => s.up);
   const down = useThemeStore(s => s.down);
   const showGrid = useThemeStore(s => s.showGrid);
+  const chartBg = useThemeStore(s => s.chartBg);
   const paperPositions = useAccountStore(s => s.paperPositions);
   const paperOrders = useAccountStore(s => s.paperOrders);
   const livePositions = useLiveAccountStore(s => s.positions);
@@ -126,7 +127,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       width: container.clientWidth,
       height: container.clientHeight,
       layout: {
-        background: { color: '#0a0e17' },
+        background: { color: useThemeStore.getState().chartBg },
         textColor: '#8a8f98',
       },
       grid: {
@@ -235,8 +236,11 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   // Settings: candle colours and grid. applyOptions also repaints the primitives, which read the colours at draw time.
   useEffect(() => {
     seriesRef.current?.applyOptions(candleColors(up, down));
-    chartRef.current?.applyOptions({ grid: { vertLines: { visible: showGrid }, horzLines: { visible: showGrid } } });
-  }, [up, down, showGrid]);
+    chartRef.current?.applyOptions({
+      layout: { background: { color: chartBg } },
+      grid: { vertLines: { visible: showGrid }, horzLines: { visible: showGrid } },
+    });
+  }, [up, down, showGrid, chartBg]);
 
   useEffect(() => {
     volumeSeriesRef.current?.applyOptions({ visible: volumeOn });

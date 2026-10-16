@@ -10,12 +10,11 @@ import type {
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import type { PaperOrder } from '../../engine/paper/matching.ts';
-import { upColor, downColor } from '../../store/useThemeStore.ts';
+import { upColor, downColor, chartBgColor, withAlpha } from '../../store/useThemeStore.ts';
 
 const LINE_HIT_TOLERANCE = 6;
 const BUY_LINE = '#3861fb';
 const SELL_LINE = '#e67e22';
-const LABEL_BG = 'rgba(10, 14, 23, 0.85)';
 const LABEL_COLOR = '#e1e4e8';
 
 function orderColor(ord: PaperOrder): string {
@@ -188,7 +187,7 @@ class OrderLineRenderer implements ISeriesPrimitivePaneRenderer {
       const labelH = 14 + padY * 2;
       const labelX = w - textW - padX * 2 - 10;
 
-      ctx.fillStyle = LABEL_BG;
+      ctx.fillStyle = withAlpha(chartBgColor(), 0.85);
       ctx.beginPath();
       ctx.roundRect(labelX, y - labelH / 2, textW + padX * 2, labelH, 3);
       ctx.fill();
