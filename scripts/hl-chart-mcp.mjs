@@ -105,7 +105,8 @@ const TOOLS = [
       '`overlays` lists the overlay sets already pushed and whether the user has each one toggled on.',
       '`gex` (xyz:SP500, xyz:XYZ100 and xyz single names only, once the user has a GEX layer on) carries the GEXBot',
       'reading: spot, zeroGamma, major +/- gamma strikes by volume and OI, net GEX, and the heaviest strikes; `asOf` is its',
-      'UTC ms and `offset` is already applied by the chart but not to these numbers.',
+      'UTC ms and `offset` is already applied by the chart but not to these numbers. `gex.lookbacks` (when the Levels trail is on)',
+      'says where the levels were at the two lookbacks for the pane interval, from the dev server\'s 1-minute samples.',
       '`stale: true` means the page did not answer in time and this is the last view it reported.',
       'Call this before push_overlays so times and prices refer to real bars.',
     ].join(' '),
@@ -172,6 +173,10 @@ const TOOLS = [
       '`asOf` is the reading\'s UTC ms and ET time; the feed freezes at the 16:00 ET close. Prices are cash index prices; the',
       'charted perp (xyz:SP500 -> SPX, xyz:XYZ100 -> NDX, xyz single names -> their ticker) may trade away from them after hours.',
       'Omit `ticker` to use the charted asset\'s mapping; the answer says which ticker it used.',
+      '`lookbacks` rows say where zeroGamma and the four major strikes were N minutes before the latest sample (`asOf` is the',
+      'sample used). GEXBot has no level history: these come from the dev server\'s own 1-minute samples (all fresh readings, plus',
+      'SPX, NDX, TSLA, SPY, QQQ every minute in RTH), kept for the last 5 trading days only; a lookback older than that is left out.',
+      'Default minutes follow the charted pane\'s interval (1m: 15,30; 5m: 30,60; 15m: 60,120; 1h and up: 120,240), or 60,120 with no pane.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -179,6 +184,7 @@ const TOOLS = [
         ticker: { type: 'string', description: 'GEXBot ticker (SPX, NDX, SPY, QQQ, ES_SPX, NQ_NDX, TSLA...). Default: the charted asset\'s GEXBot ticker.' },
         dte: { type: 'string', enum: ['zero', 'one', 'full'], description: 'zero = expiring today (default), one = tomorrow, full = all expirations GEXBot tracks.' },
         strikes: { type: 'string', enum: ['near', 'all', 'none'], description: 'How many strike rows: near (default) = the 40 around spot, all = every strike, none = levels only.' },
+        lookbacks: { type: 'array', items: { type: 'number', exclusiveMinimum: 0 }, maxItems: 10, description: 'Minutes back for the level history rows. Default: the two for the charted interval.' },
       },
       additionalProperties: false,
     },
@@ -646,8 +652,10 @@ async function callTool(name, args = {}) {
   if (name === 'get_gex') {
     let ticker = args.ticker ? String(args.ticker).toUpperCase() : null;
     let asset = null;
+    // Without a ticker the view is required (unreachable server throws); with one it only supplies the interval.
+    const view = ticker ? await http('GET', '/api/ai/view').catch(() => ({ status: 0, json: null })) : await http('GET', '/api/ai/view');
+    const interval = view.status === 200 ? view.json?.interval ?? null : null;
     if (!ticker) {
-      const view = await http('GET', '/api/ai/view');
       asset = view.json?.asset ?? null;
       ticker = gexTickerFor(asset);
       if (!ticker) return textResult(`The charted asset (${asset ?? 'none'}) has no GEXBot ticker; pass \`ticker\` (SPX, NDX, SPY, QQQ, ES_SPX, NQ_NDX, or a stock).`, true);
@@ -655,7 +663,17 @@ async function callTool(name, args = {}) {
     const dte = args.dte || 'zero';
     const { status, json } = await http('GET', `/api/gex/${encodeURIComponent(ticker)}/${dte}`);
     if (status !== 200 || json.error) return textResult({ status, ticker, dte, ...json }, true);
-    return textResult(compactGex(json, dte, args.strikes || 'near', asset));
+    const out = compactGex(json, dte, args.strikes || 'near', asset);
+    const minutes = Array.isArray(args.lookbacks) && args.lookbacks.length > 0
+      ? args.lookbacks.map(Number).filter(n => Number.isFinite(n) && n > 0)
+      : null;
+    const q = minutes ? `lookbacks=${minutes.join(',')}` : interval ? `interval=${encodeURIComponent(interval)}` : 'lookbacks=60,120';
+    const hist = await http('GET', `/api/gex/${encodeURIComponent(ticker)}/${dte}/history?from=${Date.now()}&${q}`).catch(() => null);
+    out.lookbacks = hist?.status === 200 && Array.isArray(hist.json?.lookbacks)
+      ? hist.json.lookbacks.map(r => ({ ...r, asOf: { ms: r.asOf, et: etOf(r.asOf) } }))
+      : [];
+    if (interval && !minutes) out.lookbackInterval = interval;
+    return textResult(out);
   }
   if (name === 'clear_overlays') {
     const q = args.id ? `?id=${encodeURIComponent(args.id)}` : '';

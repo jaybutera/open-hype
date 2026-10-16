@@ -158,7 +158,7 @@ export function buildSnapshot(): ChartSnapshot {
       const g = useGexStore.getState();
       const ticker = g.tickerFor(asset);
       const d = ticker ? g.current(ticker) : undefined;
-      return ticker && d ? gexSummary(d, g.offsetFor(ticker)) : null;
+      return ticker && d ? gexSummary(d, g.offsetFor(ticker), 8, g.historyFor(ticker), interval) : null;
     })(),
   };
 }

@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { useGexStore } from '../../store/useGexStore.ts';
 import { GEX_DTES, formatGex } from '../../services/gex/types.ts';
 import { formatEt } from '../../utils/chartTime.ts';
+import { priorSlotFor } from '../../services/gex/lookbacks.ts';
 
 /** Same look as the KZ / Fib buttons in the chart toolbar. */
 export function toolbarButtonStyle(active: boolean, extra?: CSSProperties): CSSProperties {
@@ -20,6 +21,8 @@ export function toolbarButtonStyle(active: boolean, extra?: CSSProperties): CSSP
 interface Props {
   /** GEXBot ticker the pane's asset maps to; the toolbar renders nothing for null. */
   ticker: string | null;
+  /** The pane's candle interval; sets the prior the γ vol outline shows. */
+  interval: string;
 }
 
 /**
@@ -27,10 +30,12 @@ interface Props {
  * levels, the per-strike profile (by volume or by open interest), the expiry
  * they come from, and a price offset for when the perp trades away from cash.
  */
-export function GexToolbar({ ticker }: Props) {
+export function GexToolbar({ ticker, interval }: Props) {
   const levels = useGexStore(s => s.levels);
   const strikes = useGexStore(s => s.strikes);
   const dte = useGexStore(s => s.dte);
+  const trail = useGexStore(s => s.trail);
+  const setTrail = useGexStore(s => s.setTrail);
   const setLevels = useGexStore(s => s.setLevels);
   const setStrikes = useGexStore(s => s.setStrikes);
   const setDte = useGexStore(s => s.setDte);
@@ -60,9 +65,18 @@ export function GexToolbar({ ticker }: Props) {
       >
         Levels
       </button>
+      {levels && (
+        <button
+          onClick={() => setTrail(!trail)}
+          title="Where the GEX levels were earlier in the session, with dots at the two lookbacks for this candle interval"
+          style={toolbarButtonStyle(trail)}
+        >
+          Trail
+        </button>
+      )}
       <button
         onClick={() => setStrikes(strikes === 'vol' ? 'off' : 'vol')}
-        title="Per-strike gamma exposure from today's traded volume, as bars off the price axis"
+        title={`Per-strike gamma exposure from today's traded volume, as bars off the price axis; the outline is the bar ${priorSlotFor(interval).minutes} minutes ago`}
         style={toolbarButtonStyle(strikes === 'vol')}
       >
         γ vol

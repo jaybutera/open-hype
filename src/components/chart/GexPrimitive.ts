@@ -17,12 +17,19 @@ export interface GexProfile {
   mode: 'vol' | 'oi';
   /** Added to each strike before mapping to y. */
   offset: number;
+  /**
+   * In vol mode, the GexStrike.priors slot to outline each bar as it was
+   * earlier (see priorSlotFor); omit for no outline.
+   */
+  priorIndex?: number;
 }
 
 /**
  * Per-strike gamma exposure as horizontal bars growing left from the price
  * axis, behind the candles: green for positive, red for negative, widest bar
  * a quarter of the pane. Strikes outside the visible price range are skipped.
+ * In vol mode with `priorIndex`, a 1 px outline over each bar shows its width
+ * at that prior reading, on the same scale, so build and bleed read at a glance.
  */
 export class GexPrimitive implements ISeriesPrimitive<Time> {
   private _series: ISeriesApi<SeriesType, Time> | null = null;
@@ -90,7 +97,8 @@ class GexRenderer implements ISeriesPrimitivePaneRenderer {
 
   draw(target: CanvasRenderingTarget2D): void {
     const series = this._primitive.series;
-    const { data, mode, offset } = this._primitive.profile;
+    const { data, mode, offset, priorIndex } = this._primitive.profile;
+    const outline = mode === 'vol' && priorIndex !== undefined;
     if (!series || data.strikes.length === 0) return;
     const yOf = (p: number) => series.priceToCoordinate(p + offset);
 
@@ -132,6 +140,18 @@ class GexRenderer implements ISeriesPrimitivePaneRenderer {
         if (Math.abs(v) >= maxAbs * LABEL_FRAC && barH >= 7) {
           ctx.fillStyle = rgba(color, 0.95);
           ctx.fillText(formatGex(v), W - w - 4, y);
+        }
+      }
+      if (outline) {
+        ctx.lineWidth = 1;
+        for (const s of data.strikes) {
+          const pv = s.priors[priorIndex];
+          if (pv === undefined || !Number.isFinite(pv) || pv === 0) continue;
+          const y = yOf(s.strike);
+          if (y === null || y < -barH || y > H + barH) continue;
+          const w = Math.min(W, Math.max(1, (Math.abs(pv) / maxAbs) * maxW));
+          ctx.strokeStyle = rgba(pv > 0 ? GEX_POS_COLOR : GEX_NEG_COLOR, 0.6);
+          ctx.strokeRect(Math.round(W - w) + 0.5, Math.round(y - barH / 2) + 0.5, Math.round(w) - 1, Math.max(1, Math.round(barH) - 1));
         }
       }
       ctx.restore();

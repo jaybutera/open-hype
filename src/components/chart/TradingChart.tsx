@@ -21,6 +21,8 @@ import { useAlertStore } from '../../store/useAlertStore.ts';
 import { alertLine } from '../../services/ai/alerts.ts';
 import { GexPrimitive } from './GexPrimitive.ts';
 import { GexToolbar } from './GexToolbar.tsx';
+import { GexTrailPrimitive } from './GexTrailPrimitive.ts';
+import { priorSlotFor } from '../../services/gex/lookbacks.ts';
 import { useGexStore } from '../../store/useGexStore.ts';
 import { useGexFeed } from '../../services/gex/useGexFeed.ts';
 import { gexLevelSet } from '../../services/gex/levels.ts';
@@ -79,11 +81,14 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const interval = pane?.interval ?? '5m';
   const gexLevelPrimRef = useRef<AiOverlayPrimitive | null>(null);
   const gexPrimRef = useRef<GexPrimitive | null>(null);
+  const gexTrailPrimRef = useRef<GexTrailPrimitive | null>(null);
+  const gexTrailOn = useGexStore(s => s.levels && s.trail);
   const gexLevelsOn = useGexStore(s => s.levels);
   const gexStrikes = useGexStore(s => s.strikes);
   const gexTicker = useGexFeed(currentAsset);
   const gexData = useGexStore(s => (gexTicker ? s.current(gexTicker) : undefined));
   const gexOffset = useGexStore(s => (gexTicker ? s.offsetFor(gexTicker) : 0));
+  const gexHistory = useGexStore(s => (gexTicker ? s.historyFor(gexTicker) : null));
   const allMids = useMarketStore(s => s.allMids);
   const setInterval = useMarketStore(s => s.setInterval);
   const loadCandles = useMarketStore(s => s.loadCandles);
@@ -705,10 +710,24 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       if (prim) { prim.requestRedraw(); series.detachPrimitive(prim); gexPrimRef.current = null; }
       return;
     }
-    const profile = { data: gexData, mode: gexStrikes, offset: gexOffset };
+    const profile = { data: gexData, mode: gexStrikes, offset: gexOffset, priorIndex: priorSlotFor(interval).index };
     if (prim) prim.setProfile(profile);
     else { const p = new GexPrimitive(profile); series.attachPrimitive(p); gexPrimRef.current = p; }
-  }, [gexStrikes, gexData, gexOffset, currentAsset]);
+  }, [gexStrikes, gexData, gexOffset, currentAsset, interval]);
+
+  // GEX level trail: where the levels were through the session, behind the candles
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const prim = gexTrailPrimRef.current;
+    if (!gexTrailOn || !gexHistory || gexHistory.length === 0) {
+      if (prim) { prim.requestRedraw(); series.detachPrimitive(prim); gexTrailPrimRef.current = null; }
+      return;
+    }
+    const trail = { samples: gexHistory, interval, offset: gexOffset };
+    if (prim) prim.setTrail(trail);
+    else { const p = new GexTrailPrimitive(trail); series.attachPrimitive(p); gexTrailPrimRef.current = p; }
+  }, [gexTrailOn, gexHistory, gexOffset, currentAsset, interval]);
 
   // The active pane answers AI snapshot requests with what is actually on screen
   useEffect(() => {
@@ -918,7 +937,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
             Clear Fibs
           </button>
         )}
-        <GexToolbar ticker={gexTicker} />
+        <GexToolbar ticker={gexTicker} interval={interval} />
         <span style={{ marginLeft: 'auto', fontSize: 11, color: fibMode ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? '#0ecb81' : '#f6465d') : '#555', alignSelf: 'center' }}>
           {fibMode
             ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')

@@ -86,7 +86,7 @@ function rgba(hex: string, a: number): string {
 }
 
 /** Maps UTC ms to x using the series' bar times, extrapolating past either end. */
-function makeTimeToX(series: ISeriesApi<SeriesType, Time>, chart: IChartApi) {
+export function makeTimeToX(series: ISeriesApi<SeriesType, Time>, chart: IChartApi) {
   const data = series.data();
   const ts = chart.timeScale();
   const n = data.length;

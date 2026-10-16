@@ -14,7 +14,7 @@ export interface GexStrike {
   vol: number;
   /** Gamma exposure from open interest. */
   oi: number;
-  /** The last few volume readings at this strike, oldest first. */
+  /** This strike's volume GEX 1, 5, 10, 15 and 30 minutes earlier, in that order (most recent first); see GEX_PRIOR_MINUTES. */
   priors: number[];
 }
 
@@ -56,7 +56,8 @@ export function parseGex(raw: unknown, dte: GexDte): GexData {
     const vol = Number(row[1]);
     const oi = Number(row[2]);
     if (![strike, vol, oi].every(Number.isFinite)) continue;
-    const priors = Array.isArray(row[3]) ? row[3].map(Number).filter(Number.isFinite) : [];
+    // Keep positions: index i is GEX_PRIOR_MINUTES[i] back, so a missing value stays as NaN.
+    const priors = Array.isArray(row[3]) ? row[3].map(v => (v == null ? NaN : Number(v))) : [];
     strikes.push({ strike, vol, oi, priors });
   }
   strikes.sort((a, b) => a.strike - b.strike);

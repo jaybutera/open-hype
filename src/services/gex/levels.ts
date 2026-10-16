@@ -1,5 +1,7 @@
 import type { HLineShape, OverlaySet } from '../ai/types.ts';
 import { formatGex, type GexData } from './types.ts';
+import { lookbackRows, type GexLookbackRow, type GexSample } from './samples.ts';
+import { lookbacksFor } from './lookbacks.ts';
 
 export const GEX_POS_COLOR = '#0ecb81';
 export const GEX_NEG_COLOR = '#f6465d';
@@ -62,9 +64,18 @@ export interface GexSummary {
   sumGexOi: number;
   /** Largest |volume GEX| strikes, biggest first; `vol`/`oi` are rounded strings like "1.28M". */
   topStrikes: Array<{ strike: number; vol: string; oi: string }>;
+  /**
+   * Where the headline levels were `minutes` before the latest 1-minute sample,
+   * at the lookbacks for the chart's interval (see GEX_LOOKBACKS). Empty
+   * without dev-server history. Prices are GEXBot's, without `offset`.
+   */
+  lookbacks?: GexLookbackRow[];
 }
 
-export function gexSummary(d: GexData, offset: number, top = 8): GexSummary {
+export function gexSummary(
+  d: GexData, offset: number, top = 8,
+  history: readonly GexSample[] = [], interval?: string,
+): GexSummary {
   const topStrikes = [...d.strikes]
     .sort((a, b) => Math.abs(b.vol) - Math.abs(a.vol))
     .slice(0, top)
@@ -83,5 +94,6 @@ export function gexSummary(d: GexData, offset: number, top = 8): GexSummary {
     sumGexVol: d.sumGexVol,
     sumGexOi: d.sumGexOi,
     topStrikes,
+    lookbacks: lookbackRows(history, lookbacksFor(interval)),
   };
 }
