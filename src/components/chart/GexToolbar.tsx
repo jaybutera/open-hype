@@ -58,14 +58,14 @@ export function GexToolbar({ ticker, interval }: Props) {
       <span style={{ fontSize: 11, color: '#555', marginRight: 2 }} title={`GEXBot ticker for ${ticker}`}>GEX</span>
       <button
         onClick={() => setLevels(!levels)}
-        title={`Zero gamma and the major positive/negative gamma strikes, by volume (solid) and open interest (dashed), plus the volume majors ${lookbacksFor(interval)[0].minutes} and ${lookbacksFor(interval)[1].minutes} minutes ago when they differ (faint dashed)`}
+        title={`Zero gamma and the major positive/negative gamma strikes, by volume (solid) and open interest (dashed), plus the volume majors ${lookbacksFor(interval)[0].minutes} and ${lookbacksFor(interval)[1].minutes} minutes ago when they differ (faint dotted)`}
         style={toolbarButtonStyle(levels)}
       >
         Levels
       </button>
       <button
         onClick={() => setStrikes(strikes === 'vol' ? 'off' : 'vol')}
-        title={`Per-strike gamma exposure from today's traded volume, as bars off the price axis; the outlines are the bar ${lookbacksFor(interval)[0].minutes} and ${lookbacksFor(interval)[1].minutes} minutes ago for this interval`}
+        title={`Per-strike gamma exposure from today's traded volume, as bars off the price axis; the thinner rows under each bar are the bar ${lookbacksFor(interval)[0].minutes} and ${lookbacksFor(interval)[1].minutes} minutes ago for this interval`}
         style={toolbarButtonStyle(strikes === 'vol')}
       >
         γ vol

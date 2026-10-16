@@ -21,7 +21,7 @@ import { useAlertStore } from '../../store/useAlertStore.ts';
 import { alertLine } from '../../services/ai/alerts.ts';
 import { GexPrimitive } from './GexPrimitive.ts';
 import { GexToolbar } from './GexToolbar.tsx';
-import { lookbacksFor } from '../../services/gex/lookbacks.ts';
+import { lookbackLabel, lookbacksFor } from '../../services/gex/lookbacks.ts';
 import { useGexStore } from '../../store/useGexStore.ts';
 import { useGexFeed } from '../../services/gex/useGexFeed.ts';
 import { gexLevelSet } from '../../services/gex/levels.ts';
@@ -706,7 +706,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       if (prim) { prim.requestRedraw(); series.detachPrimitive(prim); gexPrimRef.current = null; }
       return;
     }
-    const profile = { data: gexData, mode: gexStrikes, offset: gexOffset, priorSlots: lookbacksFor(interval).map(l => l.slot) };
+    const profile = { data: gexData, mode: gexStrikes, offset: gexOffset, priorSlots: lookbacksFor(interval).map(l => l.slot), priorLabels: lookbacksFor(interval).map(l => lookbackLabel(l.minutes)) };
     if (prim) prim.setProfile(profile);
     else { const p = new GexPrimitive(profile); series.attachPrimitive(p); gexPrimRef.current = p; }
   }, [gexStrikes, gexData, gexOffset, currentAsset, interval]);

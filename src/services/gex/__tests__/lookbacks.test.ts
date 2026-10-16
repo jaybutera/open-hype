@@ -55,7 +55,7 @@ describe('gexPastLevelShapes', () => {
     const shapes = gexPastLevelShapes(d, '5m', 2);
     expect(shapes.map(s => s.text)).toEqual(['+γ vol -5m 365', '-γ vol -5m 355', '-γ vol -10m 355']);
     expect(shapes[0]).toMatchObject({
-      type: 'hline', price: 367, style: 'dashed', toNow: true, from: T * 1000 - 5 * 60_000,
+      type: 'hline', price: 367, style: 'dotted', labelAt: 'start', toNow: true, from: T * 1000 - 5 * 60_000,
     });
     expect(shapes[0].color.startsWith('#0ecb81')).toBe(true);
     expect(shapes[1].color.startsWith('#f6465d')).toBe(true);

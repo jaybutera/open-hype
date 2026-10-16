@@ -113,7 +113,14 @@ export interface OverlaySetInput {
 /* ----------------------------------------------------------- outputs --- */
 
 /** All times are UTC ms. `*Now` flags mean "extend to the chart's right edge". */
-export interface HLineShape { type: 'hline'; price: number; text?: string; color: string; style: 'solid' | 'dashed'; from?: number; to?: number; toNow?: boolean }
+export interface HLineShape {
+  type: 'hline'; price: number; text?: string; color: string;
+  /** `dotted` is for built-in layers (past GEX levels); AI input takes solid or dashed. */
+  style: 'solid' | 'dashed' | 'dotted';
+  from?: number; to?: number; toNow?: boolean;
+  /** Where the label sits: the line's right end (default) or its left end at `from`. */
+  labelAt?: 'start' | 'end';
+}
 export interface BoxShape { type: 'box'; t1: number; t2: number; t2Now?: boolean; /** top */ p1: number; /** bottom */ p2: number; text?: string; color: string }
 export interface LineShape { type: 'line'; t1: number; p1: number; t2: number; p2: number; t2Now?: boolean; text?: string; color: string; extend?: 'right' }
 export interface ArrowShape { type: 'arrow'; time: number; price: number; dir: 'up' | 'down'; text?: string; color: string }

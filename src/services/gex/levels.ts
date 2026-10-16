@@ -62,10 +62,10 @@ export function priorMajors(data: GexData, slot: number): PriorMajors {
 }
 
 /** Line alpha (hex byte) per lookback, shorter first. */
-const LOOKBACK_ALPHA = ['cc', '80'];
+const LOOKBACK_ALPHA = ['99', '66'];
 
 /**
- * Dashed lines from each lookback's time to now at the major +/- volume gamma
+ * Dotted lines from each lookback's time to now at the major +/- volume gamma
  * strikes as they were then, skipped when the strike has not moved.
  */
 export function gexPastLevelShapes(d: GexData, interval: string | null | undefined, offset = 0): HLineShape[] {
@@ -73,7 +73,7 @@ export function gexPastLevelShapes(d: GexData, interval: string | null | undefin
   lookbacksFor(interval).forEach(({ minutes, slot }, i) => {
     const p = priorMajors(d, slot);
     const from = d.timestamp - minutes * 60_000;
-    const alpha = LOOKBACK_ALPHA[i] ?? '80';
+    const alpha = LOOKBACK_ALPHA[i] ?? '66';
     const lines: Array<[number | null, number, string, string]> = [
       [p.majorPosVol, d.majorPosVol, '+γ vol', GEX_POS_COLOR],
       [p.majorNegVol, d.majorNegVol, '-γ vol', GEX_NEG_COLOR],
@@ -85,9 +85,10 @@ export function gexPastLevelShapes(d: GexData, interval: string | null | undefin
         price: past + offset,
         text: `${name} ${lookbackLabel(minutes)} ${past}`,
         color: color + alpha,
-        style: 'dashed',
+        style: 'dotted',
         from,
         toNow: true,
+        labelAt: 'start',
       });
     }
   });

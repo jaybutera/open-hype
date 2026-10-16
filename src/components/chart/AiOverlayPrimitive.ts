@@ -179,13 +179,16 @@ class AiOverlayRenderer implements ISeriesPrimitivePaneRenderer {
         if (y === null) return;
         const x1 = shape.from !== undefined ? (xOf(shape.from) ?? 0) : 0;
         const x2 = shape.toNow || shape.to === undefined ? W : (xOf(shape.to) ?? W);
-        ctx.setLineDash(shape.style === 'dashed' ? [6, 4] : []);
+        ctx.setLineDash(shape.style === 'dashed' ? [6, 4] : shape.style === 'dotted' ? [2, 4] : []);
         ctx.beginPath();
         ctx.moveTo(x1, y);
         ctx.lineTo(x2, y);
         ctx.stroke();
         ctx.setLineDash([]);
-        if (shape.text) text(shape.text, Math.min(x2, W) - 6, y - 10, color, 'right');
+        if (shape.text) {
+          if (shape.labelAt === 'start') text(shape.text, Math.max(x1, 0) + 6, y - 10, color, 'left');
+          else text(shape.text, Math.min(x2, W) - 6, y - 10, color, 'right');
+        }
         return;
       }
       case 'box': {
