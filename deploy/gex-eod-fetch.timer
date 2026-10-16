@@ -1,0 +1,15 @@
+# GEXBot exports the day's EOD report some time after 17:00 ET; the route serves only the
+# latest report, until the next export. 18:30 gets it on a normal night, 23:30 and 04:00
+# retry when the export is late. Persistent catches a run missed while box was off.
+[Unit]
+Description=Daily GEXBot end-of-day report download
+
+[Timer]
+OnCalendar=Mon..Fri 18:30 America/New_York
+OnCalendar=Mon..Fri 23:30 America/New_York
+OnCalendar=Tue..Sat 04:00 America/New_York
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,18 @@
+# Saves GEXBot end-of-day reports for every ticker to ~/data/gexbot-eod/{date}/{TICKER}.zip.
+# Started by gex-eod-fetch.timer. Run by hand:  systemctl --user start gex-eod-fetch
+# Install (on box):  cp deploy/gex-eod-fetch.{service,timer} ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now gex-eod-fetch.timer
+# Logs (one summary line per run):  journalctl --user -u gex-eod-fetch
+[Unit]
+Description=Download GEXBot end-of-day reports (all tickers)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/src/hl-frontend
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=GEX_EOD_DIR=%h/data/gexbot-eod
+ExecStart=/usr/bin/env node scripts/gex-eod-fetch.mjs
+TimeoutStartSec=3h
+Nice=10
+IOSchedulingClass=idle
