@@ -66,9 +66,44 @@ describe('AlertEngine', () => {
     const ws = FakeWs.all[0];
     ws.open();
     expect(ws.subs()).toEqual([{ type: 'candle', coin: 'xyz:SP500', interval: '15m' }]);
-    ws.push({ channel: 'candle', data: { t: 1, s: 'xyz:SP500', i: '15m', c: '7668.9' } });
-    ws.push({ channel: 'candle', data: { t: 2, s: 'xyz:SP500', i: '15m', c: '7672' } });
-    expect(e.list()[0]).toMatchObject({ status: 'fired', firedPrice: 7668.9, firedBarT: 1 });
+    const t0 = Math.floor(Date.now() / 900_000) * 900_000;
+    ws.push({ channel: 'candle', data: { t: t0, s: 'xyz:SP500', i: '15m', c: '7668.9' } });
+    ws.push({ channel: 'candle', data: { t: t0 + 900_000, s: 'xyz:SP500', i: '15m', c: '7672' } });
+    expect(e.list()[0]).toMatchObject({ status: 'fired', firedPrice: 7668.9, firedBarT: t0 });
+    e.close();
+  });
+
+  it('never fires a new close alert on a bar cached from an earlier, fired alert', () => {
+    const M15 = 900_000;
+    let now = 1792287000000 + 5 * 60_000; // inside the Sat 21:30 ET bar
+    const e = new AlertEngine(tmpFile(), () => {}, {
+      WebSocket: FakeWs as unknown as typeof WebSocket, fetch: noFetch, now: () => now,
+    });
+    // Two streams so the socket stays open after the BTC close alert fires.
+    e.add({ asset: 'ETH', level: 99999, direction: 'above' }, { defaultAsset: null, mid: 3000 });
+    e.add({ asset: 'BTC', kind: 'close', interval: '15m', level: 81803, direction: 'above' }, { defaultAsset: null, mid: 81700 });
+    const ws = FakeWs.all[0];
+    ws.open();
+    const satBar = 1792287000000;
+    ws.push({ channel: 'candle', data: { t: satBar, s: 'BTC', i: '15m', c: '81825' } });
+    now = satBar + M15 + 1000;
+    ws.push({ channel: 'candle', data: { t: satBar + M15, s: 'BTC', i: '15m', c: '81825' } });
+    expect(e.list().find(a => a.asset === 'BTC')).toMatchObject({ status: 'fired', firedBarT: satBar });
+
+    // 18 hours later a new close alert arms on the same stream.
+    now = 1792352764000; // 2026-10-18 19:46:04Z
+    const { alert } = e.add({ asset: 'BTC', kind: 'close', interval: '15m', level: 80775, direction: 'above' }, { defaultAsset: null, mid: 80774.5 });
+    const cur = Math.floor(now / M15) * M15;
+    ws.push({ channel: 'candle', data: { t: cur, s: 'BTC', i: '15m', c: '80760' } });
+    expect(e.list().find(a => a.id === alert.id)!.status).toBe('armed');
+    // A late update from before the alert does not fire it either.
+    ws.push({ channel: 'candle', data: { t: cur - M15, s: 'BTC', i: '15m', c: '81000' } });
+    ws.push({ channel: 'candle', data: { t: cur, s: 'BTC', i: '15m', c: '80790' } });
+    expect(e.list().find(a => a.id === alert.id)!.status).toBe('armed');
+    // The current bar closes above the level: it fires on that bar.
+    now = cur + M15 + 500;
+    ws.push({ channel: 'candle', data: { t: cur + M15, s: 'BTC', i: '15m', c: '80800' } });
+    expect(e.list().find(a => a.id === alert.id)).toMatchObject({ status: 'fired', firedPrice: 80790, firedBarT: cur });
     e.close();
   });
 

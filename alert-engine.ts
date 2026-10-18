@@ -304,6 +304,8 @@ export class AlertEngine {
       if (!this.active.has(key)) {
         ws.send(JSON.stringify({ method: 'subscribe', subscription: subscriptionFor(key) }));
         this.active.add(key);
+        // A cached bar from before this subscription is stale.
+        this.lastBar.delete(key);
       }
     }
   }
@@ -334,11 +336,16 @@ export class AlertEngine {
       const prev = this.lastBar.get(key);
       if (prev && c.t > prev.t) {
         // The bar we were watching is closed; its last close is the bar's close.
+        // Only alerts armed before that bar closed may fire on it.
+        const prevCloseT = prev.t + intervalToMs(c.i as CandleInterval);
         for (const a of this.alerts) {
           if (a.status !== 'armed' || a.kind !== 'close' || a.asset !== c.s || a.interval !== c.i) continue;
+          if (prevCloseT <= a.createdAt) continue;
           if (closeSatisfied(a, prev.c)) this.fire(a, prev.c, prev.t);
         }
       }
+      // Firing may have dropped this stream; don't cache a bar nothing updates.
+      if (!this.wanted.has(key)) { this.lastBar.delete(key); return; }
       if (Number.isFinite(close)) this.lastBar.set(key, { t: c.t, c: close });
     }
   }
