@@ -98,7 +98,7 @@ export function useWebSocket(engine: PaperEngine): void {
       const [coin, interval] = key.split('|') as [string, CandleInterval];
       const unsub = ws.subscribe('candle', { coin, interval }, (data) => {
         const candle = data as CandleData;
-        if (!candle || candle.t === undefined || candle.s !== coin) return;
+        if (!candle || candle.t === undefined || candle.s !== coin || candle.i !== interval) return;
         appendCandle(candle, interval);
         // Forward candle high/low to paper engine for TP/SL trigger checking.
         engine.onCandleUpdate(coin, candle.h, candle.l, candle.t);
