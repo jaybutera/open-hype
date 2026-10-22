@@ -9,6 +9,7 @@ import type {
   SeriesType,
   CandlestickData,
   Logical,
+  ITimeScaleApi,
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 
@@ -197,10 +198,10 @@ class SessionRenderer implements ISeriesPrimitivePaneRenderer {
         // timeToCoordinate is null off bar opens (9:30 on 1h), so place by bar index.
         // Bars are drawn centred on their open, so shift half a bar to the bar edge.
         const ts = chart.timeScale();
-        const x1 = ts.logicalToCoordinate((timeToLogical(candleData, r.startTime, barSec) - 0.5) as Logical);
+        const x1 = logicalToX(ts, timeToLogical(candleData, r.startTime, barSec) - 0.5);
         // If session end is past the last candle, stop at the last candle
         const endT = Math.min(r.endTime, r.lastCandleTime + barSec);
-        const x2 = ts.logicalToCoordinate((timeToLogical(candleData, endT, barSec) - 0.5) as Logical);
+        const x2 = logicalToX(ts, timeToLogical(candleData, endT, barSec) - 0.5);
         if (x1 === null || x2 === null) continue;
 
         const left = Math.max(0, Math.min(x1, x2));
@@ -227,11 +228,21 @@ class SessionRenderer implements ISeriesPrimitivePaneRenderer {
         ctx.font = '10px monospace';
         ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
         ctx.textBaseline = 'top';
-        ctx.fillText(r.session.name, left + 4, 4);
+        // On 1h the boxes are a few bars wide; skip labels that would run into the next box.
+        if (ctx.measureText(r.session.name).width + 8 <= right - left) ctx.fillText(r.session.name, left + 4, 4);
         ctx.restore();
       }
     });
   }
+}
+
+/** x of a fractional bar index. logicalToCoordinate returns 0 for non-integers, so interpolate between whole bars. */
+function logicalToX(ts: ITimeScaleApi<Time>, logical: number): number | null {
+  const i = Math.floor(logical);
+  const a = ts.logicalToCoordinate(i as Logical);
+  const b = ts.logicalToCoordinate((i + 1) as Logical);
+  if (a === null || b === null) return null;
+  return a + (logical - i) * (b - a);
 }
 
 /** Fractional bar index of a time: index of the bar it falls in plus the fraction through it. */
