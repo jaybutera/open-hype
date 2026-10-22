@@ -8,6 +8,7 @@ import type {
   Time,
   SeriesType,
   CandlestickData,
+  Logical,
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 
@@ -31,6 +32,9 @@ const SESSIONS: Session[] = [
   { name: 'NY AM',  startH: 9,  startM: 30, endH: 12, endM: 0,  color: 'rgba(100, 220, 100, 0.04)' },
   { name: 'NY PM',  startH: 13, startM: 30, endH: 16, endM: 0,  color: 'rgba(200, 100, 255, 0.04)' },
 ];
+
+// Killzones above this bar length would sit inside a single bar.
+const MAX_BAR_SEC = 3600;
 
 const HIGH_LOW_COLOR = 'rgba(255, 255, 255, 0.45)';
 const HIGH_LOW_WIDTH = 1;
@@ -67,12 +71,22 @@ export class SessionPrimitive implements ISeriesPrimitive<Time> {
     this._requestUpdate?.();
   }
 
+  private _barSec = 0;
+
   setCandleData(data: CandlestickData<Time>[]) {
     this._candleData = data;
+    // Smallest gap between bars is the interval; larger gaps are missing bars.
+    let bar = Infinity;
+    for (let i = Math.max(1, data.length - 50); i < data.length; i++) {
+      const d = (data[i].time as number) - (data[i - 1].time as number);
+      if (d > 0 && d < bar) bar = d;
+    }
+    this._barSec = Number.isFinite(bar) ? bar : 0;
     this._requestUpdate?.();
   }
 
   get candleData() { return this._candleData; }
+  get barSec() { return this._barSec; }
 
   attached(param: SeriesAttachedParameter<Time, SeriesType>) {
     this._series = param.series;
@@ -165,8 +179,9 @@ class SessionRenderer implements ISeriesPrimitivePaneRenderer {
   }
 
   draw(target: CanvasRenderingTarget2D): void {
-    const { series, chart, enabled, candleData } = this._primitive;
+    const { series, chart, enabled, candleData, barSec } = this._primitive;
     if (!series || !chart || !enabled || candleData.length === 0) return;
+    if (barSec <= 0 || barSec > MAX_BAR_SEC) return;
 
     const visRange = chart.timeScale().getVisibleRange();
     if (!visRange) return;
@@ -179,16 +194,17 @@ class SessionRenderer implements ISeriesPrimitivePaneRenderer {
 
     target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
       for (const r of ranges) {
-        // Convert session time boundaries to x coordinates
-        const x1 = chart.timeScale().timeToCoordinate(r.startTime as Time);
-        const x2 = chart.timeScale().timeToCoordinate(r.endTime as Time);
-        if (x1 === null && x2 === null) continue;
-        const resolvedX1 = x1 ?? 0;
+        // timeToCoordinate is null off bar opens (9:30 on 1h), so place by bar index.
+        // Bars are drawn centred on their open, so shift half a bar to the bar edge.
+        const ts = chart.timeScale();
+        const x1 = ts.logicalToCoordinate((timeToLogical(candleData, r.startTime, barSec) - 0.5) as Logical);
         // If session end is past the last candle, stop at the last candle
-        const resolvedX2 = x2 ?? chart.timeScale().timeToCoordinate(r.lastCandleTime as Time) ?? resolvedX1;
+        const endT = Math.min(r.endTime, r.lastCandleTime + barSec);
+        const x2 = ts.logicalToCoordinate((timeToLogical(candleData, endT, barSec) - 0.5) as Logical);
+        if (x1 === null || x2 === null) continue;
 
-        const left = Math.max(0, Math.min(resolvedX1, resolvedX2));
-        const right = Math.min(mediaSize.width, Math.max(resolvedX1, resolvedX2));
+        const left = Math.max(0, Math.min(x1, x2));
+        const right = Math.min(mediaSize.width, Math.max(x1, x2));
         if (right - left < 2) continue;
 
         // Background box
@@ -216,6 +232,20 @@ class SessionRenderer implements ISeriesPrimitivePaneRenderer {
       }
     });
   }
+}
+
+/** Fractional bar index of a time: index of the bar it falls in plus the fraction through it. */
+function timeToLogical(candles: CandlestickData<Time>[], t: number, barSec: number): number {
+  let lo = 0, hi = candles.length - 1;
+  if (t <= (candles[0].time as number)) return (t - (candles[0].time as number)) / barSec;
+  // last bar with open <= t
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if ((candles[mid].time as number) <= t) lo = mid; else hi = mid - 1;
+  }
+  const into = (t - (candles[lo].time as number)) / barSec;
+  // A gap of missing bars after lo: clamp to the next bar's slot.
+  return lo + (lo < candles.length - 1 ? Math.min(into, 1) : into);
 }
 
 function drawSessionLine(
