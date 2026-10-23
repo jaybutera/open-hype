@@ -35,7 +35,8 @@ interface TradeSetupStore {
   activeSetups: TradeSetup[];
   pendingSetup: PendingSetup | null;
   startSetup: (side: Side) => void;
-  addClick: (price: number, time?: number | null) => TradeSetup | null;
+  /** A click on another pane than the pending setup's restarts it there, on that pane's asset. */
+  addClick: (price: number, time?: number | null, at?: { paneId: PaneId; asset: string }) => TradeSetup | null;
   updateSetup: (id: string, field: 'entry' | 'sl' | 'tp', price: number) => void;
   removeSetup: (id: string) => void;
   clearPending: () => void;
@@ -100,9 +101,12 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
     set({ pendingSetup: { side, clicks: [], paneId, asset: pane.asset } });
   },
 
-  addClick: (price, time) => {
+  addClick: (price, time, at) => {
     let pending = get().pendingSetup;
     if (!pending) return null;
+    if (at && (at.paneId !== pending.paneId || at.asset !== pending.asset)) {
+      pending = { side: pending.side, clicks: [], paneId: at.paneId, asset: at.asset };
+    }
     if (pending.clicks.length === 0 && time != null) pending = { ...pending, startTime: time };
 
     const clicks = [...pending.clicks, price];

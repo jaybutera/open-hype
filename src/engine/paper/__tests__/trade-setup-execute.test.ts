@@ -71,6 +71,16 @@ describe('trade setup execute flow', () => {
     useSettingsStore.setState({ riskUsdc: '100', leverage: 10 });
   });
 
+  it('binds the setup to the pane and asset the clicks land on', () => {
+    const store = useTradeSetupStore.getState();
+    store.startSetup('buy');
+    store.addClick(28827, null, { paneId: 'secondary', asset: 'xyz:XYZ100' });
+    store.addClick(28933, null, { paneId: 'secondary', asset: 'xyz:XYZ100' });
+    const setup = store.addClick(29026, null, { paneId: 'secondary', asset: 'xyz:XYZ100' })!;
+    expect(setup.paneId).toBe('secondary');
+    expect(setup.asset).toBe('xyz:XYZ100');
+  });
+
   it('creates setup with correct size from risk', () => {
     const store = useTradeSetupStore.getState();
     store.startSetup('buy');

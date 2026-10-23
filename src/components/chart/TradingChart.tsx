@@ -111,8 +111,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
 
   const isActive = activePaneId === paneId;
 
-  // Setups belonging to this pane
-  const paneSetups = activeSetups.filter(s => (s.paneId ?? 'primary') === paneId);
+  // Setups belonging to this pane, on the asset it charts now
+  const paneSetups = activeSetups.filter(s => (s.paneId ?? 'primary') === paneId && s.asset === currentAsset);
   // Draggable order lines edit paper orders only; live orders are drawn as plain price lines.
   const paneOrders = mode === 'paper' ? paperOrders.filter(o => o.coin === currentAsset) : [];
 
@@ -455,7 +455,11 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
 
     const pending = useTradeSetupStore.getState().pendingSetup;
     if (pending) {
-      addClick(priceNum, chartRef.current ? chartXToTime(chartRef.current, seriesRef.current, x) : null);
+      addClick(
+        priceNum,
+        chartRef.current ? chartXToTime(chartRef.current, seriesRef.current, x) : null,
+        { paneId, asset: currentAsset },
+      );
       return;
     }
 
