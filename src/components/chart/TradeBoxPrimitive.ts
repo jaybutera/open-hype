@@ -5,6 +5,7 @@ import type {
   ISeriesPrimitivePaneRenderer,
   ISeriesPrimitiveAxisView,
   PrimitiveHoveredItem,
+  AutoscaleInfo,
   ISeriesApi,
   Time,
   SeriesType,
@@ -187,6 +188,17 @@ export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
 
   /** Entry, TP and SL prices on the price scale. */
   priceAxisViews() { return this._axisViews; }
+
+  /** Keep entry, SL and TP inside the price scale, so a level past the candles still shows. */
+  autoscaleInfo(): AutoscaleInfo {
+    const { entryPrice, slPrice, tpPrice } = this._setup;
+    return {
+      priceRange: {
+        minValue: Math.min(entryPrice, slPrice, tpPrice),
+        maxValue: Math.max(entryPrice, slPrice, tpPrice),
+      },
+    };
+  }
 
   updateAllViews() {
     // Called when viewport changes — pane view will re-render using latest coords
