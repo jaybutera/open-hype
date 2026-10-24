@@ -97,7 +97,7 @@ export function ResizableBottom({ children }: { children: ReactNode }) {
           cursor: 'row-resize', touchAction: 'none',
         }}
       />
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', background: '#0d1117' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: '#0d1117' }}>
         {children}
       </div>
     </div>

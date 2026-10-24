@@ -120,7 +120,7 @@ export function PositionTable({ engine }: Props) {
     <div style={{
       background: '#0d1117',
       borderTop: '1px solid #1a1f2e',
-      overflowX: 'auto',
+      overflow: 'hidden',
       fontSize: 13,
     }}>
       {/* Balance bar */}
