@@ -5,10 +5,10 @@ import { OrderPanel } from '../trading/OrderPanel.tsx';
 import { PositionTable } from '../positions/PositionTable.tsx';
 import { LivePositionTable } from '../positions/LivePositionTable.tsx';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
-import { OrderConfirmModal } from '../modals/OrderConfirmModal.tsx';
 import { JournalCapture } from '../journal/JournalCapture.tsx';
 import { ReplayControls } from '../replay/ReplayControls.tsx';
 import { ResizableBottom } from './ResizableBottom.tsx';
+import { CollapsibleSide } from './CollapsibleSide.tsx';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 
@@ -46,14 +46,15 @@ export function AppLayout({ engine }: Props) {
             </div>
           )}
         </div>
-        <OrderPanel engine={engine} />
+        <CollapsibleSide>
+          <OrderPanel engine={engine} />
+        </CollapsibleSide>
       </div>
 
       <ResizableBottom>
         {mode === 'live' ? <LivePositionTable /> : <PositionTable engine={engine} />}
       </ResizableBottom>
 
-      <OrderConfirmModal engine={engine} />
       <JournalCapture />
     </div>
   );

@@ -7,7 +7,7 @@ A fast, keyboard-driven trading frontend for [Hyperliquid](https://hyperliquid.x
 ## Features
 
 - **Paper trading engine** — practice with simulated fills, margin, and PnL tracking before going live
-- **Chart-based order entry** — shift+click to place limit orders or set TP/SL directly on the chart
+- **Chart-based trade setups** — shift+click sets a long entry (ctrl+shift+click a short), then two clicks place SL and TP; the order panel and positions dock both collapse out of the way
 - **ICT killzone overlays** — session highlights (Asia, London, NY) with DST-aware timing
 - **Risk-first order panel** — set risk in USD, leverage, TP/SL, and let the UI calculate size
 - **Multi-asset tabs** — quickly switch between BTC, ETH, S&P 500, Gold, Silver, and more

@@ -110,6 +110,51 @@ describe('trade setup execute flow', () => {
     expect(setup.tpPrice).toBe(46000);
   });
 
+  it('shift+click start: first click is the entry, the next two are SL and TP in either order (long)', () => {
+    useSettingsStore.setState({ riskUsdc: '100' });
+    const store = useTradeSetupStore.getState();
+    const at = { paneId: 'primary' as const, asset: 'BTC' };
+    store.startSetupAt('buy', 50000, 1700000000, at);
+    expect(useTradeSetupStore.getState().pendingSetup?.clicks).toEqual([50000]);
+    expect(store.addClick(54000, null, at)).toBeNull();
+    const setup = store.addClick(48000, null, at)!;
+
+    expect(setup.entryPrice).toBe(50000);
+    expect(setup.slPrice).toBe(48000);
+    expect(setup.tpPrice).toBe(54000);
+    expect(setup.startTime).toBe(1700000000);
+    expect(setup.paneId).toBe('primary');
+    expect(setup.asset).toBe('BTC');
+  });
+
+  it('shift+click start: short keeps the clicked entry even when it is not the middle price', () => {
+    useSettingsStore.setState({ riskUsdc: '10' });
+    const store = useTradeSetupStore.getState();
+    const at = { paneId: 'primary' as const, asset: 'BTC' };
+    store.startSetupAt('sell', 50000, null, at);
+    store.addClick(46000, null, at);
+    const setup = store.addClick(52000, null, at)!;
+
+    expect(setup.entryPrice).toBe(50000);
+    expect(setup.slPrice).toBe(52000);
+    expect(setup.tpPrice).toBe(46000);
+  });
+
+  it('shift+click start on one pane, then clicks on another pane restart a plain three-click setup there', () => {
+    useSettingsStore.setState({ riskUsdc: '10' });
+    const store = useTradeSetupStore.getState();
+    store.startSetupAt('buy', 50000, null, { paneId: 'primary', asset: 'BTC' });
+    const other = { paneId: 'secondary' as const, asset: 'xyz:XYZ100' };
+    expect(store.addClick(28827, null, other)).toBeNull();
+    expect(store.addClick(29026, null, other)).toBeNull();
+    const setup = store.addClick(28933, null, other)!;
+
+    expect(setup.asset).toBe('xyz:XYZ100');
+    expect(setup.entryPrice).toBe(28933);
+    expect(setup.slPrice).toBe(28827);
+    expect(setup.tpPrice).toBe(29026);
+  });
+
   it('long setup: entry fills → TP fills → position closed', () => {
     useSettingsStore.setState({ riskUsdc: '100' });
     const store = useTradeSetupStore.getState();

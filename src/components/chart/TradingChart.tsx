@@ -5,7 +5,6 @@ import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useThemeStore, upColor, downColor, withAlpha, candleColors } from '../../store/useThemeStore.ts';
 import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
-import { useChartStore, type DraftOrder } from '../../store/useChartStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { TradeBoxPrimitive, chartXToTime } from './TradeBoxPrimitive.ts';
 import { OrderLinePrimitive } from './OrderLinePrimitive.ts';
@@ -84,7 +83,6 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const gexTicker = useGexFeed(currentAsset);
   const gexData = useGexStore(s => (gexTicker ? s.current(gexTicker) : undefined));
   const gexOffset = useGexStore(s => (gexTicker ? s.offsetFor(gexTicker) : 0));
-  const allMids = useMarketStore(s => s.allMids);
   const setInterval = useMarketStore(s => s.setInterval);
   const loadCandles = useMarketStore(s => s.loadCandles);
   const loadMoreCandles = useMarketStore(s => s.loadMoreCandles);
@@ -97,13 +95,10 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const paperOrders = useAccountStore(s => s.paperOrders);
   const livePositions = useLiveAccountStore(s => s.positions);
   const liveOrders = useLiveAccountStore(s => s.openOrders);
-  const draftOrder = useChartStore(s => s.draftOrder);
-  const setDraftOrder = useChartStore(s => s.setDraftOrder);
-  const setShowConfirm = useChartStore(s => s.setShowConfirm);
-  const setDragging = useChartStore(s => s.setDragging);
   const activeSetups = useTradeSetupStore(s => s.activeSetups);
   const pendingSetup = useTradeSetupStore(s => s.pendingSetup);
   const addClick = useTradeSetupStore(s => s.addClick);
+  const startSetupAt = useTradeSetupStore(s => s.startSetupAt);
   const updateSetup = useTradeSetupStore(s => s.updateSetup);
   const removeSetup = useTradeSetupStore(s => s.removeSetup);
   const requestExecute = useTradeSetupStore(s => s.requestExecute);
@@ -349,20 +344,6 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       }
     }
 
-    // Only show draft order on the active pane (it belongs to the OrderPanel)
-    if (draftOrder && isActive) {
-      try {
-        priceLinesRef.current.push(series.createPriceLine({
-          price: draftOrder.price,
-          color: draftOrder.side === 'buy' ? up : down,
-          lineWidth: 2,
-          lineStyle: LineStyle.SparseDotted,
-          axisLabelVisible: true,
-          title: `${draftOrder.type.toUpperCase()} ${draftOrder.side.toUpperCase()} @ ${draftOrder.price.toFixed(2)}`,
-        }));
-      } catch {}
-    }
-
     if (fibFirstClick !== null) {
       try {
         priceLinesRef.current.push(series.createPriceLine({
@@ -392,9 +373,9 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         } catch {}
       }
     }
-  }, [mode, paperPositions, livePositions, liveOrders, draftOrder, pendingSetup, currentAsset, fibFirstClick, isActive, engine, up, down]);
+  }, [mode, paperPositions, livePositions, liveOrders, pendingSetup, currentAsset, fibFirstClick, isActive, engine, up, down]);
 
-  // Mouse down: pane becomes active, then handle trade box / setup / shift+click
+  // Mouse down: pane becomes active, then handle trade box / fib / setup clicks / alt+click alert
   const handleChartClick = useCallback((e: React.MouseEvent) => {
     if (!seriesRef.current) return;
 
@@ -453,6 +434,19 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       return;
     }
 
+    // shift+click starts a long setup with the entry at the clicked price; ctrl+shift+click a short.
+    // Two more plain clicks place SL and TP. Shift+click during a pending setup restarts it here.
+    if (e.shiftKey) {
+      e.preventDefault();
+      startSetupAt(
+        e.ctrlKey ? 'sell' : 'buy',
+        priceNum,
+        chartRef.current ? chartXToTime(chartRef.current, seriesRef.current, x) : null,
+        { paneId, asset: currentAsset },
+      );
+      return;
+    }
+
     const pending = useTradeSetupStore.getState().pendingSetup;
     if (pending) {
       addClick(
@@ -473,80 +467,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         // Hyperliquid prices carry at most 5 significant figures.
         level: Number(priceNum.toPrecision(5)),
       });
-      return;
     }
-
-    if (!e.shiftKey) return;
-
-    const mid = parseFloat(allMids[currentAsset] ?? '0');
-    void mid;
-    const { mode: currentMode } = useSettingsStore.getState();
-    const livePos = useLiveAccountStore.getState().positions.find(p => p.coin === currentAsset);
-    const paperPos = paperPositions.find(p => p.coin === currentAsset);
-    const pos = currentMode === 'live'
-      ? (livePos ? { isLong: livePos.szi > 0, entryPx: livePos.entryPx } : null)
-      : (paperPos && !paperPos.szi.isZero() ? { isLong: paperPos.szi.gt(0), entryPx: paperPos.entryPx.toNumber() } : null);
-
-    let draft: DraftOrder;
-
-    if (pos) {
-      const { isLong, entryPx } = pos;
-      const isTp = isLong ? priceNum > entryPx : priceNum < entryPx;
-
-      draft = {
-        side: isLong ? 'sell' : 'buy',
-        type: isTp ? 'tp' : 'stop',
-        price: priceNum,
-        tpsl: isTp ? 'tp' : 'sl',
-      };
-    } else {
-      const { side } = useSettingsStore.getState();
-      draft = { side, type: 'limit', price: priceNum };
-    }
-
-    const { sizeUsdc } = useSettingsStore.getState();
-    // Live orders always go through the confirm modal; only paper orders skip it.
-    if (currentMode === 'paper' && sizeUsdc && parseFloat(sizeUsdc) > 0) {
-      placeFromDraft(draft, sizeUsdc, priceNum);
-    } else {
-      setDraftOrder(draft);
-      setShowConfirm(true);
-    }
-  }, [allMids, currentAsset, paperPositions, setDraftOrder, setShowConfirm, addClick, fibMode, fibFirstClick, fibs, activePaneId, paneId, setActivePane]);
-
-  const placeFromDraft = useCallback((draft: DraftOrder, sizeUsdc: string, priceNum: number) => {
-    const isReduceOnly = draft.type === 'tp' || draft.type === 'stop';
-
-    let assetSize: string;
-    if (isReduceOnly) {
-      const pos = engine.getPosition(currentAsset);
-      assetSize = pos ? pos.szi.abs().toString() : (parseFloat(sizeUsdc) / priceNum).toString();
-    } else {
-      assetSize = (parseFloat(sizeUsdc) / priceNum).toString();
-    }
-
-    let orderType: import('../../types/order.ts').OrderType;
-    if (draft.type === 'limit') {
-      orderType = { limit: { tif: 'Gtc' as const } };
-    } else {
-      orderType = {
-        trigger: {
-          isMarket: true,
-          triggerPx: priceNum.toFixed(2),
-          tpsl: draft.tpsl ?? (draft.type === 'tp' ? 'tp' as const : 'sl' as const),
-        },
-      };
-    }
-
-    engine.placeOrder({
-      coin: currentAsset,
-      side: draft.side,
-      price: priceNum.toFixed(2),
-      size: assetSize,
-      reduceOnly: isReduceOnly,
-      orderType,
-    });
-  }, [engine, currentAsset]);
+  }, [currentAsset, addClick, startSetupAt, interval, fibMode, fibFirstClick, fibs, activePaneId, paneId, setActivePane]);
 
   // Manage trade box primitives — only ones belonging to this pane
   useEffect(() => {
@@ -771,11 +693,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     for (const prim of orderLinePrimitivesRef.current.values()) {
       if (prim.handleMouseMove(priceNum)) return;
     }
-
-    const { draftOrder: draft, isDragging } = useChartStore.getState();
-    if (!isDragging || !draft) return;
-    setDraftOrder({ ...draft, price: priceNum });
-  }, [setDraftOrder]);
+  }, []);
 
   const handleChartMouseUp = useCallback(() => {
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
@@ -791,13 +709,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         return;
       }
     }
-
-    const draft = useChartStore.getState().draftOrder;
-    if (draft) {
-      setDragging(false);
-      setShowConfirm(true);
-    }
-  }, [setDragging, setShowConfirm]);
+  }, []);
 
   useEffect(() => {
     sessionPrimitiveRef.current?.setEnabled(sessionsOn);
@@ -936,8 +848,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           {fibMode
             ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')
             : (pendingSetup && isActive)
-            ? `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup (${pendingSetup.clicks.length}/3) — ESC to cancel`
-            : 'Shift+Click: place order (or TP/SL if position open)'}
+            ? `${pendingSetup.entryFirst ? 'Entry set — click SL and TP' : `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup`} (${pendingSetup.clicks.length}/3) — ESC to cancel`
+            : 'Shift+Click: long setup at entry · Ctrl+Shift+Click: short setup'}
         </span>
       </div>
 

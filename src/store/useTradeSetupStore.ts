@@ -29,12 +29,16 @@ interface PendingSetup {
   paneId: PaneId;
   asset: string;
   startTime?: number;
+  /** The first click is the entry (shift+click start); the next two are SL and TP in either order. */
+  entryFirst?: boolean;
 }
 
 interface TradeSetupStore {
   activeSetups: TradeSetup[];
   pendingSetup: PendingSetup | null;
   startSetup: (side: Side) => void;
+  /** Start a setup with the entry already placed at `price` on the clicked pane; two more clicks give SL and TP. */
+  startSetupAt: (side: Side, price: number, time: number | null | undefined, at: { paneId: PaneId; asset: string }) => void;
   /** A click on another pane than the pending setup's restarts it there, on that pane's asset. */
   addClick: (price: number, time?: number | null, at?: { paneId: PaneId; asset: string }) => TradeSetup | null;
   updateSetup: (id: string, field: 'entry' | 'sl' | 'tp', price: number) => void;
@@ -47,7 +51,14 @@ interface TradeSetupStore {
   takeExecuteRequest: () => { id: string; nonce: number } | null;
 }
 
-function resolveClicks(side: Side, clicks: number[]): { entry: number; sl: number; tp: number } {
+function resolveClicks(side: Side, clicks: number[], entryFirst?: boolean): { entry: number; sl: number; tp: number } {
+  if (entryFirst) {
+    const [entry, a, b] = clicks;
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    // Long: SL below, TP above. Short: TP below, SL above.
+    return side === 'buy' ? { entry, sl: lo, tp: hi } : { entry, tp: lo, sl: hi };
+  }
   const sorted = [...clicks].sort((a, b) => a - b);
   if (side === 'buy') {
     // Long: lowest = SL, middle = entry, highest = TP
@@ -101,10 +112,24 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
     set({ pendingSetup: { side, clicks: [], paneId, asset: pane.asset } });
   },
 
+  startSetupAt: (side, price, time, at) => {
+    set({
+      pendingSetup: {
+        side,
+        clicks: [price],
+        paneId: at.paneId,
+        asset: at.asset,
+        entryFirst: true,
+        ...(time != null ? { startTime: time } : {}),
+      },
+    });
+  },
+
   addClick: (price, time, at) => {
     let pending = get().pendingSetup;
     if (!pending) return null;
     if (at && (at.paneId !== pending.paneId || at.asset !== pending.asset)) {
+      // A fixed entry belongs to the pane it was clicked on; a restart elsewhere collects all three again.
       pending = { side: pending.side, clicks: [], paneId: at.paneId, asset: at.asset };
     }
     if (pending.clicks.length === 0 && time != null) pending = { ...pending, startTime: time };
@@ -116,7 +141,7 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
     }
 
     // 3 clicks collected — resolve and create setup, frozen to the originating pane/asset
-    const { entry, sl, tp } = resolveClicks(pending.side, clicks);
+    const { entry, sl, tp } = resolveClicks(pending.side, clicks, pending.entryFirst);
     const riskUsdc = parseFloat(useSettingsStore.getState().riskUsdc) || 0;
     const setup = calcSetup(pending.side, entry, sl, tp, riskUsdc, pending.paneId, pending.asset, pending.startTime);
 
