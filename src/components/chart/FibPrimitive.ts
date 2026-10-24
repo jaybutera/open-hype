@@ -13,8 +13,8 @@ import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 
 export interface FibRetracement {
   id: string;
-  p1: number; // first click price
-  p2: number; // second click price
+  p1: number; // first click price: level 1 (start of the move)
+  p2: number; // second click price: level 0 (end of the move)
   t1: number; // first click time (chart-shifted seconds)
   t2: number; // second click time (chart-shifted seconds)
 }
@@ -133,9 +133,10 @@ class FibRenderer implements ISeriesPrimitivePaneRenderer {
       ctx.textBaseline = 'middle';
 
       for (const fib of fibs) {
-        const high = Math.max(fib.p1, fib.p2);
-        const low = Math.min(fib.p1, fib.p2);
-        const range = high - low;
+        // Level 0 sits at the second click (the end of the move) and 1 at the first,
+        // so a low-to-high draw retraces down from the high and a high-to-low draw
+        // retraces up from the low.
+        const range = fib.p1 - fib.p2;
         if (range === 0) continue;
 
         const x1 = ts.timeToCoordinate(fib.t1 as Time);
@@ -145,7 +146,7 @@ class FibRenderer implements ISeriesPrimitivePaneRenderer {
         const right = Math.max(x1 ?? x2!, x2 ?? x1!);
 
         for (const level of FIB_LEVELS) {
-          const price = high - level * range;
+          const price = fib.p2 + level * range;
           const y = series.priceToCoordinate(price);
           if (y === null) continue;
 
