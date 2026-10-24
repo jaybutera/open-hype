@@ -22,7 +22,7 @@ import { NETWORK } from '../hl/network.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { TradeProposal } from './trades.ts';
 import type { Alert } from './alerts.ts';
-import type { ChartSnapshot, OverlaySet, SnapshotCandle, SnapshotFib, SnapshotOrder, SnapshotPosition } from './types.ts';
+import type { ChartSnapshot, OverlaySet, SnapshotCandle, SnapshotFib, SnapshotLine, SnapshotOrder, SnapshotPosition } from './types.ts';
 
 /** What the active chart pane contributes to a snapshot. */
 export interface PaneView {
@@ -32,6 +32,7 @@ export interface PaneView {
   visible: { from: number; to: number; bars: number };
   candles: SnapshotCandle[];
   fibs: SnapshotFib[];
+  lines: SnapshotLine[];
 }
 
 export type SnapshotProvider = () => PaneView | null;
@@ -153,6 +154,7 @@ export function buildSnapshot(): ChartSnapshot {
       ? { side: pendingSetup.side === 'buy' ? 'long' : 'short', clicks: [...pendingSetup.clicks] }
       : null,
     fibs: view?.fibs ?? [],
+    lines: view?.lines ?? [],
     overlays: sets.map(s => ({ id: s.id, name: s.name, enabled: enabledIds.includes(s.id) })),
     gex: (() => {
       const g = useGexStore.getState();

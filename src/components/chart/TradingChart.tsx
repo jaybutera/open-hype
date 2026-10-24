@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
 import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, type HistogramData, type Time, type IPriceLine, LineStyle } from 'lightweight-charts';
 import { useMarketStore, type PaneId } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
@@ -9,7 +9,10 @@ import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { TradeBoxPrimitive, chartXToTime } from './TradeBoxPrimitive.ts';
 import { OrderLinePrimitive } from './OrderLinePrimitive.ts';
 import { SessionPrimitive } from './SessionPrimitive.ts';
-import { FibPrimitive, type FibRetracement } from './FibPrimitive.ts';
+import { FibPrimitive } from './FibPrimitive.ts';
+import { HLinePrimitive, snapPrice } from './HLinePrimitive.ts';
+import { DrawToolbox, type DrawTool } from './DrawToolbox.tsx';
+import { useDrawingStore } from '../../store/useDrawingStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { CandleInterval } from '../../types/market.ts';
 import { utcToChartTime, chartTimeToUtc, formatEt } from '../../utils/chartTime.ts';
@@ -20,7 +23,7 @@ import type { SnapshotCandle, OverlaySet } from '../../services/ai/types.ts';
 import { useAlertStore } from '../../store/useAlertStore.ts';
 import { alertLine } from '../../services/ai/alerts.ts';
 import { GexPrimitive } from './GexPrimitive.ts';
-import { GexToolbar } from './GexToolbar.tsx';
+import { GexToolbar, toolbarButtonStyle } from './GexToolbar.tsx';
 import { lookbackLabel, lookbacksFor } from '../../services/gex/lookbacks.ts';
 import { useGexStore } from '../../store/useGexStore.ts';
 import { useGexFeed } from '../../services/gex/useGexFeed.ts';
@@ -40,6 +43,7 @@ interface Props {
 }
 
 const VOLUME_KEY = 'hl-volume';
+const TOOLBOX_KEY = 'hl-draw-toolbox';
 
 export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -51,16 +55,30 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const orderLinePrimitivesRef = useRef<Map<string, OrderLinePrimitive>>(new Map());
   const sessionPrimitiveRef = useRef<SessionPrimitive | null>(null);
   const fibPrimitiveRef = useRef<FibPrimitive | null>(null);
+  const hlinePrimitivesRef = useRef<Map<string, HLinePrimitive>>(new Map());
   const [sessionsOn, setSessionsOn] = useState(true);
   const [alertsOn, setAlertsOn] = useState(true);
   const [volumeOn, setVolumeOn] = useState(() => {
     try { return localStorage.getItem(VOLUME_KEY) === '1'; } catch { return false; }
   });
-  const [fibMode, setFibMode] = useState(false);
+  const [toolboxOpen, setToolboxOpen] = useState(() => {
+    try { return localStorage.getItem(TOOLBOX_KEY) === '1'; } catch { return false; }
+  });
+  /** Armed drawing tool; resets to 'none' once the drawing is placed. */
+  const [tool, setTool] = useState<DrawTool>('none');
+  const fibMode = tool === 'fib';
   const [fibFirstClick, setFibFirstClick] = useState<{ price: number; time: number } | null>(null);
-  const [fibs, setFibs] = useState<FibRetracement[]>([]);
-  const fibsRef = useRef<FibRetracement[]>([]);
-  fibsRef.current = fibs;
+  /** Line whose label is being typed, with the y of its line in the chart area. */
+  const [editingLine, setEditingLine] = useState<{ id: string; y: number; text: string } | null>(null);
+  const drawLines = useDrawingStore(s => s.lines);
+  const drawFibs = useDrawingStore(s => s.fibs);
+  const addLine = useDrawingStore(s => s.addLine);
+  const moveLine = useDrawingStore(s => s.moveLine);
+  const setLineText = useDrawingStore(s => s.setLineText);
+  const removeLine = useDrawingStore(s => s.removeLine);
+  const addFib = useDrawingStore(s => s.addFib);
+  const removeFib = useDrawingStore(s => s.removeFib);
+  const clearDrawings = useDrawingStore(s => s.clearAsset);
   /** Candles as plotted (deduped, sorted), real UTC ms; index-aligned with the series data. */
   const plottedRef = useRef<SnapshotCandle[]>([]);
   const aiPrimitivesRef = useRef<Map<string, AiOverlayPrimitive>>(new Map());
@@ -110,6 +128,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const paneSetups = activeSetups.filter(s => (s.paneId ?? 'primary') === paneId && s.asset === currentAsset);
   // Draggable order lines edit paper orders only; live orders are drawn as plain price lines.
   const paneOrders = mode === 'paper' ? paperOrders.filter(o => o.coin === currentAsset) : [];
+  // User drawings on the asset this pane charts (shared by both panes when they show the same asset)
+  const paneLines = useMemo(() => drawLines.filter(l => l.asset === currentAsset), [drawLines, currentAsset]);
+  const paneFibs = useMemo(() => drawFibs.filter(f => f.asset === currentAsset), [drawFibs, currentAsset]);
+  const paneFibsRef = useRef(paneFibs);
+  paneFibsRef.current = paneFibs;
+  const paneLinesRef = useRef(paneLines);
+  paneLinesRef.current = paneLines;
 
   // Create chart — only once
   useEffect(() => {
@@ -178,6 +203,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       priceLinesRef.current = [];
       tradeBoxPrimitivesRef.current.clear();
       orderLinePrimitivesRef.current.clear();
+      hlinePrimitivesRef.current.clear();
       aiPrimitivesRef.current.clear();
       alertPrimRef.current = null;
       sessionPrimitiveRef.current = null;
@@ -241,6 +267,36 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     volumeSeriesRef.current?.applyOptions({ visible: volumeOn });
     try { localStorage.setItem(VOLUME_KEY, volumeOn ? '1' : '0'); } catch {}
   }, [volumeOn]);
+
+  useEffect(() => {
+    try { localStorage.setItem(TOOLBOX_KEY, toolboxOpen ? '1' : '0'); } catch {}
+  }, [toolboxOpen]);
+
+  // Fibs for this asset, from the drawing store (UTC ms) into chart time for the primitive
+  useEffect(() => {
+    fibPrimitiveRef.current?.setFibs(paneFibs.map(f => ({
+      id: f.id, p1: f.p1, p2: f.p2,
+      t1: utcToChartTime(Math.floor(f.t1 / 1000)),
+      t2: utcToChartTime(Math.floor(f.t2 / 1000)),
+    })));
+  }, [paneFibs]);
+
+  // One draggable primitive per horizontal line on this asset
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const primMap = hlinePrimitivesRef.current;
+    const ids = new Set(paneLines.map(l => l.id));
+    for (const [id, prim] of primMap) {
+      if (!ids.has(id)) { series.detachPrimitive(prim); primMap.delete(id); }
+    }
+    const cb = { onMove: moveLine, onRemove: removeLine };
+    for (const line of paneLines) {
+      const existing = primMap.get(line.id);
+      if (existing) { existing.update(line); existing.updateCallbacks(cb); }
+      else { const prim = new HLinePrimitive(line, cb); series.attachPrimitive(prim); primMap.set(line.id, prim); }
+    }
+  }, [paneLines, moveLine, removeLine]);
 
   // Load more candles when scrolling to the left edge
   useEffect(() => {
@@ -392,8 +448,35 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     if (price === null || price === undefined) return;
     const priceNum = Number(price);
 
+    // alt+click on a drawn line arms the alert at the line's exact price (alt+ctrl: on this interval's close)
+    if (e.altKey) {
+      const hit = [...hlinePrimitivesRef.current.values()].find(p => p.hitLine(x, y));
+      if (hit) {
+        e.preventDefault();
+        void useAlertStore.getState().add({
+          asset: currentAsset,
+          kind: e.ctrlKey ? 'close' : 'cross',
+          interval: e.ctrlKey ? interval : undefined,
+          level: snapPrice(hit.line.price),
+          note: hit.line.text,
+        });
+        return;
+      }
+    }
+
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
       if (prim.handleButtonClick(x, y)) return;
+    }
+
+    if (tool === 'none' && !e.shiftKey && !e.ctrlKey) {
+      for (const prim of hlinePrimitivesRef.current.values()) {
+        if (prim.handleMouseDown(x, y)) {
+          if (prim.isDragging) chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
+          return;
+        }
+      }
+      const fibId = fibPrimitiveRef.current?.handleMouseDown(x, y);
+      if (fibId) { removeFib(fibId); return; }
     }
 
     for (const prim of tradeBoxPrimitivesRef.current.values()) {
@@ -418,19 +501,23 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       if (fibFirstClick === null) {
         setFibFirstClick({ price: priceNum, time: timeNum });
       } else {
-        const newFib: FibRetracement = {
-          id: `fib-${Date.now()}`,
+        addFib(currentAsset, {
           p1: fibFirstClick.price,
           p2: priceNum,
-          t1: fibFirstClick.time,
-          t2: timeNum,
-        };
-        const updated = [...fibs, newFib];
-        setFibs(updated);
-        fibPrimitiveRef.current?.setFibs(updated);
+          t1: chartTimeToUtc(fibFirstClick.time) * 1000,
+          t2: chartTimeToUtc(timeNum) * 1000,
+        });
         setFibFirstClick(null);
-        setFibMode(false);
+        setTool('none');
       }
+      return;
+    }
+
+    // Line tool, or ctrl+click without the tool: a horizontal line at the clicked price
+    if (tool === 'line' || (e.ctrlKey && !e.shiftKey && !e.altKey)) {
+      e.preventDefault();
+      addLine(currentAsset, snapPrice(priceNum));
+      setTool('none');
       return;
     }
 
@@ -468,7 +555,25 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         level: Number(priceNum.toPrecision(5)),
       });
     }
-  }, [currentAsset, addClick, startSetupAt, interval, fibMode, fibFirstClick, fibs, activePaneId, paneId, setActivePane]);
+  }, [currentAsset, addClick, startSetupAt, interval, tool, fibMode, fibFirstClick, addFib, addLine, removeFib, activePaneId, paneId, setActivePane]);
+
+  // Double-click on a drawn line opens its label for typing
+  const handleChartDoubleClick = useCallback((e: React.MouseEvent) => {
+    const rect = chartContainerRef.current?.getBoundingClientRect();
+    if (!rect || !seriesRef.current) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const hit = [...hlinePrimitivesRef.current.values()].find(p => p.hitLine(x, y));
+    if (!hit) return;
+    e.preventDefault();
+    const lineY = seriesRef.current.priceToCoordinate(hit.line.price);
+    setEditingLine({ id: hit.line.id, y: lineY ?? y, text: hit.line.text ?? '' });
+  }, []);
+
+  const commitLineText = useCallback(() => {
+    if (editingLine) setLineText(editingLine.id, editingLine.text);
+    setEditingLine(null);
+  }, [editingLine, setLineText]);
 
   // Manage trade box primitives — only ones belonging to this pane
   useEffect(() => {
@@ -667,11 +772,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         interval,
         visible: bars > 0 ? { from: plotted[from].t, to: plotted[to].t, bars } : { from: 0, to: 0, bars: 0 },
         candles: slice,
-        fibs: fibsRef.current.map(f => ({
-          id: f.id, p1: f.p1, p2: f.p2,
-          t1: chartTimeToUtc(f.t1) * 1000,
-          t2: chartTimeToUtc(f.t2) * 1000,
-        })),
+        fibs: paneFibsRef.current.map(f => ({ id: f.id, p1: f.p1, p2: f.p2, t1: f.t1, t2: f.t2 })),
+        lines: paneLinesRef.current.map(l => ({ id: l.id, price: l.price, ...(l.text ? { text: l.text } : {}) })),
       };
     });
   }, [isActive, paneId, currentAsset, interval]);
@@ -693,6 +795,10 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     for (const prim of orderLinePrimitivesRef.current.values()) {
       if (prim.handleMouseMove(priceNum)) return;
     }
+
+    for (const prim of hlinePrimitivesRef.current.values()) {
+      if (prim.handleMouseMove(priceNum)) return;
+    }
   }, []);
 
   const handleChartMouseUp = useCallback(() => {
@@ -709,6 +815,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         return;
       }
     }
+
+    for (const prim of hlinePrimitivesRef.current.values()) {
+      if (prim.handleMouseUp()) {
+        chartRef.current?.applyOptions({ handleScroll: true, handleScale: true });
+        return;
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -720,13 +833,20 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         clearPending();
-        setFibMode(false);
+        setTool('none');
         setFibFirstClick(null);
+        setEditingLine(null);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [clearPending, isActive]);
+
+  const drawHint = tool === 'fib'
+    ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')
+    : tool === 'line'
+    ? 'Click to place a horizontal line — ESC to cancel'
+    : null;
 
   // Border highlight when split view is on so user can see the active pane
   const borderColor = splitView && isActive ? '#3861fb' : 'transparent';
@@ -814,52 +934,73 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           Vol
         </button>
         <button
-          onClick={() => { setFibMode(v => !v); setFibFirstClick(null); }}
-          style={{
-            padding: '4px 10px',
-            fontSize: 12,
-            background: fibMode ? '#1a1f2e' : 'transparent',
-            border: fibMode ? '1px solid #2a2f3e' : '1px solid transparent',
-            borderRadius: 4,
-            color: fibMode ? '#e1e4e8' : '#8a8f98',
-            cursor: 'pointer',
-          }}
+          onClick={() => { setToolboxOpen(v => !v); setTool('none'); setFibFirstClick(null); }}
+          title="Drawing tools: horizontal lines and fibs"
+          style={toolbarButtonStyle(toolboxOpen)}
         >
-          Fib
+          Draw
         </button>
-        {fibs.length > 0 && (
-          <button
-            onClick={() => { setFibs([]); fibPrimitiveRef.current?.clearFibs(); }}
-            style={{
-              padding: '4px 10px',
-              fontSize: 12,
-              background: 'transparent',
-              border: '1px solid transparent',
-              borderRadius: 4,
-              color: '#8a8f98',
-              cursor: 'pointer',
-            }}
-          >
-            Clear Fibs
-          </button>
-        )}
         <GexToolbar ticker={gexTicker} interval={interval} />
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: fibMode ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? 'var(--up)' : 'var(--down)') : '#555', alignSelf: 'center' }}>
-          {fibMode
-            ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: tool !== 'none' ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? 'var(--up)' : 'var(--down)') : '#555', alignSelf: 'center' }}>
+          {tool !== 'none'
+            ? drawHint
             : (pendingSetup && isActive)
             ? `${pendingSetup.entryFirst ? 'Entry set — click SL and TP' : `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup`} (${pendingSetup.clicks.length}/3) — ESC to cancel`
             : 'Shift+Click: long setup at entry · Ctrl+Shift+Click: short setup'}
         </span>
       </div>
 
-      <div
-        ref={chartContainerRef}
-        style={{ flex: 1, position: 'relative', minHeight: 300 }}
-        onMouseDown={handleChartClick}
-        onMouseMove={handleChartMouseMove}
-        onMouseUp={handleChartMouseUp}
-      />
+      <div style={{ flex: 1, position: 'relative', minHeight: 300 }}>
+        <div
+          ref={chartContainerRef}
+          style={{ position: 'absolute', inset: 0 }}
+          onMouseDown={handleChartClick}
+          onMouseMove={handleChartMouseMove}
+          onMouseUp={handleChartMouseUp}
+          onDoubleClick={handleChartDoubleClick}
+        />
+        {toolboxOpen && (
+          <DrawToolbox
+            tool={tool}
+            setTool={t => { setTool(t); setFibFirstClick(null); }}
+            hint={tool !== 'none' ? drawHint : null}
+            drawingCount={paneLines.length + paneFibs.length}
+            onClear={() => clearDrawings(currentAsset)}
+            onClose={() => { setToolboxOpen(false); setTool('none'); setFibFirstClick(null); }}
+          />
+        )}
+        {editingLine && (
+          <input
+            autoFocus
+            value={editingLine.text}
+            placeholder="label"
+            maxLength={40}
+            onChange={e => setEditingLine(l => (l ? { ...l, text: e.target.value } : l))}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commitLineText();
+              else if (e.key === 'Escape') setEditingLine(null);
+              e.stopPropagation();
+            }}
+            onBlur={commitLineText}
+            onMouseDown={e => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              top: editingLine.y - 11,
+              right: 80,
+              zIndex: 6,
+              width: 160,
+              padding: '3px 6px',
+              fontSize: 11,
+              fontFamily: 'monospace',
+              background: 'rgba(13, 17, 23, 0.95)',
+              color: '#e1e4e8',
+              border: '1px solid #a78bfa',
+              borderRadius: 3,
+              outline: 'none',
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }

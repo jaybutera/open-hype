@@ -75,8 +75,9 @@ request stream), no extra deps.
 - `TradingChart.tsx` — the **active pane** registers a snapshot provider that reads
   `chart.timeScale().getVisibleLogicalRange()` and slices the candles accordingly. Also
   attaches/detaches an `AiOverlayPrimitive` per enabled set whose `asset` matches the pane's
-  asset (same pattern as `tradeBoxPrimitivesRef`). The fibs state (`fibs`) and the chart-time
-  helpers are needed by the snapshot; move `utcToChartTime` / `getNyOffset` into
+  asset (same pattern as `tradeBoxPrimitivesRef`). User drawings (fibs and horizontal lines)
+  live in `useDrawingStore` keyed by asset and persisted to localStorage (`hl-drawings`); the
+  snapshot reads this asset's slice. The chart-time helpers are needed by the snapshot; move `utcToChartTime` / `getNyOffset` into
   `src/utils/chartTime.ts` and re-export from `TradingChart.tsx` so `JournalChart.tsx` and
   `ReplayControls.tsx` keep working.
 - `src/components/chart/AiOverlayPrimitive.ts` — one primitive per overlay set, modelled on
@@ -159,6 +160,7 @@ interface ChartSnapshot {
                   size: number; riskUsdc: number; rr: number }>;
   pendingSetup: { side: 'long'|'short'; clicks: number[] } | null;
   fibs: Array<{ id: string; p1: number; p2: number; t1: number; t2: number }>;  // t in UTC ms
+  lines: Array<{ id: string; price: number; text?: string }>;   // horizontal lines the user drew
   overlays: Array<{ id: string; name: string; enabled: boolean }>;
 }
 ```

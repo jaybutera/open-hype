@@ -3,6 +3,7 @@ import type {
   SeriesAttachedParameter,
   ISeriesPrimitivePaneView,
   ISeriesPrimitivePaneRenderer,
+  PrimitiveHoveredItem,
   ISeriesApi,
   IChartApi,
   Time,
@@ -22,6 +23,9 @@ const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 const LINE_COLOR = 'rgba(255, 255, 255, 0.35)';
 const LABEL_COLOR = 'rgba(255, 255, 255, 0.5)';
 const LINE_DASH = [4, 4];
+const CLOSE_SIZE = 14;
+
+interface Rect { x: number; y: number; w: number; h: number }
 
 export class FibPrimitive implements ISeriesPrimitive<Time> {
   private _series: ISeriesApi<SeriesType, Time> | null = null;
@@ -29,6 +33,8 @@ export class FibPrimitive implements ISeriesPrimitive<Time> {
   private _requestUpdate: (() => void) | null = null;
   private _paneViews: [FibPaneView];
   private _fibs: FibRetracement[] = [];
+  /** Where the last draw put each fib's × (keyed by fib id), in media px. */
+  _closeRects = new Map<string, Rect>();
 
   constructor() {
     this._paneViews = [new FibPaneView(this)];
@@ -72,6 +78,23 @@ export class FibPrimitive implements ISeriesPrimitive<Time> {
 
   paneViews() { return this._paneViews; }
   updateAllViews() {}
+
+  private _closeAt(x: number, y: number): string | null {
+    for (const [id, r] of this._closeRects) {
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return id;
+    }
+    return null;
+  }
+
+  hitTest(x: number, y: number): PrimitiveHoveredItem | null {
+    const id = this._closeAt(x, y);
+    return id ? ({ cursorStyle: 'pointer', externalId: `fib-close-${id}` } as PrimitiveHoveredItem) : null;
+  }
+
+  /** Returns the id of the fib whose × was pressed, or null when the press was elsewhere. */
+  handleMouseDown(x: number, y: number): string | null {
+    return this._closeAt(x, y);
+  }
 }
 
 class FibPaneView implements ISeriesPrimitivePaneView {
@@ -102,6 +125,7 @@ class FibRenderer implements ISeriesPrimitivePaneRenderer {
     if (!series || !chart || fibs.length === 0) return;
 
     const ts = chart.timeScale();
+    this._primitive._closeRects.clear();
 
     target.useMediaCoordinateSpace(({ context: ctx }) => {
       ctx.save();
@@ -138,6 +162,17 @@ class FibRenderer implements ISeriesPrimitivePaneRenderer {
           ctx.fillStyle = LABEL_COLOR;
           ctx.textAlign = 'left';
           ctx.fillText(label, right + 4, y - 1);
+
+          // × after the top level's label deletes the fib
+          if (level === 0) {
+            const labelW = ctx.measureText(label).width;
+            const r: Rect = { x: right + 4 + labelW + 4, y: y - CLOSE_SIZE / 2, w: CLOSE_SIZE, h: CLOSE_SIZE };
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.textAlign = 'center';
+            ctx.fillText('×', r.x + r.w / 2, y);
+            ctx.textAlign = 'left';
+            this._primitive._closeRects.set(fib.id, r);
+          }
         }
       }
 

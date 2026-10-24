@@ -60,6 +60,14 @@ export interface SnapshotFib {
   t2: number;
 }
 
+/** A horizontal level the user drew (Draw toolbox or ctrl+click). */
+export interface SnapshotLine {
+  id: string;
+  price: number;
+  /** The label the user typed on it, if any. */
+  text?: string;
+}
+
 export interface ChartSnapshot {
   takenAt: number;
   mode: 'paper' | 'live';
@@ -79,6 +87,8 @@ export interface ChartSnapshot {
   setups: SnapshotSetup[];
   pendingSetup: { side: 'long' | 'short'; clicks: number[] } | null;
   fibs: SnapshotFib[];
+  /** Horizontal lines the user drew on this asset. */
+  lines: SnapshotLine[];
   overlays: Array<{ id: string; name: string; enabled: boolean }>;
   /** GEXBot levels for the asset's options (xyz:SP500 -> SPX etc.); null when the asset has none or nothing has loaded. */
   gex?: GexSummary | null;
