@@ -123,6 +123,16 @@
         border: 1px solid color-mix(in srgb, var(--down) 30%, transparent); cursor: pointer; font-size: 10px;
       }
       .btn-sl-set:hover { border-color: var(--down); background: color-mix(in srgb, var(--down) 8%, transparent); }
+
+      /* ── Scrollbars ─────────────────────────────────────────── */
+      /* Thin and dark wherever one is needed; hidden entirely on .scroll-quiet (still scrolls by wheel). */
+      * { scrollbar-width: thin; scrollbar-color: #2a2f3e transparent; }
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #2a2f3e; }
+      ::-webkit-scrollbar-thumb:hover { background: #3a4050; }
+      .scroll-quiet { scrollbar-width: none; }
+      .scroll-quiet::-webkit-scrollbar { display: none; }
     </style>
   </head>
   <body>

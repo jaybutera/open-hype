@@ -345,7 +345,7 @@ export function OrderPanel({ engine }: Props) {
   const marginPreview = sizeUsdc ? (parseFloat(sizeUsdc) / leverage).toFixed(2) : '';
 
   return (
-    <div style={{
+    <div className="scroll-quiet" style={{
       background: '#0d1117',
       borderLeft: '1px solid #1a1f2e',
       padding: 16,
@@ -355,6 +355,7 @@ export function OrderPanel({ engine }: Props) {
       width: 280,
       flexShrink: 0,
       overflowY: 'auto',
+      overflowX: 'hidden',
     }}>
       {/* Side toggle */}
       <div style={{ display: 'flex', gap: 4 }}>
