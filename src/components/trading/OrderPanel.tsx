@@ -345,7 +345,7 @@ export function OrderPanel({ engine }: Props) {
   const marginPreview = sizeUsdc ? (parseFloat(sizeUsdc) / leverage).toFixed(2) : '';
 
   return (
-    <div className="scroll-quiet" style={{
+    <div style={{
       background: '#0d1117',
       borderLeft: '1px solid #1a1f2e',
       padding: 16,

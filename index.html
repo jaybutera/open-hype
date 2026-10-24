@@ -125,14 +125,9 @@
       .btn-sl-set:hover { border-color: var(--down); background: color-mix(in srgb, var(--down) 8%, transparent); }
 
       /* ── Scrollbars ─────────────────────────────────────────── */
-      /* Thin and dark wherever one is needed; hidden entirely on .scroll-quiet (still scrolls by wheel). */
-      * { scrollbar-width: thin; scrollbar-color: #2a2f3e transparent; }
-      ::-webkit-scrollbar { width: 6px; height: 6px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: #2a2f3e; }
-      ::-webkit-scrollbar-thumb:hover { background: #3a4050; }
-      .scroll-quiet { scrollbar-width: none; }
-      .scroll-quiet::-webkit-scrollbar { display: none; }
+      /* No scrollbar chrome anywhere; panels still scroll by wheel, trackpad and keyboard. */
+      * { scrollbar-width: none; }
+      ::-webkit-scrollbar { display: none; width: 0; height: 0; }
     </style>
   </head>
   <body>
