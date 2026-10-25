@@ -5,18 +5,27 @@ import {
   type ISeriesApi,
   type CandlestickData,
   type Time,
-  type SeriesMarker,
-  LineStyle,
+  type LogicalRange,
 } from 'lightweight-charts';
 import { fetchCandles } from '../../services/api/info.ts';
 import { utcToChartTime } from '../chart/TradingChart.tsx';
-import type { CandleInterval } from '../../types/market.ts';
+import { AiOverlayPrimitive } from '../chart/AiOverlayPrimitive.ts';
+import { intervalToMs } from '../../services/replay/aggregate.ts';
+import type { CandleData, CandleInterval } from '../../types/market.ts';
 import type { TradeWindow } from '../../services/journal/tradeWindows.ts';
+import type { OverlayShape } from '../../services/ai/types.ts';
 import { useThemeStore, upColor, downColor, candleColors } from '../../store/useThemeStore.ts';
 
 interface Props {
   trade: TradeWindow;
 }
+
+/** Bars fetched per step when panning past either end of the loaded data. */
+const CHUNK_BARS = 500;
+/** Start loading when the view is this many bars from an edge. */
+const EDGE_BARS = 20;
+const NOTE_COLOR = '#f0b90b';
+const EXIT_COLOR = '#8a8f98';
 
 /**
  * Pick a candle interval and padding based on how long the trade was held, so a
@@ -29,6 +38,76 @@ function pickInterval(durationMs: number): { interval: CandleInterval; padMs: nu
   if (durationMs <= 3 * 24 * hour) return { interval: '15m', padMs: 6 * hour };
   if (durationMs <= 14 * 24 * hour) return { interval: '1h', padMs: 24 * hour };
   return { interval: '4h', padMs: 3 * 24 * hour };
+}
+
+/** Candles keyed by bar open (UTC ms), so chunks merge without duplicates. */
+function mergeCandles(into: Map<number, CandlestickData>, candles: CandleData[]) {
+  for (const c of candles) {
+    const o = parseFloat(c.o), h = parseFloat(c.h), l = parseFloat(c.l), cl = parseFloat(c.c);
+    if (isNaN(o) || isNaN(h) || isNaN(l) || isNaN(cl)) continue;
+    into.set(c.t, { time: utcToChartTime(Math.floor(c.t / 1000)) as Time, open: o, high: h, low: l, close: cl });
+  }
+}
+
+function fmt(n: number): string {
+  return String(parseFloat(n.toPrecision(8)));
+}
+
+/**
+ * The trade drawn the way an MCP overlay set is: a box over the held span from
+ * entry to exit, entry and exit lines only across that span, and one arrow per
+ * fill at its bar and exact price. Fill and note times snap to their bar's open
+ * so the marks sit on the candle they happened in.
+ */
+function tradeShapes(trade: TradeWindow, barMs: number, closeAt: (t: number) => number | null): OverlayShape[] {
+  const snap = (t: number) => Math.floor(t / barMs) * barMs;
+  const up = upColor();
+  const down = downColor();
+  const dirColor = trade.direction === 'long' ? up : down;
+  const t1 = snap(trade.entryTime);
+  const shapes: OverlayShape[] = [];
+
+  if (trade.exitTime !== null && trade.exitPx !== null) {
+    const t2 = snap(trade.exitTime);
+    shapes.push({
+      type: 'box', t1, t2,
+      p1: Math.max(trade.entryPx, trade.exitPx), p2: Math.min(trade.entryPx, trade.exitPx),
+      color: trade.realizedPnl >= 0 ? up : down,
+    });
+    shapes.push({
+      type: 'hline', price: trade.entryPx, from: t1, to: t2, style: 'solid', color: dirColor,
+      text: `${trade.direction === 'long' ? 'Long' : 'Short'} ${fmt(trade.entryPx)}`, labelAt: 'start',
+    });
+    shapes.push({
+      type: 'hline', price: trade.exitPx, from: t1, to: t2, style: 'dashed', color: EXIT_COLOR,
+      text: `Exit ${fmt(trade.exitPx)} · ${trade.realizedPnl >= 0 ? '+' : ''}${trade.realizedPnl.toFixed(2)}`,
+    });
+  } else {
+    shapes.push({
+      type: 'hline', price: trade.entryPx, from: t1, toNow: true, style: 'solid', color: dirColor,
+      text: `${trade.direction === 'long' ? 'Long' : 'Short'} ${fmt(trade.entryPx)} · open`, labelAt: 'start',
+    });
+  }
+
+  for (const f of trade.fills) {
+    const buy = f.side === 'buy';
+    const px = parseFloat(f.price);
+    if (!Number.isFinite(px)) continue;
+    shapes.push({
+      type: 'arrow', time: snap(f.timestamp), price: px, dir: buy ? 'up' : 'down',
+      color: buy ? up : down,
+      text: `${f.dir ?? (buy ? 'Buy' : 'Sell')} ${f.size} @ ${fmt(px)}`,
+    });
+  }
+
+  for (const note of trade.notes) {
+    const t = snap(note.timestamp);
+    const px = closeAt(t);
+    if (px === null) continue;
+    const preview = note.text.length > 40 ? note.text.slice(0, 40) + '…' : note.text;
+    shapes.push({ type: 'label', time: t, price: px, text: preview, color: NOTE_COLOR });
+  }
+  return shapes;
 }
 
 export function JournalChart({ trade }: Props) {
@@ -82,7 +161,8 @@ export function JournalChart({ trade }: Props) {
     });
   }, [up, down, showGrid, chartBg]);
 
-  // Load candles + markers whenever the selected trade changes.
+  // Load candles and the trade drawing whenever the selected trade changes;
+  // fetch more bars on either side as the view pans toward an edge.
   useEffect(() => {
     let cancelled = false;
     const series = seriesRef.current;
@@ -91,80 +171,75 @@ export function JournalChart({ trade }: Props) {
 
     setLoading(true);
     setError(null);
+    series.setData([]);
 
     const end = trade.exitTime ?? Date.now();
     const { interval, padMs } = pickInterval(end - trade.entryTime);
-    const start = trade.entryTime - padMs;
-    const fetchEnd = end + padMs;
+    const barMs = intervalToMs(interval);
+    const bars = new Map<number, CandlestickData>();
+    let first = Math.floor((trade.entryTime - padMs) / barMs) * barMs;
+    let last = Math.floor((end + padMs) / barMs) * barMs;
+    let olderDone = false;
+    let newerDone = false;
+    let busy = false;
 
-    fetchCandles(trade.coin, interval, start, fetchEnd)
+    const prim = new AiOverlayPrimitive({
+      id: 'journal-trade', batch: 'journal', name: 'Trade', asset: trade.coin,
+      color: trade.direction === 'long' ? upColor() : downColor(), createdAt: Date.now(), shapes: [],
+    });
+    series.attachPrimitive(prim);
+
+    const publish = () => {
+      const keys = [...bars.keys()].sort((a, b) => a - b);
+      series.setData(keys.map(k => bars.get(k)!));
+      const closeAt = (t: number) => bars.get(t)?.close ?? null;
+      prim.setSet({ ...prim.set, shapes: tradeShapes(trade, barMs, closeAt) });
+      return keys.length;
+    };
+
+    const loadEdge = async (side: 'older' | 'newer') => {
+      if (busy || cancelled) return;
+      if (side === 'older' ? olderDone : newerDone) return;
+      busy = true;
+      try {
+        const from = side === 'older' ? first - CHUNK_BARS * barMs : last + barMs;
+        const to = side === 'older' ? first - 1 : Math.min(last + CHUNK_BARS * barMs, Date.now());
+        if (to <= from) { newerDone = true; return; }
+        const candles = await fetchCandles(trade.coin, interval, from, to);
+        if (cancelled) return;
+        const before = bars.size;
+        mergeCandles(bars, candles);
+        const added = bars.size - before;
+        if (side === 'older') { first = from; if (added === 0) olderDone = true; }
+        else { last = to; if (to >= Date.now() - barMs) newerDone = true; }
+        if (added === 0) return;
+        // Prepending shifts every logical index; keep the view on the same bars.
+        const range = chart.timeScale().getVisibleLogicalRange();
+        publish();
+        if (side === 'older' && range) {
+          chart.timeScale().setVisibleLogicalRange({ from: range.from + added, to: range.to + added });
+        }
+      } catch {
+        // Leave the loaded bars as they are; the next pan retries.
+      } finally {
+        busy = false;
+      }
+    };
+
+    const onRange = (range: LogicalRange | null) => {
+      if (!range || bars.size === 0) return;
+      if (range.from < EDGE_BARS) void loadEdge('older');
+      else if (range.to > bars.size - 1 - EDGE_BARS) void loadEdge('newer');
+    };
+
+    fetchCandles(trade.coin, interval, first, last)
       .then(candles => {
         if (cancelled) return;
-        const seen = new Set<number>();
-        const data: CandlestickData[] = [];
-        for (const c of candles) {
-          const t = utcToChartTime(Math.floor(c.t / 1000));
-          if (seen.has(t)) continue;
-          seen.add(t);
-          const o = parseFloat(c.o), h = parseFloat(c.h), l = parseFloat(c.l), cl = parseFloat(c.c);
-          if (isNaN(o) || isNaN(h) || isNaN(l) || isNaN(cl)) continue;
-          data.push({ time: t as Time, open: o, high: h, low: l, close: cl });
-        }
-        data.sort((a, b) => (a.time as number) - (b.time as number));
-        series.setData(data);
-
-        // Entry / exit price lines.
-        series.createPriceLine({
-          price: trade.entryPx,
-          color: trade.direction === 'long' ? upColor() : downColor(),
-          lineWidth: 2,
-          lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: `Entry ${trade.entryPx}`,
-        });
-        if (trade.exitPx !== null) {
-          series.createPriceLine({
-            price: trade.exitPx,
-            color: '#8a8f98',
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: `Exit ${trade.exitPx}`,
-          });
-        }
-
-        // Markers: entry, exit, and each note (yellow pin above the bar).
-        const markers: SeriesMarker<Time>[] = [];
-        markers.push({
-          time: utcToChartTime(Math.floor(trade.entryTime / 1000)) as Time,
-          position: 'belowBar',
-          color: trade.direction === 'long' ? upColor() : downColor(),
-          shape: trade.direction === 'long' ? 'arrowUp' : 'arrowDown',
-          text: trade.direction === 'long' ? 'LONG' : 'SHORT',
-        });
-        if (trade.exitTime !== null) {
-          markers.push({
-            time: utcToChartTime(Math.floor(trade.exitTime / 1000)) as Time,
-            position: 'aboveBar',
-            color: '#8a8f98',
-            shape: 'square',
-            text: 'EXIT',
-          });
-        }
-        for (const note of trade.notes) {
-          const preview = note.text.length > 30 ? note.text.slice(0, 30) + '…' : note.text;
-          markers.push({
-            time: utcToChartTime(Math.floor(note.timestamp / 1000)) as Time,
-            position: 'aboveBar',
-            color: '#f0b90b',
-            shape: 'circle',
-            text: `📝 ${preview}`,
-          });
-        }
-        markers.sort((a, b) => (a.time as number) - (b.time as number));
-        series.setMarkers(markers);
-
+        mergeCandles(bars, candles);
+        if (last >= Date.now() - barMs) newerDone = true;
+        publish();
         chart.timeScale().fitContent();
+        chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
         setLoading(false);
       })
       .catch(e => {
@@ -173,7 +248,12 @@ export function JournalChart({ trade }: Props) {
         setLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
+      prim.requestRedraw();
+      series.detachPrimitive(prim);
+    };
   }, [trade]);
 
   return (
