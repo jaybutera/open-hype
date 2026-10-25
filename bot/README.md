@@ -22,7 +22,7 @@ It carries no method.
 | `method/top-down.md` | the process: HTF bias, structure into levels, LTF entry; what each step writes down | per experiment |
 | `models/2022.md` | the one setup the bot may trade, as a checklist with definitions | per experiment |
 | `journaling.md` | what the bot writes to the run's journal before an order and at the close | rarely |
-| `profiles/*.json` | which files make up one bot; `2022-v1` is the first | per experiment |
+| `profiles/*.json` | which files make up one bot; `2022-v1` is the first, `2022-v2` adds structure alerts and intraday levels after a run that slept through 2026-07-08 | per experiment |
 
 A profile is `{ "files": [...] }`. The runner (`scripts/sim.mjs --profile NAME`)
 concatenates the files in order, replaces `{{RUN_DIR}}` with the run's output
