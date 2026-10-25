@@ -59,9 +59,13 @@ fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
 | 2026-07-08 | 2022-v2 | `2022-v2-0708` | 0 | 0 | 0 | 0 | woke four times; PDL missed by 5.4 points |
 | 2026-07-09 | baseline | `baseline-0709` | 3 longs | -59.10 | 11.47 | -70.57 | third long still open at noon, +20.10 unrealised |
 | 2026-07-09 | 2022-v1 | `2022-v1-0709` | 0 | 0 | 0 | 0 | sweep and displacement found, MSS pivot definition failed |
+| 2026-07-09 | 2022-v2 | `2022-v2-0709` | 0 | 0 | 0 | 0 | 14 wakes; two PDH short sweeps died at displacement; the OR-low sweep and 44-point run up was the model's shape and the bias rule excluded longs |
+| 2026-07-09 | 2022-v3 | `2022-v3-0709` | 0 | 0 | 0 | 0 | 23 wakes, $11.48; 1m shift swing worked (7505.8) but neither 4h-level sweep got a displacement before the wick was taken |
 
 Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
-0.00, 7 trades to 0.
+0.00, 7 trades to 0. Six model runs, zero completed checklists. The two
+07-09 journals independently name the bias rule as what kept the bot out of
+the one sweep, displace and run sequence of that morning.
 
 ## Reading a run
 
