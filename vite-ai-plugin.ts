@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { normalizePush, OverlayValidationError } from './src/services/ai/validate.ts';
 import type { ChartSnapshot, OverlaySet } from './src/services/ai/types.ts';
 import { AlertValidationError } from './src/services/ai/alerts.ts';
@@ -109,7 +109,8 @@ export function aiOverlayPlugin(): Plugin {
 
       const sim = new SimClock(process.env.SIM_LOG || null, msg => server.config.logger.info(`[hl-sim] ${msg}`));
       const engine = new AlertEngine(
-        resolve(server.config.root, SIM ? '.hl-alerts.sim.json' : '.hl-alerts.json'),
+        // A sim keeps its alerts in its run dir, so sims on different ports do not share them.
+        SIM ? resolve(dirname(process.env.SIM_LOG || '.'), '.hl-alerts.sim.json') : resolve(server.config.root, '.hl-alerts.json'),
         msg => server.config.logger.info(`[hl-ai alerts] ${msg}`),
         SIM ? { feed: 'manual', now: () => sim.cursor } : {},
       );
