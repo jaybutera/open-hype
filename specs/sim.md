@@ -11,9 +11,14 @@ still while the agent works and jumps forward while it waits.
 node scripts/sim.mjs --asset xyz:SP500 --interval 5m \
   --start "2026-07-07 09:00 ET" --end "2026-07-07 16:00 ET" \
   --prompt "Trade the SP500 session on the paper account." \
-  [--model claude-fable-5-1] [--port 3001] [--out DIR] \
+  [--profile baseline] [--model claude-fable-5-1] [--port 3001] [--out DIR] \
   [--memory-seed DIR] [--no-faketime] [--config params.json]
 ```
+
+`--profile` names `bot/profiles/<name>.json`; its files are concatenated and
+appended to the system prompt. The `--prompt` line carries only the asset, the
+account and the window; the method is in `bot/` (see `bot/README.md`). Auto
+memory starts empty unless `--memory-seed` is given.
 
 `--config` reads the same keys from a JSON file. Output goes to `--out`
 (default `/tmp/hl-sim/<date>-<id>`):
@@ -21,10 +26,12 @@ node scripts/sim.mjs --asset xyz:SP500 --interval 5m \
 | file | contents |
 |---|---|
 | `sim.jsonl` | clock events: start, idle, wake, alert-fired, trade, end |
+| `instructions.md` | the assembled bot instructions the agent was given |
+| `journal.md` | the agent's own record: levels, setup checks, orders, close review |
 | `claude.jsonl` | the session transcript (stream-json) |
 | `shots/*.png` | the chart at start, at each wake, at the end |
 | `paper-accounts.json` | the page's paper account: fills, balance |
-| `summary.json` | params, exit code, cost, final position |
+| `summary.json` | params, profile and instructions hash, exit code, cost, final position |
 | `memory/` | the agent's auto memory for this run |
 
 Box needs a Claude login usable without a terminal: `claude setup-token`, with
@@ -39,6 +46,7 @@ sim.mjs
  ├─ headless Chrome (puppeteer-core)    the page: replay + paper engine
  └─ faketime -f @<start> claude -p ...  TZ=America/New_York
       --settings <out>/settings.json    hooks, autoMemoryDirectory=<out>/memory
+      --append-system-prompt <bot/ files of the profile>
       --mcp-config <out>/mcp.json --strict-mcp-config   hl-chart -> :3001
       --disallowedTools CronCreate CronDelete CronList ScheduleWakeup
 ```

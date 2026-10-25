@@ -6,14 +6,16 @@
  *   node scripts/sim.mjs --asset xyz:SP500 --interval 5m \
  *     --start "2026-07-07 09:00 ET" --end "2026-07-07 16:00 ET" \
  *     --prompt "Trade the SP500 open." [--model claude-fable-5-1] [--port 3001]
- *     [--memory-seed DIR] [--shift today|none|YYYY-MM-DD] [--no-faketime] [--out DIR]
+ *     [--profile baseline] [--memory-seed DIR] [--shift today|none|YYYY-MM-DD]
+ *     [--no-faketime] [--out DIR]
  *     [--ref origin/master]   (the commit the agent's checkout is made from)
  *
  * Starts a SIM=1 dev server on --port, opens the page in headless Chrome,
  * enters replay at --start, then runs `claude -p` with the hl-chart MCP
  * pointed at that server, hooks that tell the server when the agent's turn
- * ends, cron tools off, and auto memory in the run directory (seeded from
- * --memory-seed).
+ * ends, cron tools off, the bot's instructions from bot/profiles/<profile>.json
+ * appended to the system prompt (see bot/README.md), and auto memory in the run
+ * directory (empty unless --memory-seed).
  *
  * --shift (default today) moves the recording so the --start day is served
  * as that date, keeping the ET time of day: Claude Code states the real date
@@ -25,7 +27,7 @@
  */
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +43,7 @@ const run = (cmd, argv) => new Promise((ok, fail) => {
 /* --------------------------------------------------------------- args --- */
 
 function parseArgs(argv) {
-  const out = { interval: '5m', model: 'claude-fable-5-1', port: 3001, faketime: true, shift: 'today' };
+  const out = { interval: '5m', model: 'claude-fable-5-1', port: 3001, faketime: true, shift: 'today', profile: 'baseline' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--no-faketime') { out.faketime = false; continue; }
@@ -123,8 +125,19 @@ const BASE = `http://127.0.0.1:${args.port}`;
 mkdirSync(join(out, 'shots'), { recursive: true });
 mkdirSync(join(out, 'memory'), { recursive: true });
 
-const seed = args.memorySeed ?? join(homedir(), '.config/hl-sim/memory-seed');
-if (existsSync(seed)) cpSync(seed, join(out, 'memory'), { recursive: true });
+if (args.memorySeed) cpSync(args.memorySeed, join(out, 'memory'), { recursive: true });
+
+// The bot's instructions: the profile's files from bot/, in order, with the
+// run directory filled in. Saved beside the transcript and hashed into the
+// summary so runs can be compared by what the agent was told.
+const profileFile = join(REPO, 'bot/profiles', `${args.profile}.json`);
+if (!existsSync(profileFile)) throw new Error(`no bot profile ${args.profile} (expected ${profileFile})`);
+const instructions = JSON.parse(readFileSync(profileFile, 'utf8')).files
+  .map(f => readFileSync(join(REPO, 'bot', f), 'utf8').trimEnd())
+  .join('\n\n')
+  .replaceAll('{{RUN_DIR}}', out);
+const instructionsHash = createHash('sha256').update(instructions).digest('hex');
+writeFileSync(join(out, 'instructions.md'), instructions + '\n');
 
 const log = msg => console.log(`[sim ${new Date().toISOString().slice(11, 19)}] ${msg}`);
 const children = [];
@@ -187,7 +200,7 @@ await page.screenshot({ path: join(out, 'shots/000-start.png') });
 const agentDir = join(homedir(), '.cache/hlw', runId, 'hl-frontend');
 await run('git', ['-C', REPO, 'fetch', '-q', 'origin']);
 await run('git', ['-C', REPO, 'worktree', 'add', '-q', '--detach', agentDir, args.ref ?? 'origin/master']);
-for (const f of ['scripts/sim.mjs', 'sim-clock.ts', 'specs/sim.md']) rmSync(join(agentDir, f), { force: true });
+for (const f of ['scripts/sim.mjs', 'sim-clock.ts', 'specs/sim.md', 'bot']) rmSync(join(agentDir, f), { recursive: true, force: true });
 if (existsSync(join(REPO, '.env'))) cpSync(join(REPO, '.env'), join(agentDir, '.env'));
 symlinkSync(join(REPO, 'node_modules'), join(agentDir, 'node_modules'));
 
@@ -212,6 +225,7 @@ writeFileSync(join(out, 'mcp.json'), JSON.stringify({
 
 const claudeArgs = [
   '-p', args.prompt,
+  '--append-system-prompt', instructions,
   '--model', args.model,
   '--settings', join(out, 'settings.json'),
   '--mcp-config', join(out, 'mcp.json'), '--strict-mcp-config',
@@ -239,7 +253,7 @@ const env = { ...process.env, TZ: 'America/New_York' };
 if (args.faketime) env.CLAUDE_CODE_SHELL_PREFIX = prefix;
 const tokenFile = join(homedir(), '.config/hl-sim/token');
 if (!env.CLAUDE_CODE_OAUTH_TOKEN && existsSync(tokenFile)) env.CLAUDE_CODE_OAUTH_TOKEN = readFileSync(tokenFile, 'utf8').trim();
-log(`claude ${args.model}`);
+log(`claude ${args.model}, profile ${args.profile} (${instructionsHash.slice(0, 12)})`);
 const claude = spawn(claudeBin, claudeArgs, { cwd: agentDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
 children.push(claude);
 const transcript = [];
@@ -296,6 +310,7 @@ const result = transcript.map(l => { try { return JSON.parse(l); } catch { retur
 writeFileSync(join(out, 'paper-accounts.json'), paper ?? 'null');
 writeFileSync(join(out, 'summary.json'), JSON.stringify({
   runId, params: { ...args, start, end, shiftMs: shift, recordedStart: recStart }, claudeExit: exitCode,
+  profile: args.profile, instructionsHash,
   cost: result?.total_cost_usd ?? null,
   end: { cursor: view?.takenAt ?? null, mid: view?.mid ?? null, position: view?.position ?? null, orders: view?.orders ?? [] },
 }, null, 2));
