@@ -157,7 +157,7 @@ function refreshAccount() {
 }
 
 /** Positions in the account store must belong to the account the action targets; load them if not. */
-async function ensureSynced() {
+export async function ensureSynced() {
   const want = selectActiveAccount(useWalletStore.getState());
   const store = useLiveAccountStore.getState();
   if (want && (store.user !== want || store.lastSync == null)) await store.refresh(want);

@@ -13,10 +13,11 @@ import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useReplayStore } from '../../store/useReplayStore.ts';
 import {
-  prepareOrder, submitPrepared, placeLivePositionTrigger, closeLivePosition, cancelLiveOrders, resolveAsset,
+  prepareOrder, submitPrepared, placeLivePositionTrigger, closeLivePosition, cancelLiveOrders, resolveAsset, ensureSynced,
   type PreparedOrder, type LiveResult,
 } from '../hl/liveTrader.ts';
 import { formatSize } from '../hl/format.ts';
+import { fitLiveLeverage } from '../hl/leverageFit.ts';
 import { getPaperEngine, liveTpsl } from './link.ts';
 import type { OrderAction, TpSlAction, TradeAction, TradeProposal, TradeResult, OrderId } from './trades.ts';
 import type { Side } from '../../types/order.ts';
@@ -126,9 +127,25 @@ export async function previewTrade(t: TradeProposal): Promise<TradePreview> {
       if (replaced) lines.push(`Then cancels ${replaced.label}`);
       if (a.riskUsd !== undefined) lines.push(`Sized for $${a.riskUsd} risk to SL ${a.sl}`);
       if (t.mode === 'live') {
+        let leverage = a.leverage;
+        if (a.riskUsd !== undefined && !a.reduceOnly) {
+          // A tight stop sized by risk can need more margin than the account has at
+          // the current leverage; raise it to fit like the order panel does.
+          await ensureSynced();
+          const pos = useLiveAccountStore.getState().positions.find(p => p.coin === a.coin);
+          const base = a.leverage ?? pos?.leverage.value ?? useSettingsStore.getState().leverage;
+          const fit = fitLiveLeverage({
+            coin: a.coin, side: a.side, size, price: refPx, leverage: base, cap: useMarketStore.getState().maxLeverageFor(a.coin),
+          });
+          if (!fit.ok) throw new Error(fit.error);
+          if (fit.bumped) {
+            leverage = fit.leverage;
+            lines.push(`Leverage raised from ${base}x to ${fit.leverage}x so $${fit.notional.toFixed(0)} fits $${fit.available.toFixed(2)} free margin`);
+          }
+        }
         const prepared = await prepareOrder({
           coin: a.coin, side: a.side, size, kind: a.orderType, price: a.price, tif: a.tif,
-          reduceOnly: a.reduceOnly, tp: a.tp, sl: a.sl, leverage: a.leverage,
+          reduceOnly: a.reduceOnly, tp: a.tp, sl: a.sl, leverage,
         });
         return { lines, prepared };
       }

@@ -24,8 +24,8 @@ function proposal(action: TradeAction, over: Partial<TradeProposal> = {}): Trade
 }
 
 /** Hyperliquid stub plus the dev server's /api/ai/trades routes; records what the page posts there. */
-function stubNet(exchange?: (b: any) => unknown) {
-  const net = stubHyperliquidFetch({ exchange });
+function stubNet(exchange?: (b: any) => unknown, info?: (b: any) => unknown) {
+  const net = stubHyperliquidFetch({ exchange, info });
   const hl = globalThis.fetch as unknown as (url: string, init?: { body?: string }) => Promise<Response>;
   const ai: { url: string; body: any }[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { body?: string }) => {
@@ -204,6 +204,39 @@ describe('previewTrade', () => {
 
   it('describes a close of the open position', async () => {
     expect((await previewTrade(proposal({ kind: 'close', coin: 'BTC' }))).lines).toEqual(['Market close BTC long 0.1 (mid 60000)']);
+  });
+});
+
+describe('executeTrade in live with riskUsd', () => {
+  it('raises leverage so a tight stop fits the free margin, then sends the order', async () => {
+    const net = stubNet(
+      b => (b.action.type === 'order'
+        ? { status: 'ok', response: { type: 'order', data: { statuses: [{ resting: { oid: 5 } }] } } }
+        : { status: 'ok', response: { type: 'default' } }),
+      b => {
+        if (b?.type === 'userAbstraction') return 'unifiedAccount';
+        if (b?.type === 'spotClearinghouseState') {
+          return { balances: [{ coin: 'USDC', token: 0, total: '1682.42', hold: '0' }], tokenToAvailableAfterMaintenance: [[0, '1682.42']] };
+        }
+        return undefined;
+      },
+    );
+    useLiveAccountStore.getState().reset();
+    useMarketStore.setState({ allMids: { BTC: '80922' } });
+    useSettingsStore.setState({ mode: 'live', leverage: 10 });
+    act(() => useWalletStore.getState().connectApiKey(new Wallet('0x' + '88'.repeat(32)).privateKey, new Wallet('0x' + 'b1'.repeat(32)).address));
+    const t = proposal({ kind: 'order', coin: 'BTC', side: 'buy', orderType: 'limit', price: 80922, riskUsd: 20, sl: 80873, tp: 81100 }, { mode: 'live' });
+
+    const preview = await previewTrade(t);
+    expect(preview.lines.some(l => /Leverage raised from 10x to 2[01]x/.test(l))).toBe(true);
+    expect(preview.prepared?.leverage).toBeGreaterThanOrEqual(20);
+    expect(net.exchangeCalls()).toHaveLength(0);
+
+    expect((await executeTrade(t)).ok).toBe(true);
+    const calls = net.exchangeCalls();
+    expect(calls.map(c => c.action.type)).toEqual(['updateLeverage', 'order']);
+    expect(calls[0].action.leverage).toBe(preview.prepared?.leverage);
+    act(() => useWalletStore.getState().disconnect());
   });
 });
 

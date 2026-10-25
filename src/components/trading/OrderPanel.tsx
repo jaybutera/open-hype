@@ -6,7 +6,8 @@ import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { OrderType, Side } from '../../types/order.ts';
 import { useWalletStore } from '../../store/useWalletStore.ts';
-import { prepareOrder, submitPrepared, type LiveOrderInput, type PreparedOrder } from '../../services/hl/liveTrader.ts';
+import { prepareOrder, submitPrepared, ensureSynced, type LiveOrderInput, type PreparedOrder } from '../../services/hl/liveTrader.ts';
+import { fitLeverage, fitLiveLeverage } from '../../services/hl/leverageFit.ts';
 import { LiveOrderConfirm } from './LiveOrderConfirm.tsx';
 import { AiOverlayPanel } from './AiOverlayPanel.tsx';
 import { AiTradePanel } from './AiTradePanel.tsx';
@@ -113,7 +114,15 @@ export function OrderPanel({ engine }: Props) {
     }
     setLiveBusy(true);
     try {
-      const r = await submitPrepared(await prepareOrder(input));
+      // Same fit as paper (see handleExecuteSetup), against the live account's free margin.
+      await ensureSynced();
+      const fit = fitLiveLeverage({
+        coin: input.coin, side: input.side, size: Number(input.size), price: Number(input.price),
+        leverage: input.leverage ?? leverage, cap: maxLeverageFor(input.coin),
+      });
+      if (!fit.ok) { setError(fit.error); return; }
+      if (fit.bumped) setLeverage(fit.leverage);
+      const r = await submitPrepared(await prepareOrder({ ...input, leverage: fit.leverage }));
       if (r.ok) { removeSetup(setupId); setSuccess(r.message); } else setError(r.message);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -155,6 +164,11 @@ export function OrderPanel({ engine }: Props) {
     const closeSide: Side = setup.side === 'buy' ? 'sell' : 'buy';
     const setupAsset = setup.asset ?? currentAsset;
 
+    // A risk-capped position with a tight stop can imply a large notional. The
+    // loss is still bounded at `risk`, but margin = notional / leverage may
+    // exceed available balance at the current leverage. Auto-bump leverage
+    // toward the asset's cap so the trade fits rather than failing outright
+    // (live: in executeLive, against the exchange account's free margin).
     if (isLive) {
       void executeLive({
         coin: setupAsset, side: setup.side, size: assetSize, kind: 'limit', price: setup.entryPrice,
@@ -163,28 +177,17 @@ export function OrderPanel({ engine }: Props) {
       return;
     }
 
-    // A risk-capped position with a tight stop can imply a large notional. The
-    // loss is still bounded at `risk`, but margin = notional / leverage may
-    // exceed available balance at the current leverage. Auto-bump leverage
-    // toward the asset's cap so the trade fits rather than failing outright.
-    const notional = assetSize * setup.entryPrice;
-    const available = parseFloat(engine.getAvailableBalance()) || 0;
-    const cap = maxLeverageFor(setupAsset);
-    if (available > 0 && notional / leverage > available) {
-      const neededLev = Math.ceil(notional / available);
-      if (neededLev > cap) {
-        setError(
-          `Position too large: notional $${notional.toFixed(0)} needs ${neededLev}x ` +
-          `but ${setupAsset} caps at ${cap}x (margin $${(notional / cap).toFixed(2)} > available $${available.toFixed(2)}). ` +
-          `Widen the stop or lower risk.`,
-        );
-        return;
-      }
-      const bumped = Math.min(cap, neededLev);
-      if (bumped !== leverage) {
-        setLeverage(bumped);
-        engine.setLeverage(bumped);
-      }
+    const fit = fitLeverage({
+      coin: setupAsset, notional: assetSize * setup.entryPrice,
+      available: parseFloat(engine.getAvailableBalance()) || 0, leverage, cap: maxLeverageFor(setupAsset),
+    });
+    if (!fit.ok) {
+      setError(fit.error);
+      return;
+    }
+    if (fit.bumped) {
+      setLeverage(fit.leverage);
+      engine.setLeverage(fit.leverage);
     }
 
     const errors: string[] = [];
