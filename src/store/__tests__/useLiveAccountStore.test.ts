@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useLiveAccountStore, mergeFills, type LiveFill } from '../useLiveAccountStore.ts';
-import { clearSpotPriceCache } from '../../services/hl/balances.ts';
+import { clearAbstractionCache, clearSpotPriceCache } from '../../services/hl/balances.ts';
 import { stubHyperliquidFetch } from '../../test/hlMocks.ts';
 
 const USER = '0x338DAe824E0d0B3f5565597BBe2d02B4140B186A';
@@ -27,6 +27,7 @@ const rawFill = (tid: number, time: number, extra: object = {}) => ({
 beforeEach(() => {
   useLiveAccountStore.getState().reset();
   clearSpotPriceCache();
+  clearAbstractionCache();
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -59,6 +60,61 @@ describe('account value', () => {
     expect(s.accountValue).toBeCloseTo(236.783282 + 50 + 12.342786, 6);
     expect(s.marginUsed).toBe(244);
     expect(s.perps.map(p => p.dex)).toEqual(['', 'xyz']);
+  });
+
+  // Live shape of sub-account daybias (unified) holding a BTC long on 2026-10-24: spot USDC is the
+  // same collateral the perp accountValue reports, so adding them would show twice the equity.
+  const unifiedOpen = (abstraction: unknown) => stubHyperliquidFetch({
+    info: b => (b.type === 'userAbstraction' ? abstraction
+      : b.type === 'clearinghouseState' ? (b.dex ? idlePerp : {
+        marginSummary: { accountValue: '1682.424307', totalNtlPos: '16840.88553', totalRawUsd: '-15158.461223', totalMarginUsed: '1684.088553' },
+        withdrawable: '0.0',
+        assetPositions: [{ type: 'oneWay', position: {
+          coin: 'BTC', szi: '0.20811', leverage: { type: 'cross', value: 10 }, entryPx: '80914.0', positionValue: '16840.88553',
+          unrealizedPnl: '1.87299', returnOnEquity: '0.0011122921', liquidationPx: '73760.7057757308', marginUsed: '1684.088553',
+        } }],
+      })
+      : b.type === 'spotClearinghouseState' ? {
+        balances: [
+          { coin: 'USDC', token: 0, total: '1682.424307', hold: '1682.424307', entryNtl: '0.0' },
+          { coin: 'USDE', token: 235, total: '0.0', hold: '0.0', entryNtl: '0.0' },
+        ],
+        tokenToAvailableAfterMaintenance: [[0, '1471.913238']],
+      }
+      : b.type === 'userFills' ? [] : undefined),
+  });
+
+  it('does not add perp equity to spot on a unified account with an open position', async () => {
+    unifiedOpen('unifiedAccount');
+    await useLiveAccountStore.getState().refresh(USER);
+    const s = useLiveAccountStore.getState();
+    expect(s.syncError).toBeNull();
+    expect(s.unified).toBe(true);
+    expect(s.accountValue).toBeCloseTo(1682.424307, 6);
+    expect(s.perpValue).toBeCloseTo(1682.424307, 6);
+    expect(s.spotValue).toBeCloseTo(1682.424307, 6);
+    expect(s.withdrawable).toBeCloseTo(1471.913238, 6);
+    expect(s.positions.map(p => p.coin)).toEqual(['BTC']);
+  });
+
+  it('treats portfolio margin like unified', async () => {
+    unifiedOpen('portfolioMargin');
+    await useLiveAccountStore.getState().refresh(USER);
+    expect(useLiveAccountStore.getState().accountValue).toBeCloseTo(1682.424307, 6);
+  });
+
+  it('falls back to the unified-only spot field when the mode lookup fails', async () => {
+    unifiedOpen({});
+    await useLiveAccountStore.getState().refresh(USER);
+    expect(useLiveAccountStore.getState().accountValue).toBeCloseTo(1682.424307, 6);
+  });
+
+  it('asks for the account mode once per user, not every poll', async () => {
+    const net = unifiedOpen('unifiedAccount');
+    await useLiveAccountStore.getState().refresh(USER);
+    await useLiveAccountStore.getState().refresh(USER);
+    expect(net.calls.filter(c => c.body?.type === 'userAbstraction')).toHaveLength(1);
+    expect(useLiveAccountStore.getState().accountValue).toBeCloseTo(1682.424307, 6);
   });
 
   it('prices non-USDC spot tokens from their USDC pair mid', async () => {

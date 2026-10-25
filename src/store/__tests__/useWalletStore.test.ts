@@ -4,6 +4,7 @@ import { Wallet, TypedDataEncoder, recoverAddress, Signature } from 'ethers';
 import { useWalletStore, normalizePrivateKey, AGENT_NAME } from '../useWalletStore.ts';
 import { APPROVE_AGENT_TYPES, userSignedDomain } from '../../services/hl/signing.ts';
 import { MockWalletProvider, stubHyperliquidFetch } from '../../test/hlMocks.ts';
+import { clearAbstractionCache } from '../../services/hl/balances.ts';
 
 const user = new Wallet('0x' + '11'.repeat(32));
 const user2 = new Wallet('0x' + '22'.repeat(32));
@@ -12,6 +13,7 @@ let provider: MockWalletProvider;
 const flush = () => new Promise(r => setTimeout(r, 0));
 
 beforeEach(() => {
+  clearAbstractionCache();
   localStorage.clear();
   provider = new MockWalletProvider([user]);
   (window as any).ethereum = provider;
@@ -303,6 +305,31 @@ describe('sub-accounts', () => {
     const s = useWalletStore.getState();
     expect(s.masterValue).toBeCloseTo(260.896634, 6);
     expect(s.subAccounts[0].accountValue).toBeCloseTo(1721.084653, 6);
+  });
+
+  it('unified accounts with an open position are not counted twice', async () => {
+    stubHyperliquidFetch({
+      // subAccounts rows of a unified sub with a BTC long (live, 2026-10-24): the embedded spotState
+      // reports USDC 0 and perp accountValue holds the equity, so the row adds up to 1682.42.
+      info: b => (b.type === 'subAccounts' ? [{
+        name: 'daybias', subAccountUser: subA.toLowerCase(), master: user.address,
+        clearinghouseState: { marginSummary: { accountValue: '1682.424307' } },
+        spotState: { balances: [{ coin: 'USDC', token: 0, total: '0.0', hold: '0.0' }] },
+      }]
+        : b.type === 'userAbstraction' ? 'unifiedAccount'
+        // The master's own spotClearinghouseState already includes its perp equity.
+        : b.type === 'clearinghouseState' ? { marginSummary: { accountValue: '500.25', totalMarginUsed: '480' }, withdrawable: '0', assetPositions: [] }
+        : b.type === 'spotClearinghouseState' ? {
+          balances: [{ coin: 'USDC', token: 0, total: '500.25', hold: '500.25' }],
+          tokenToAvailableAfterMaintenance: [[0, '420.0']],
+        }
+        : undefined),
+    });
+    await useWalletStore.getState().connectBrowser('injected');
+    await flush();
+    const s = useWalletStore.getState();
+    expect(s.masterValue).toBeCloseTo(500.25, 6);
+    expect(s.subAccounts[0].accountValue).toBeCloseTo(1682.424307, 6);
   });
 
   it('ignores addresses that are not sub-accounts of this master', async () => {

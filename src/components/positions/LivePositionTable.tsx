@@ -151,7 +151,7 @@ export function LivePositionTable() {
   const address = useWalletStore(s => s.address);
   const tradingReady = useWalletStore(s => s.tradingStatus === 'ready');
   const {
-    positions, openOrders, fills, fillsLoaded, accountValue, perpValue, spotValue, withdrawable, marginUsed, lastSync, syncError,
+    positions, openOrders, fills, fillsLoaded, accountValue, perpValue, spotValue, unified, withdrawable, marginUsed, lastSync, syncError,
   } = useLiveAccountStore();
   const [tab, setTab] = useState<Tab>('positions');
   const allMids = useMarketStore(s => s.allMids);
@@ -191,7 +191,9 @@ export function LivePositionTable() {
       <div style={{ position: 'sticky', top: 0, zIndex: 1, background: '#0d1117' }}>
       <div style={{ display: 'flex', gap: 24, padding: '8px 16px', borderBottom: '1px solid #1a1f2e', color: '#8a8f98', fontSize: 12, alignItems: 'center' }}>
         <span>Account value: <b data-testid="live-account-value" style={{ color: '#e1e4e8' }}>${fmt(accountValue)}</b></span>
-        <span>Perps: <b style={{ color: '#e1e4e8' }}>${fmt(perpValue)}</b></span>
+        <span title={unified ? 'Unified account: perp equity is part of spot USDC, so it is not added to the account value' : undefined}>
+          Perps{unified ? ' (in spot)' : ''}: <b style={{ color: '#e1e4e8' }}>${fmt(perpValue)}</b>
+        </span>
         <span>Spot: <b style={{ color: '#e1e4e8' }}>${fmt(spotValue)}</b></span>
         <span>Available: <b style={{ color: '#e1e4e8' }}>${fmt(withdrawable)}</b></span>
         <span>Margin used: <b style={{ color: '#e1e4e8' }}>${fmt(marginUsed)}</b></span>

@@ -71,3 +71,37 @@ export async function valueSpot(balances: RawSpotBalance[]): Promise<number> {
   const prices = needsSpotPrices(balances) ? await loadSpotPrices().catch(() => undefined) : undefined;
   return spotUsdValue(balances, prices);
 }
+
+/** `userAbstraction` answer: "default"/"disabled" standard, "unifiedAccount", "portfolioMargin". */
+export type AccountAbstraction = string;
+const ABSTRACTION_TTL_MS = 10 * 60_000;
+const abstractionCache = new Map<string, { at: number; value: AccountAbstraction }>();
+
+/**
+ * Account mode of a user, cached ten minutes so balance polls do not add a request each tick.
+ * Null when the lookup fails; that result is not cached.
+ */
+export async function loadAbstraction(user: string): Promise<AccountAbstraction | null> {
+  const key = user.toLowerCase();
+  const hit = abstractionCache.get(key);
+  if (hit && Date.now() - hit.at < ABSTRACTION_TTL_MS) return hit.value;
+  try {
+    const value = await postInfo<unknown>({ type: 'userAbstraction', user });
+    if (typeof value !== 'string') return null;
+    abstractionCache.set(key, { at: Date.now(), value });
+    return value;
+  } catch { return null; }
+}
+
+/** Test hook: forget cached account modes. */
+export function clearAbstractionCache(): void { abstractionCache.clear(); }
+
+/**
+ * Unified and portfolio-margin accounts post perp margin from spot: spotClearinghouseState
+ * balances already include perp equity on every dex, so perp accountValue must not be added on top.
+ * When the mode lookup failed, the unified-only `tokenToAvailableAfterMaintenance` field decides.
+ */
+export function spotCarriesPerpEquity(abstraction: AccountAbstraction | null, spot?: RawSpotState | null): boolean {
+  if (abstraction == null) return !!spot?.tokenToAvailableAfterMaintenance;
+  return abstraction === 'unifiedAccount' || abstraction === 'portfolioMargin';
+}

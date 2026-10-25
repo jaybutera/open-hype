@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { postInfo } from '../services/api/client.ts';
 import type { Side } from '../types/order.ts';
 import {
-  loadSpotPrices, needsSpotPrices, spotBalanceUsd, spotUsdcAvailable, type RawSpotState,
+  loadAbstraction, loadSpotPrices, needsSpotPrices, spotBalanceUsd, spotCarriesPerpEquity, spotUsdcAvailable,
+  type RawSpotState,
 } from '../services/hl/balances.ts';
 
 export interface LivePosition {
@@ -80,11 +81,16 @@ const MAX_FILLS = 2000;
 
 interface LiveAccountStore {
   user: string | null;
-  /** Perps across all dexes plus spot, in USD. Unified accounts keep idle USDC in spot. */
+  /**
+   * Equity in USD. Standard accounts: perps across all dexes plus spot. Unified and portfolio-margin
+   * accounts: spot alone, since their spot USDC is the collateral perp accountValue also reports.
+   */
   accountValue: number;
   perpValue: number;
   spotValue: number;
-  /** Perp withdrawable plus spot USDC that is free to move. */
+  /** Spot balances include perp equity, so perpValue and spotValue overlap rather than add up. */
+  unified: boolean;
+  /** Free USDC: perp withdrawable plus free spot USDC, or spot available after maintenance when unified. */
   withdrawable: number;
   marginUsed: number;
   perps: LivePerpSummary[];
@@ -101,7 +107,7 @@ interface LiveAccountStore {
 }
 
 const empty = {
-  user: null, accountValue: 0, perpValue: 0, spotValue: 0, withdrawable: 0, marginUsed: 0,
+  user: null, accountValue: 0, perpValue: 0, spotValue: 0, unified: false, withdrawable: 0, marginUsed: 0,
   perps: [], spotBalances: [], positions: [], openOrders: [], fills: [], fillsLoaded: false,
   lastSync: null, syncError: null,
 };
@@ -157,7 +163,7 @@ export const useLiveAccountStore = create<LiveAccountStore>((set, get) => ({
       const fillsReq = fillsLoaded
         ? { type: 'userFillsByTime', user, startTime: knownFills[0]?.time ?? 0, aggregateByTime: true }
         : { type: 'userFills', user, aggregateByTime: true };
-      const [states, orders, spot, rawFills] = await Promise.all([
+      const [states, orders, spot, rawFills, abstraction] = await Promise.all([
         Promise.all(LIVE_DEXES.map(dex =>
           postInfo<RawClearinghouse>({ type: 'clearinghouseState', user, ...withDex(dex) }).catch(e => (dex ? null : Promise.reject(e))))),
         Promise.all(LIVE_DEXES.map(dex =>
@@ -165,6 +171,7 @@ export const useLiveAccountStore = create<LiveAccountStore>((set, get) => ({
         postInfo<RawSpotState>({ type: 'spotClearinghouseState', user }),
         // History is secondary: a failed fetch keeps the old list instead of failing the sync.
         postInfo<RawFill[]>(fillsReq).catch(() => null),
+        loadAbstraction(user),
       ]);
       const balances = Array.isArray(spot?.balances) ? spot.balances : [];
       const prices = needsSpotPrices(balances) ? await loadSpotPrices().catch(() => undefined) : undefined;
@@ -189,13 +196,16 @@ export const useLiveAccountStore = create<LiveAccountStore>((set, get) => ({
         }));
       const perpValue = perps.reduce((a, p) => a + p.accountValue, 0);
       const spotValue = spotBalances.reduce((a, b) => a + b.usdValue, 0);
+      const unified = spotCarriesPerpEquity(abstraction, spot);
+      const spotFree = spot ? spotUsdcAvailable({ ...spot, balances }) : 0;
       set({
         user,
-        accountValue: perpValue + spotValue,
+        accountValue: unified ? spotValue : perpValue + spotValue,
         perpValue,
         spotValue,
+        unified,
         marginUsed: perps.reduce((a, p) => a + p.marginUsed, 0),
-        withdrawable: (perps[0]?.withdrawable ?? 0) + (spot ? spotUsdcAvailable({ ...spot, balances }) : 0),
+        withdrawable: unified ? spotFree : (perps[0]?.withdrawable ?? 0) + spotFree,
         perps,
         spotBalances,
         positions: valid.flatMap(s => s.assetPositions.map(ap => toPosition(ap.position))).filter(p => p.szi !== 0),

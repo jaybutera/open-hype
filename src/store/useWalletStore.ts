@@ -3,7 +3,7 @@ import { Wallet, getAddress, isAddress } from 'ethers';
 import { API_BASE } from '../config/constants.ts';
 import { IS_MAINNET, NETWORK } from '../services/hl/network.ts';
 import { postInfo } from '../services/api/client.ts';
-import { valueSpot, type RawSpotBalance } from '../services/hl/balances.ts';
+import { loadAbstraction, spotCarriesPerpEquity, valueSpot, type RawSpotBalance, type RawSpotState } from '../services/hl/balances.ts';
 import { approveAgentTypedData, recoverApproveAgentSigner, splitSignature } from '../services/hl/signing.ts';
 import { submitApproveAgent, ExchangeError } from '../services/hl/exchange.ts';
 import {
@@ -39,11 +39,20 @@ interface RawSubAccount {
   spotState?: { balances?: RawSpotBalance[] };
 }
 
-/** Perp account value plus spot holdings; unified accounts keep idle USDC in spot. */
-async function totalValue(perp: RawSubAccount['clearinghouseState'] | null, spot: RawSpotBalance[] | undefined): Promise<number | null> {
+/**
+ * Perp account value plus spot holdings; unified accounts keep idle USDC in spot.
+ * `spotHasPerpEquity`: the spot balances come from spotClearinghouseState of a unified or
+ * portfolio-margin account, where they already include perp equity, so perps are not added.
+ * The `spotState` embedded in `subAccounts` rows does not: for a unified sub with an open
+ * position it reports USDC 0 while perp accountValue holds the equity, so those rows add up.
+ */
+async function totalValue(
+  perp: RawSubAccount['clearinghouseState'] | null, spot: RawSpotBalance[] | undefined, spotHasPerpEquity = false,
+): Promise<number | null> {
   const pv = perp?.marginSummary?.accountValue;
   if (pv == null && !spot) return null;
-  return parseFloat(pv ?? '0') + (spot ? await valueSpot(spot) : 0);
+  const sv = spot ? await valueSpot(spot) : 0;
+  return spotHasPerpEquity && spot ? sv : parseFloat(pv ?? '0') + sv;
 }
 
 function loadSelectedSub(master: string): string | null {
@@ -289,17 +298,19 @@ export const useWalletStore = create<WalletStore>((set, get) => {
       if (!master) return;
       let raw: RawSubAccount[] | null;
       let masterState: RawSubAccount['clearinghouseState'] | null;
-      let masterSpot: RawSubAccount['spotState'] | null;
+      let masterSpot: RawSpotState | null;
+      let masterMode: string | null;
       try {
-        [raw, masterState, masterSpot] = await Promise.all([
+        [raw, masterState, masterSpot, masterMode] = await Promise.all([
           postInfo<RawSubAccount[] | null>({ type: 'subAccounts', user: master }),
           postInfo<RawSubAccount['clearinghouseState']>({ type: 'clearinghouseState', user: master }).catch(() => null),
-          postInfo<RawSubAccount['spotState']>({ type: 'spotClearinghouseState', user: master }).catch(() => null),
+          postInfo<RawSpotState>({ type: 'spotClearinghouseState', user: master }).catch(() => null),
+          loadAbstraction(master),
         ]);
       } catch { return; }
       const subs = Array.isArray(raw) ? raw : [];
       const [masterValue, ...subValues] = await Promise.all([
-        totalValue(masterState, masterSpot?.balances),
+        totalValue(masterState, masterSpot?.balances, spotCarriesPerpEquity(masterMode, masterSpot)),
         ...subs.map(r => totalValue(r.clearinghouseState ?? null, r.spotState?.balances)),
       ]);
       if (get().address !== master) return;
