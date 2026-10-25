@@ -22,7 +22,7 @@ It carries no method.
 | `method/top-down.md` | the process: HTF bias, structure into levels, LTF entry; what each step writes down | per experiment |
 | `models/2022.md` | the one setup the bot may trade, as a checklist with definitions | per experiment |
 | `journaling.md` | what the bot writes to the run's journal before an order and at the close | rarely |
-| `profiles/*.json` | which files make up one bot; `baseline` is the reference | per experiment |
+| `profiles/*.json` | which files make up one bot; `2022-v1` is the first | per experiment |
 
 A profile is `{ "files": [...] }`. The runner (`scripts/sim.mjs --profile NAME`)
 concatenates the files in order, replaces `{{RUN_DIR}}` with the run's output
@@ -30,10 +30,25 @@ directory, and passes the text with `--append-system-prompt`. `summary.json`
 records the profile name and the sha256 of the assembled text, so two runs are
 comparable only when the hashes match.
 
-To try a change, copy `profiles/baseline.json` to `profiles/<name>.json`, point
+To try a change, copy `profiles/2022-v1.json` to `profiles/<name>.json`, point
 it at a variant file (for example `models/2022-ob-only.md`), and run the same
 day set with both profiles. The variant file lives next to the original; do not
-edit the baseline file in place while it is still the reference.
+edit a file in place while a profile still under comparison points at it.
+
+## Baseline
+
+The baseline is the bot before `bot/` existed: the one-line prompt "Trade
+SP500 on the paper account this morning. Watch the open and take a setup if
+there is one; set alerts and wait for them instead of polling." with the live
+memory dir as the seed and no model. Two runs on the box, both xyz:SP500 5m:
+
+| run | recording | trades | gross | fees | net |
+|---|---|---|---|---|---|
+| `/tmp/hl-sim/fable-run1` | 2026-07-07 09:05 to 10:40 ET | 2 shorts | +25.89 | 35.98 | -10.10 |
+| `/tmp/hl-sim/fable-run2` | 2026-07-08 09:05 to 11:10 ET | 1 long, 1 short | +64.40 | 71.47 | -7.07 |
+
+Profiles are measured against these days first. To rerun the baseline itself,
+use `--profile none` with `--memory-seed` pointing at a copy of the memory dir.
 
 ## Reading a run
 

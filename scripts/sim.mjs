@@ -6,7 +6,7 @@
  *   node scripts/sim.mjs --asset xyz:SP500 --interval 5m \
  *     --start "2026-07-07 09:00 ET" --end "2026-07-07 16:00 ET" \
  *     --prompt "Trade the SP500 open." [--model claude-fable-5-1] [--port 3001]
- *     [--profile baseline] [--memory-seed DIR] [--shift today|none|YYYY-MM-DD]
+ *     [--profile 2022-v1] [--memory-seed DIR] [--shift today|none|YYYY-MM-DD]
  *     [--no-faketime] [--out DIR]
  *     [--ref origin/master]   (the commit the agent's checkout is made from)
  *
@@ -43,7 +43,7 @@ const run = (cmd, argv) => new Promise((ok, fail) => {
 /* --------------------------------------------------------------- args --- */
 
 function parseArgs(argv) {
-  const out = { interval: '5m', model: 'claude-fable-5-1', port: 3001, faketime: true, shift: 'today', profile: 'baseline' };
+  const out = { interval: '5m', model: 'claude-fable-5-1', port: 3001, faketime: true, shift: 'today', profile: '2022-v1' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--no-faketime') { out.faketime = false; continue; }

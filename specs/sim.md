@@ -11,7 +11,7 @@ still while the agent works and jumps forward while it waits.
 node scripts/sim.mjs --asset xyz:SP500 --interval 5m \
   --start "2026-07-07 09:00 ET" --end "2026-07-07 16:00 ET" \
   --prompt "Trade the SP500 session on the paper account." \
-  [--profile baseline] [--model claude-fable-5-1] [--port 3001] [--out DIR] \
+  [--profile 2022-v1] [--model claude-fable-5-1] [--port 3001] [--out DIR] \
   [--memory-seed DIR] [--no-faketime] [--config params.json]
 ```
 
