@@ -27,17 +27,26 @@ const EDGE_BARS = 20;
 const NOTE_COLOR = '#f0b90b';
 const EXIT_COLOR = '#8a8f98';
 
+const TIERS: { interval: CandleInterval; maxHeldMs: number; padMs: number }[] = [
+  { interval: '1m', maxHeldMs: 2 * 3600_000, padMs: 30 * 60_000 },
+  { interval: '5m', maxHeldMs: 12 * 3600_000, padMs: 2 * 3600_000 },
+  { interval: '15m', maxHeldMs: 3 * 86_400_000, padMs: 6 * 3600_000 },
+  { interval: '1h', maxHeldMs: 14 * 86_400_000, padMs: 86_400_000 },
+  { interval: '4h', maxHeldMs: Infinity, padMs: 3 * 86_400_000 },
+];
+
+/** Hyperliquid serves only the most recent 5000 bars per interval; keep a margin. */
+const HISTORY_BARS = 4800;
+
 /**
  * Pick a candle interval and padding based on how long the trade was held, so a
- * scalp shows minute candles and a multi-day swing shows hourly/daily.
+ * scalp shows minute candles and a multi-day swing shows hourly/daily. Steps up
+ * to a coarser interval when the trade is older than the finer one's history.
  */
-function pickInterval(durationMs: number): { interval: CandleInterval; padMs: number } {
-  const hour = 3600_000;
-  if (durationMs <= 2 * hour) return { interval: '1m', padMs: 30 * 60_000 };
-  if (durationMs <= 12 * hour) return { interval: '5m', padMs: 2 * hour };
-  if (durationMs <= 3 * 24 * hour) return { interval: '15m', padMs: 6 * hour };
-  if (durationMs <= 14 * 24 * hour) return { interval: '1h', padMs: 24 * hour };
-  return { interval: '4h', padMs: 3 * 24 * hour };
+function pickInterval(entryTime: number, durationMs: number): { interval: CandleInterval; padMs: number } {
+  let i = TIERS.findIndex(t => durationMs <= t.maxHeldMs);
+  while (i < TIERS.length - 1 && Date.now() - (entryTime - TIERS[i].padMs) > HISTORY_BARS * intervalToMs(TIERS[i].interval)) i++;
+  return TIERS[i];
 }
 
 /** Candles keyed by bar open (UTC ms), so chunks merge without duplicates. */
@@ -174,7 +183,7 @@ export function JournalChart({ trade }: Props) {
     series.setData([]);
 
     const end = trade.exitTime ?? Date.now();
-    const { interval, padMs } = pickInterval(end - trade.entryTime);
+    const { interval, padMs } = pickInterval(trade.entryTime, end - trade.entryTime);
     const barMs = intervalToMs(interval);
     const bars = new Map<number, CandlestickData>();
     let first = Math.floor((trade.entryTime - padMs) / barMs) * barMs;
@@ -236,6 +245,11 @@ export function JournalChart({ trade }: Props) {
       .then(candles => {
         if (cancelled) return;
         mergeCandles(bars, candles);
+        if (bars.size === 0) {
+          setError(`Hyperliquid returned no ${interval} candles for ${trade.coin} around this trade`);
+          setLoading(false);
+          return;
+        }
         if (last >= Date.now() - barMs) newerDone = true;
         publish();
         chart.timeScale().fitContent();
