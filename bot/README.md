@@ -40,15 +40,28 @@ edit a file in place while a profile still under comparison points at it.
 The baseline is the bot before `bot/` existed: the one-line prompt "Trade
 SP500 on the paper account this morning. Watch the open and take a setup if
 there is one; set alerts and wait for them instead of polling." with the live
-memory dir as the seed and no model. Two runs on the box, both xyz:SP500 5m:
+memory dir as the seed and no model. Rerun it with `--profile none` and
+`--memory-seed` pointing at a copy of the memory dir.
 
-| run | recording | trades | gross | fees | net |
-|---|---|---|---|---|---|
-| `/tmp/hl-sim/fable-run1` | 2026-07-07 09:05 to 10:40 ET | 2 shorts | +25.89 | 35.98 | -10.10 |
-| `/tmp/hl-sim/fable-run2` | 2026-07-08 09:05 to 11:10 ET | 1 long, 1 short | +64.40 | 71.47 | -7.07 |
+## Scoreboard
 
-Profiles are measured against these days first. To rerun the baseline itself,
-use `--profile none` with `--memory-seed` pointing at a copy of the memory dir.
+xyz:SP500, 5m pane, paper account of $10,000, sessions 09:00 to 12:00 ET
+unless noted. Fees are at the HIP-3 growth-mode rates (0.3 bp maker, 0.9 bp
+taker); the two 2026-10-15 runs were charged five times that before the fee
+fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
+
+| recording | profile | run | trades | gross | fees | net | notes |
+|---|---|---|---|---|---|---|---|
+| 2026-07-07 | baseline | `fable-run1` (09:05 to 10:40) | 2 shorts | +25.89 | 7.20 | +18.69 | |
+| 2026-07-07 | 2022-v1 | `2022-v1-0707` | 0 | 0 | 0 | 0 | six attempts, none past displacement |
+| 2026-07-08 | baseline | `fable-run2` (09:05 to 11:10) | 1 long, 1 short | +64.40 | 14.29 | +50.11 | |
+| 2026-07-08 | 2022-v1 | `2022-v1-0708` | 0 | 0 | 0 | 0 | slept: all alerts outside the range, never woke |
+| 2026-07-08 | 2022-v2 | `2022-v2-0708` | 0 | 0 | 0 | 0 | woke four times; PDL missed by 5.4 points |
+| 2026-07-09 | baseline | `baseline-0709` | 3 longs | -59.10 | 11.47 | -70.57 | third long still open at noon, +20.10 unrealised |
+| 2026-07-09 | 2022-v1 | `2022-v1-0709` | 0 | 0 | 0 | 0 | sweep and displacement found, MSS pivot definition failed |
+
+Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
+0.00, 7 trades to 0.
 
 ## Reading a run
 
