@@ -49,6 +49,14 @@ function pickInterval(entryTime: number, durationMs: number): { interval: Candle
   return TIERS[i];
 }
 
+/** Intervals offered in the journal's picker. */
+const PICKER: CandleInterval[] = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
+
+/** Whether Hyperliquid still has bars at this interval back to the trade's entry. */
+function hasHistory(interval: CandleInterval, entryTime: number): boolean {
+  return Date.now() - entryTime <= HISTORY_BARS * intervalToMs(interval);
+}
+
 /** Candles keyed by bar open (UTC ms), so chunks merge without duplicates. */
 function mergeCandles(into: Map<number, CandlestickData>, candles: CandleData[]) {
   for (const c of candles) {
@@ -125,6 +133,10 @@ export function JournalChart({ trade }: Props) {
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // A picked interval belongs to one trade; switching trades goes back to auto.
+  const [picked, setPicked] = useState<{ tradeId: string; interval: CandleInterval } | null>(null);
+  const auto = pickInterval(trade.entryTime, (trade.exitTime ?? Date.now()) - trade.entryTime);
+  const interval = picked?.tradeId === trade.id ? picked.interval : auto.interval;
   const up = useThemeStore(s => s.up);
   const down = useThemeStore(s => s.down);
   const showGrid = useThemeStore(s => s.showGrid);
@@ -183,8 +195,9 @@ export function JournalChart({ trade }: Props) {
     series.setData([]);
 
     const end = trade.exitTime ?? Date.now();
-    const { interval, padMs } = pickInterval(trade.entryTime, end - trade.entryTime);
     const barMs = intervalToMs(interval);
+    // At least 60 bars either side, so a coarse pick on a short trade still shows context.
+    const padMs = Math.max(auto.padMs, 60 * barMs);
     const bars = new Map<number, CandlestickData>();
     let first = Math.floor((trade.entryTime - padMs) / barMs) * barMs;
     let last = Math.floor((end + padMs) / barMs) * barMs;
@@ -268,13 +281,35 @@ export function JournalChart({ trade }: Props) {
       prim.requestRedraw();
       series.detachPrimitive(prim);
     };
-  }, [trade]);
+  }, [trade, interval]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: 320 }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <div style={pickerStyle}>
+        {PICKER.map(iv => {
+          const ok = hasHistory(iv, trade.entryTime);
+          const on = iv === interval;
+          return (
+            <button
+              key={iv}
+              disabled={!ok}
+              title={ok ? `${iv} candles` : `Hyperliquid no longer has ${iv} candles this far back`}
+              onClick={() => setPicked({ tradeId: trade.id, interval: iv })}
+              style={{
+                ...pickerBtnStyle,
+                color: on ? '#e1e4e8' : ok ? '#8a8f98' : '#3a3f4e',
+                background: on ? '#2a2f3e' : 'transparent',
+                cursor: ok ? 'pointer' : 'default',
+              }}
+            >
+              {iv}
+            </button>
+          );
+        })}
+      </div>
       {loading && (
-        <div style={overlayStyle}>Loading {trade.coin} candles…</div>
+        <div style={overlayStyle}>Loading {trade.coin} {interval} candles…</div>
       )}
       {error && (
         <div style={{ ...overlayStyle, color: 'var(--down)' }}>{error}</div>
@@ -282,6 +317,15 @@ export function JournalChart({ trade }: Props) {
     </div>
   );
 }
+
+const pickerStyle: React.CSSProperties = {
+  position: 'absolute', top: 6, left: 6, zIndex: 3, display: 'flex', gap: 2,
+  padding: 2, borderRadius: 4, background: 'rgba(11, 14, 20, 0.8)', border: '1px solid #1a1f2e',
+};
+
+const pickerBtnStyle: React.CSSProperties = {
+  border: 'none', borderRadius: 3, padding: '2px 7px', fontSize: 11, lineHeight: '16px',
+};
 
 const overlayStyle: React.CSSProperties = {
   position: 'absolute', inset: 0, display: 'flex',
