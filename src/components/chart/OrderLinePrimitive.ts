@@ -9,27 +9,49 @@ import type {
   SeriesType,
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
+import Decimal from 'decimal.js';
 import type { PaperOrder } from '../../engine/paper/matching.ts';
+import type { LiveOpenOrder } from '../../store/useLiveAccountStore.ts';
+import { triggerKind } from '../../services/hl/liveTrader.ts';
 import { upColor, downColor, chartBgColor, withAlpha } from '../../store/useThemeStore.ts';
+
+/** What an order line needs: a paper order, or a live trigger order mapped into the same shape. */
+export type LineOrder = Pick<PaperOrder, 'id' | 'side' | 'price' | 'size' | 'tpsl' | 'triggerPx'>;
+
+/** Live TP/SL trigger orders are draggable; everything else live is a plain price line. */
+export function isLiveTrigger(o: { isTrigger: boolean; orderType: string }): boolean {
+  return o.isTrigger && triggerKind(o.orderType) !== undefined;
+}
+
+/**
+ * Draggable lines for the live TP/SL triggers on `coin`, ids `live-<oid>`. `moves` holds
+ * triggers already sent to a new price, drawn there until the account refresh shows it.
+ */
+export function liveLineOrders(orders: LiveOpenOrder[], coin: string, moves: Record<number, { px: number }> = {}): LineOrder[] {
+  return orders.filter(o => o.coin === coin && isLiveTrigger(o)).map(o => ({
+    id: `live-${o.oid}`, side: o.side, price: new Decimal(o.limitPx), size: new Decimal(o.sz),
+    tpsl: triggerKind(o.orderType), triggerPx: new Decimal(moves[o.oid]?.px ?? o.triggerPx),
+  }));
+}
 
 const LINE_HIT_TOLERANCE = 6;
 const BUY_LINE = '#3861fb';
 const SELL_LINE = '#e67e22';
 const LABEL_COLOR = '#e1e4e8';
 
-function orderColor(ord: PaperOrder): string {
+function orderColor(ord: LineOrder): string {
   if (ord.tpsl === 'tp') return upColor();
   if (ord.tpsl === 'sl') return downColor();
   return ord.side === 'buy' ? BUY_LINE : SELL_LINE;
 }
 
-function orderLabel(ord: PaperOrder): string {
+function orderLabel(ord: LineOrder): string {
   if (ord.tpsl === 'tp') return 'TP';
   if (ord.tpsl === 'sl') return 'SL';
   return `LIMIT ${ord.side.toUpperCase()}`;
 }
 
-function orderPrice(ord: PaperOrder): number {
+function orderPrice(ord: LineOrder): number {
   return (ord.triggerPx ?? ord.price).toNumber();
 }
 
@@ -40,7 +62,7 @@ function fmtPrice(p: number): string {
 }
 
 export class OrderLinePrimitive implements ISeriesPrimitive<Time> {
-  private _order: PaperOrder;
+  private _order: LineOrder;
   private _series: ISeriesApi<SeriesType, Time> | null = null;
   private _requestUpdate: (() => void) | null = null;
   private _paneViews: [OrderLinePaneView];
@@ -50,7 +72,7 @@ export class OrderLinePrimitive implements ISeriesPrimitive<Time> {
   private _dragPrice: number | null = null;
 
   constructor(
-    order: PaperOrder,
+    order: LineOrder,
     onDragDone: (orderId: string, newPrice: number) => void,
   ) {
     this._order = order;
@@ -65,7 +87,7 @@ export class OrderLinePrimitive implements ISeriesPrimitive<Time> {
     return this._dragPrice ?? orderPrice(this._order);
   }
 
-  updateOrder(order: PaperOrder) {
+  updateOrder(order: LineOrder) {
     this._order = order;
     this._requestUpdate?.();
   }

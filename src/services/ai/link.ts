@@ -18,6 +18,7 @@ import { useGexStore } from '../../store/useGexStore.ts';
 import { appNow } from '../replay/clock.ts';
 import type { CandleInterval } from '../../types/market.ts';
 import { gexSummary } from '../gex/levels.ts';
+import { triggerKind } from '../hl/liveTrader.ts';
 import { NETWORK } from '../hl/network.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { TradeProposal } from './trades.ts';
@@ -53,11 +54,7 @@ export function getPaperEngine(): PaperEngine | null {
 }
 
 /** Live TP/SL kind from Hyperliquid's order type label ("Take Profit Market", "Stop Market"...). */
-export function liveTpsl(orderType: string): 'tp' | 'sl' | undefined {
-  if (/take profit/i.test(orderType)) return 'tp';
-  if (/stop/i.test(orderType)) return 'sl';
-  return undefined;
-}
+export const liveTpsl = triggerKind;
 
 function positionFor(asset: string, mode: 'paper' | 'live'): SnapshotPosition | null {
   if (mode === 'live') {

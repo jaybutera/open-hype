@@ -33,16 +33,23 @@ export function isUnknownSignerError(message: string): boolean {
 export function orderAction(orders: OrderWire[], grouping: Grouping = 'na') {
   return {
     type: 'order',
-    orders: orders.map(o => {
-      const t = 'limit' in o.t
-        ? { limit: { tif: o.t.limit.tif } }
-        : { trigger: { isMarket: o.t.trigger.isMarket, triggerPx: o.t.trigger.triggerPx, tpsl: o.t.trigger.tpsl } };
-      const w: Record<string, unknown> = { a: o.a, b: o.b, p: o.p, s: o.s, r: o.r, t };
-      if (o.c) w.c = o.c;
-      return w;
-    }),
+    orders: orders.map(orderWire),
     grouping,
   };
+}
+
+function orderWire(o: OrderWire): Record<string, unknown> {
+  const t = 'limit' in o.t
+    ? { limit: { tif: o.t.limit.tif } }
+    : { trigger: { isMarket: o.t.trigger.isMarket, triggerPx: o.t.trigger.triggerPx, tpsl: o.t.trigger.tpsl } };
+  const w: Record<string, unknown> = { a: o.a, b: o.b, p: o.p, s: o.s, r: o.r, t };
+  if (o.c) w.c = o.c;
+  return w;
+}
+
+/** batchModify replaces each order in place by oid; the new spec uses the same wire key order as `order`. */
+export function batchModifyAction(modifies: { oid: number; order: OrderWire }[]) {
+  return { type: 'batchModify', modifies: modifies.map(m => ({ oid: m.oid, order: orderWire(m.order) })) };
 }
 
 export function parseOrderStatuses(statuses: unknown[]): OrderStatus[] {
@@ -128,6 +135,10 @@ export class ExchangeClient {
 
   async placeOrders(orders: OrderWire[], grouping: Grouping = 'na', vaultAddress?: string | null): Promise<OrderStatus[]> {
     return parseOrderStatuses(statusesOf(await this.send(orderAction(orders, grouping), vaultAddress)));
+  }
+
+  async batchModify(modifies: { oid: number; order: OrderWire }[], vaultAddress?: string | null): Promise<OrderStatus[]> {
+    return parseOrderStatuses(statusesOf(await this.send(batchModifyAction(modifies), vaultAddress)));
   }
 
   async cancel(cancels: { a: number; o: number }[], vaultAddress?: string | null): Promise<CancelStatus[]> {

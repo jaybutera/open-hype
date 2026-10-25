@@ -7,7 +7,8 @@ import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { TradeBoxPrimitive, chartXToTime } from './TradeBoxPrimitive.ts';
-import { OrderLinePrimitive } from './OrderLinePrimitive.ts';
+import { OrderLinePrimitive, isLiveTrigger, liveLineOrders, type LineOrder } from './OrderLinePrimitive.ts';
+import { modifyLiveTrigger, triggerKind } from '../../services/hl/liveTrader.ts';
 import { SessionPrimitive } from './SessionPrimitive.ts';
 import { FibPrimitive } from './FibPrimitive.ts';
 import { HLinePrimitive, snapPrice } from './HLinePrimitive.ts';
@@ -126,8 +127,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
 
   // Setups belonging to this pane, on the asset it charts now
   const paneSetups = activeSetups.filter(s => (s.paneId ?? 'primary') === paneId && s.asset === currentAsset);
-  // Draggable order lines edit paper orders only; live orders are drawn as plain price lines.
-  const paneOrders = mode === 'paper' ? paperOrders.filter(o => o.coin === currentAsset) : [];
+  // Draggable order lines: paper orders, and live TP/SL triggers (moved with batchModify).
+  // Live limit orders stay plain price lines.
+  const [liveMoves, setLiveMoves] = useState<Record<number, { px: number; from: string }>>({});
+  const [orderMsg, setOrderMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const paneOrders: LineOrder[] = mode === 'paper'
+    ? paperOrders.filter(o => o.coin === currentAsset)
+    : liveLineOrders(liveOrders, currentAsset, liveMoves);
   // User drawings on the asset this pane charts (shared by both panes when they show the same asset)
   const paneLines = useMemo(() => drawLines.filter(l => l.asset === currentAsset), [drawLines, currentAsset]);
   const paneFibs = useMemo(() => drawFibs.filter(f => f.asset === currentAsset), [drawFibs, currentAsset]);
@@ -384,7 +390,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         } catch {}
       }
       for (const o of liveOrders) {
-        if (o.coin !== currentAsset) continue;
+        if (o.coin !== currentAsset || isLiveTrigger(o)) continue;
         const px = parseFloat(o.isTrigger ? o.triggerPx : o.limitPx);
         if (!(px > 0)) continue;
         try {
@@ -608,7 +614,34 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     }
   }, [paneSetups, requestExecute, removeSetup, updateSetup]);
 
+  // A moved live trigger is drawn at its new price until the account refresh shows the change.
+  useEffect(() => {
+    setLiveMoves(m => {
+      const keep = Object.entries(m).filter(([oid, mv]) => liveOrders.some(o => o.oid === Number(oid) && o.triggerPx === mv.from));
+      return keep.length === Object.keys(m).length ? m : Object.fromEntries(keep);
+    });
+  }, [liveOrders]);
+
+  useEffect(() => {
+    if (!orderMsg) return;
+    const t = window.setTimeout(() => setOrderMsg(null), orderMsg.ok ? 4000 : 10000);
+    return () => window.clearTimeout(t);
+  }, [orderMsg]);
+
   const handleOrderDragDone = useCallback((orderId: string, newPrice: number) => {
+    if (orderId.startsWith('live-')) {
+      const oid = Number(orderId.slice(5));
+      const live = useLiveAccountStore.getState().openOrders.find(o => o.oid === oid);
+      if (!live || !(newPrice > 0)) return;
+      // A click without a move drops at the same price; nothing to send.
+      if (Math.abs(newPrice - parseFloat(live.triggerPx)) < 1e-9 * newPrice) return;
+      setLiveMoves(m => ({ ...m, [oid]: { px: newPrice, from: live.triggerPx } }));
+      void modifyLiveTrigger(live, newPrice).then(r => {
+        setOrderMsg({ ok: r.ok, text: r.ok ? r.message : `${triggerKind(live.orderType)?.toUpperCase() ?? 'Order'} not moved: ${r.message}` });
+        if (!r.ok) setLiveMoves(m => { const { [oid]: _, ...rest } = m; return rest; });
+      });
+      return;
+    }
     const ord = paperOrders.find(o => o.id === orderId);
     if (!ord) return;
 
@@ -959,6 +992,19 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           onMouseUp={handleChartMouseUp}
           onDoubleClick={handleChartDoubleClick}
         />
+        {orderMsg && (
+          <div
+            data-testid="chart-order-msg"
+            onClick={() => setOrderMsg(null)}
+            style={{
+              position: 'absolute', top: 8, left: 8, zIndex: 5, maxWidth: '60%', padding: '4px 8px', fontSize: 11,
+              background: 'rgba(13,17,23,0.9)', border: `1px solid ${orderMsg.ok ? 'var(--up)' : 'var(--down)'}`,
+              color: orderMsg.ok ? 'var(--up)' : 'var(--down)', cursor: 'pointer',
+            }}
+          >
+            {orderMsg.text}
+          </div>
+        )}
         {toolboxOpen && (
           <DrawToolbox
             tool={tool}

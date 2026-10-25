@@ -7,7 +7,9 @@ import { useLiveAccountStore } from '../../../store/useLiveAccountStore.ts';
 import { actionHash } from '../signing.ts';
 import {
   prepareOrder, placeLiveOrder, cancelLiveOrders, closeLivePosition, placeLivePositionTrigger, submitPrepared,
+  modifyLiveTrigger, prepareTriggerMove,
 } from '../liveTrader.ts';
+import type { LiveOpenOrder } from '../../../store/useLiveAccountStore.ts';
 import { stubHyperliquidFetch, META, XYZ_META } from '../../../test/hlMocks.ts';
 import type { Meta } from '../../../types/market.ts';
 
@@ -209,5 +211,53 @@ describe('sub-account trading', () => {
     useWalletStore.getState().selectAccount(null);
     expect(await submitPrepared(p)).toMatchObject({ ok: false, message: 'Account changed after review; review the order again' });
     expect(net.exchangeCalls()).toHaveLength(0);
+  });
+});
+
+describe('moving a live TP/SL trigger (chart drag)', () => {
+  // Shapes as frontendOpenOrders returns them for a long's bracket legs.
+  const sl: LiveOpenOrder = {
+    coin: 'BTC', oid: 585048172449, side: 'sell', limitPx: '54000.0', sz: '0.20811', origSz: '0.20811',
+    orderType: 'Stop Market', isTrigger: true, triggerPx: '58000.0', triggerCondition: 'Price below 58000',
+    reduceOnly: true, isPositionTpsl: false, timestamp: 1,
+  };
+  const tp: LiveOpenOrder = { ...sl, oid: 585048172448, orderType: 'Take Profit Market', triggerPx: '63000.0', limitPx: '56700.0', triggerCondition: 'Price above 63000' };
+
+  it('sends one signed batchModify with the full trigger spec, rounded to 5 sig figs', async () => {
+    const net = stubHyperliquidFetch({ exchange: () => ({ status: 'ok', response: { type: 'batchModify', data: { statuses: [{ resting: { oid: sl.oid } }] } } }) });
+    const r = await modifyLiveTrigger(sl, 58123.456);
+    expect(r).toMatchObject({ ok: true, message: 'SL moved to 58123' });
+    const [call] = net.exchangeCalls();
+    expect(call.action).toEqual({
+      type: 'batchModify',
+      modifies: [{ oid: 585048172449, order: { a: 0, b: false, p: '52311', s: '0.20811', r: true, t: { trigger: { isMarket: true, triggerPx: '58123', tpsl: 'sl' } } } }],
+    });
+    expect(Object.keys(call.action.modifies[0].order)).toEqual(['a', 'b', 'p', 's', 'r', 't']);
+    expect(recoverL1(call)).toBe(agent.address);
+  });
+
+  it('a bare default response counts as accepted', async () => {
+    stubHyperliquidFetch({ exchange: () => ({ status: 'ok', response: { type: 'default' } }) });
+    expect(await modifyLiveTrigger(tp, 64000)).toMatchObject({ ok: true, message: 'TP moved to 64000' });
+  });
+
+  it('short legs buy back, with the slippage cap above the trigger; limit triggers keep their offset', async () => {
+    const m = await prepareTriggerMove({ ...sl, side: 'buy', orderType: 'Stop Limit', triggerPx: '62000', limitPx: '62100' }, 61500);
+    expect(m.order).toEqual({ a: 0, b: true, p: '61600', s: '0.20811', r: true, t: { trigger: { isMarket: false, triggerPx: '61500', tpsl: 'sl' } } });
+    const t = await prepareTriggerMove({ ...tp, side: 'buy', triggerPx: '57000' }, 57500);
+    expect(t.order).toMatchObject({ b: true, p: '63250', t: { trigger: { isMarket: true, triggerPx: '57500', tpsl: 'tp' } } });
+  });
+
+  it('refuses a drop through the current price before signing', async () => {
+    const net = stubHyperliquidFetch();
+    expect(await modifyLiveTrigger(sl, 60500)).toMatchObject({ ok: false, message: 'SL 60500 must be below the current price 60000' });
+    expect(await modifyLiveTrigger(tp, 59000)).toMatchObject({ ok: false, message: 'TP 59000 must be above the current price 60000' });
+    await expect(prepareTriggerMove({ ...sl, isTrigger: false, orderType: 'Limit' }, 59000)).rejects.toThrow(/not a TP\/SL trigger/);
+    expect(net.exchangeCalls()).toHaveLength(0);
+  });
+
+  it('surfaces a per-order rejection', async () => {
+    stubHyperliquidFetch({ exchange: () => ({ status: 'ok', response: { type: 'batchModify', data: { statuses: [{ error: 'Cannot modify canceled or filled order' }] } } }) });
+    expect(await modifyLiveTrigger(sl, 59000)).toEqual(expect.objectContaining({ ok: false, message: 'rejected: Cannot modify canceled or filled order' }));
   });
 });

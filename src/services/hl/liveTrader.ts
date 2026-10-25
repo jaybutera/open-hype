@@ -4,7 +4,7 @@ import { IS_MAINNET, NETWORK } from './network.ts';
 import { postInfo } from '../api/client.ts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useWalletStore, selectActiveAccount } from '../../store/useWalletStore.ts';
-import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
+import { useLiveAccountStore, type LiveOpenOrder } from '../../store/useLiveAccountStore.ts';
 import { buildAssetIndex, type AssetInfo } from './assets.ts';
 import { formatPrice, formatSize } from './format.ts';
 import { ExchangeClient, ExchangeError, isUnknownSignerError, type Grouping, type OrderStatus } from './exchange.ts';
@@ -257,5 +257,62 @@ export function cancelLiveOrders(orders: { coin: string; oid: number }[]): Promi
     return failed.length
       ? { ok: false, message: failed.map(f => f.message).join(' | ') }
       : { ok: true, message: `Cancelled ${res.length} order${res.length === 1 ? '' : 's'}` };
+  });
+}
+
+/** TP or SL kind from Hyperliquid's order type label ("Take Profit Market", "Stop Limit"...). */
+export function triggerKind(orderType: string): TpSl | undefined {
+  if (/take profit/i.test(orderType)) return 'tp';
+  if (/stop/i.test(orderType)) return 'sl';
+  return undefined;
+}
+
+/**
+ * Build the batchModify wire that moves a live TP/SL trigger to `newTriggerPx`, keeping
+ * its side, size, reduce-only flag and market/limit type. Throws with a user-facing message.
+ */
+export async function prepareTriggerMove(order: LiveOpenOrder, newTriggerPx: Decimal.Value): Promise<{ oid: number; order: OrderWire; triggerPx: string }> {
+  const tpsl = triggerKind(order.orderType);
+  if (!order.isTrigger || !tpsl) throw new Error(`Order #${order.oid} is not a TP/SL trigger`);
+  const asset = await resolveAsset(order.coin);
+  const px = new Decimal(newTriggerPx);
+  if (!px.isFinite() || px.lte(0)) throw new Error(`Invalid trigger price ${newTriggerPx}`);
+  const triggerPx = formatPrice(px, asset.szDecimals);
+
+  // A trigger dropped through the current price would fire at once; refuse instead.
+  const m = mid(order.coin);
+  const closeIsBuy = order.side === 'buy';
+  const wantAbove = (tpsl === 'tp') !== closeIsBuy;
+  const t = new Decimal(triggerPx);
+  if (wantAbove ? t.lte(m) : t.gte(m)) {
+    throw new Error(`${tpsl.toUpperCase()} ${triggerPx} must be ${wantAbove ? 'above' : 'below'} the current price ${m.toString()}`);
+  }
+
+  const isMarket = /market/i.test(order.orderType);
+  const limit = isMarket
+    ? (closeIsBuy ? t.mul(1 + TRIGGER_SLIPPAGE) : t.mul(1 - TRIGGER_SLIPPAGE))
+    // Limit triggers keep their offset from the trigger.
+    : new Decimal(order.limitPx).plus(t.minus(order.triggerPx));
+  if (limit.lte(0)) throw new Error(`Limit price for #${order.oid} would be ${limit.toString()}`);
+  const sz = new Decimal(order.sz);
+  return {
+    oid: order.oid,
+    triggerPx,
+    order: {
+      a: asset.assetId, b: closeIsBuy, p: formatPrice(limit, asset.szDecimals),
+      s: sz.gt(0) ? formatSize(sz, asset.szDecimals) : '0', r: order.reduceOnly,
+      t: { trigger: { isMarket, triggerPx, tpsl } },
+    },
+  };
+}
+
+/** Move a live TP/SL trigger order to a new trigger price in place (batchModify). */
+export function modifyLiveTrigger(order: LiveOpenOrder, newTriggerPx: Decimal.Value): Promise<LiveResult> {
+  return run(async () => {
+    const m = await prepareTriggerMove(order, newTriggerPx);
+    const statuses = await exchange().batchModify([{ oid: m.oid, order: m.order }], vault());
+    // Request-level rejections throw; a bare `default` response with no statuses means it was accepted.
+    const res = statuses.length ? describeStatuses(statuses) : { ok: true, message: '', statuses };
+    return res.ok ? { ...res, message: `${triggerKind(order.orderType)!.toUpperCase()} moved to ${m.triggerPx}` } : res;
   });
 }
