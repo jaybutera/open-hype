@@ -22,7 +22,8 @@ It carries no method.
 | `method/top-down.md` | the process: HTF bias, structure into levels, LTF entry; what each step writes down | per experiment |
 | `models/2022.md` | the one setup the bot may trade, as a checklist with definitions | per experiment |
 | `journaling.md` | what the bot writes to the run's journal before an order and at the close | rarely |
-| `profiles/*.json` | which files make up one bot; `2022-v1` is the first, `2022-v2` adds structure alerts and intraday levels after a run that slept through 2026-07-08; `2022-v3` is v2 with the shift swing taken from inside the leg | per experiment |
+| `profiles/*.json` | which files make up one bot; `2022-v1` is the first, `2022-v2` adds structure alerts and intraday levels after a run that slept through 2026-07-08; `2022-v3` is v2 with the shift swing taken from inside the leg; `2022-v4` is `models/2022-v3.md` and `method/top-down-v3.md`, the rules recalibrated by the scan below | per experiment |
+| `../scripts/bot-scan.py` | mechanical scan of the model's rules over recorded 1m candles, for checking a wording change before spending a sim run on it | per experiment |
 
 A profile is `{ "files": [...] }`. The runner (`scripts/sim.mjs --profile NAME`)
 concatenates the files in order, replaces `{{RUN_DIR}}` with the run's output
@@ -66,6 +67,31 @@ Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
 0.00, 7 trades to 0. Six model runs, zero completed checklists. The two
 07-09 journals independently name the bias rule as what kept the bot out of
 the one sweep, displace and run sequence of that morning.
+
+## Calibration scan
+
+Six model runs with zero trades were not three quiet days. `scripts/bot-scan.py`
+applies the model mechanically to 95 SP500 days (2026-04-27 to 2026-09-09,
+sweeps 09:30 to 11:30 ET, 5m bars, fixed 2R target, stop beyond the sweep
+wick, one position at a time). Net R over the sample, from the scan on
+2026-10-27:
+
+| rule set | setups that filled | net R | win rate |
+|---|---|---|---|
+| v2 model as written (shift through a 3-bar swing, limit at the far half of the zone, bias "none" when daily and 4h disagree) | 34 | +1.2 | 38% |
+| shift = displacement closes beyond the sweep bar's extreme | 42 | +23.7 | 55% |
+| plus the limit at the near edge of the FVG | 49 | +23.5 | 55% |
+| plus a failed break (up to three closes beyond the level, then a close back) counted as a sweep | 64 | +24.1 | 52% |
+| the same with no bias filter | 86 | +3.7 | 37% |
+| the same with the v2 bias rule (daily and 4h must agree, else 4h levels only) | 42 | +10.3 | 48% |
+| the same without the FVG requirement | 57 | +13.0 | 44% |
+
+Both halves of the sample (before and after 2026-07-01) are positive for the
+chosen set. The swing-based shift definition was the blocker: a momentum leg
+into a level leaves no swing near the level, so the shift needed a 20 to 30
+point drop and the retrace never offered 2R. The scan found one qualifying
+setup on each of 2026-07-07 (a loss), 2026-07-08 and 2026-07-09 (both to 2R).
+These are the rules in `models/2022-v3.md` and profile `2022-v4`.
 
 ## Reading a run
 
