@@ -62,6 +62,7 @@ fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
 | 2026-07-09 | 2022-v1 | `2022-v1-0709` | 0 | 0 | 0 | 0 | sweep and displacement found, MSS pivot definition failed |
 | 2026-07-09 | 2022-v2 | `2022-v2-0709` | 0 | 0 | 0 | 0 | 14 wakes; two PDH short sweeps died at displacement; the OR-low sweep and 44-point run up was the model's shape and the bias rule excluded longs |
 | 2026-07-09 | 2022-v3 | `2022-v3-0709` | 0 | 0 | 0 | 0 | 23 wakes, $11.48; 1m shift swing worked (7505.8) but neither 4h-level sweep got a displacement before the wick was taken |
+| 2026-07-08 | 2022-v4 | `2022-v4-0708` | 0 | 0 | 0 | 0 | $5.00; 4h down, short only; the 09:45 sweep of the session high got no displacement, then the bot kept only that attempt's alert and missed the 10:00 failed break of ORH 7463.0 (10:10 body 9.9 closed below 7459.3, gap 7458.8 to 7461.1), which the scan sells at 7458.8 for 2R by 10:45 |
 | 2026-07-09 | 2022-v4 (target line still v2) | `2022-v4-0709` | 0 | 0 | 0 | 0 | $10.62; 4h read as up, long only; ORL 7480.4 sweep at 10:20 displaced with a gap and was declined on the target line (PDH 7509.2 at 0.8R); the 11:15 sweep of 7516.2 got a 7.1 body against a 10.4 threshold |
 
 Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1

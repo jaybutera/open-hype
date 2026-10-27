@@ -65,6 +65,16 @@ a sweep too. When a sweep bar has closed, arm a 5m close alert beyond the sweep
 bar's far extreme; that close is the candidate displacement. Read it, check the
 body and the gap once the next bar has closed, and place the limit.
 
+A level is never used up. When an attempt dies (three bars and no
+displacement, or the wick taken), the level stays on the list and the next 5m
+close back across it starts a fresh attempt with its own sweep bar and its own
+wick; the earlier bars play no part. While price trades around a level, keep
+5m close alerts on both sides of it the whole time, not only during an
+attempt, and watch every level price is near, not just the one of the last
+attempt. On 2026-07-08 the bot read one failed attempt at the session high and
+then slept through a failed break of the opening range high two bars later
+that displaced, left a gap and ran 2R.
+
 If the checklist does not complete, write what is missing, re-arm the alert
 if the level is still live, and go back to waiting.
 
