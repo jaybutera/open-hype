@@ -62,6 +62,7 @@ fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
 | 2026-07-09 | 2022-v1 | `2022-v1-0709` | 0 | 0 | 0 | 0 | sweep and displacement found, MSS pivot definition failed |
 | 2026-07-09 | 2022-v2 | `2022-v2-0709` | 0 | 0 | 0 | 0 | 14 wakes; two PDH short sweeps died at displacement; the OR-low sweep and 44-point run up was the model's shape and the bias rule excluded longs |
 | 2026-07-09 | 2022-v3 | `2022-v3-0709` | 0 | 0 | 0 | 0 | 23 wakes, $11.48; 1m shift swing worked (7505.8) but neither 4h-level sweep got a displacement before the wick was taken |
+| 2026-07-09 | 2022-v4 (target line still v2) | `2022-v4-0709` | 0 | 0 | 0 | 0 | $10.62; 4h read as up, long only; ORL 7480.4 sweep at 10:20 displaced with a gap and was declined on the target line (PDH 7509.2 at 0.8R); the 11:15 sweep of 7516.2 got a 7.1 body against a 10.4 threshold |
 
 Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
 0.00, 7 trades to 0. Six model runs, zero completed checklists. The two
@@ -85,9 +86,13 @@ wick, one position at a time). Net R over the sample, from the scan on
 | the same with no bias filter | 86 | +3.7 | 37% |
 | the same with the v2 bias rule (daily and 4h must agree, else 4h levels only) | 42 | +10.3 | 48% |
 | the same without the FVG requirement | 57 | +13.0 | 44% |
+| the same, but no trade unless the nearest level in the trade's direction is at least 2R away, and that level as the target (the v2 line 8) | 8 | +1.0 | 38% |
+| the same with a daily or 4h level between 2R and 3R replacing the 2R target | 63 | +24.7 | 51% |
 
 Both halves of the sample (before and after 2026-07-01) are positive for the
-chosen set. The swing-based shift definition was the blocker: a momentum leg
+chosen set. The first `2022-v4` run (2026-07-09, before the target line was
+changed) declined two long setups on the v2 target line because an opening
+range level sat 4 to 13 points above the entry; both ran past that level. The swing-based shift definition was the blocker: a momentum leg
 into a level leaves no swing near the level, so the shift needed a 20 to 30
 point drop and the retrace never offered 2R. The scan found one qualifying
 setup on each of 2026-07-07 (a loss), 2026-07-08 and 2026-07-09 (both to 2R).

@@ -59,7 +59,7 @@ def levels_for(d, dprev):
     for n,i in enumerate(sl[-3:]): L[f'4hL{n}']=h.low.values[i]
     return L,h
 def run(params):
-    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,cut='15:55',levels='all',minpoke=0.0)
+    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',cut='15:55',levels='all',minpoke=0.0)
     P.update(params)
     trades=[];stats=dict(n_sweeps=0,n_disp=0,n_fill=0)
     for di in range(1,len(days)):
@@ -166,6 +166,19 @@ def run(params):
                     risk=abs(entry-stop)
                     if risk<=0.5: continue
                     tgt = entry+P['R']*risk if side=='long' else entry-P['R']*risk
+                    if P['tgt'] in ('level','htf'):
+                        # nearest level on the far side of the entry; 'htf' ignores intraday levels
+                        cand=[v for nm,v in intr.items() if (P['tgt']=='level' or nm not in('ORH','ORL','SH','SL'))
+                              and ((v>entry+0.5) if side=='long' else (v<entry-0.5))]
+                        if cand:
+                            nearest=min(cand) if side=='long' else max(cand)
+                            if abs(nearest-entry)<P['R']*risk: continue
+                            tgt=nearest
+                    if P['tgt']=='htfcap':
+                        # fixed 2R, but a daily/4h level between 2R and 3R becomes the target
+                        cand=[v for nm,v in intr.items() if nm not in('ORH','ORL','SH','SL') and ((v>entry) if side=='long' else (v<entry))]
+                        for v in sorted(cand, key=lambda v: abs(v-entry)):
+                            if P['R']*risk<=abs(v-entry)<=3*risk: tgt=v;break
                     # wait for fill in next retr bars (1m granularity)
                     t0=idx[k]+pd.Timedelta(minutes=10 if P['fvg'] else 5)
                     tend=pd.Timestamp(f'{d} {P["cut"]}',tz=ET)
@@ -192,7 +205,7 @@ def run(params):
                     stats['n_fill']+=1
                     if res is None:
                         last=f1.close.iloc[-1]; pnlR=((last-entry) if side=='long' else (entry-last))/risk; res=('eod',f1.index[-1])
-                    else: pnlR = P['R'] if res[0]=='target' else -1.0
+                    else: pnlR = abs(tgt-entry)/risk if res[0]=='target' else -1.0
                     trades.append(dict(day=str(d),level=name,side=side,sweep=str(idx[sb].time())[:5],entry=round(entry,1),stop=round(stop,1),risk=round(risk,1),res=res[0],R=round(pnlR,2)))
                     taken_levels.add((name,lv)); traded+=1
                     if pnlR<0: losses+=1
