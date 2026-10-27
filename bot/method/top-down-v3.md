@@ -70,8 +70,8 @@ displacement, or the wick taken), the level stays on the list and the next 5m
 close back across it starts a fresh attempt with its own sweep bar and its own
 wick; the earlier bars play no part. While price trades around a level, keep
 5m close alerts on both sides of it the whole time, not only during an
-attempt, and watch every level price is near, not just the one of the last
-attempt. On 2026-07-08 the bot read one failed attempt at the session high and
+attempt, re-arm a level's cross alert the moment it fires, and watch every
+level price is near, not just the one of the last attempt. On 2026-07-08 the bot read one failed attempt at the session high and
 then slept through a failed break of the opening range high two bars later
 that displaced, left a gap and ran 2R.
 

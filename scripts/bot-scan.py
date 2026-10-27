@@ -59,7 +59,7 @@ def levels_for(d, dprev):
     for n,i in enumerate(sl[-3:]): L[f'4hL{n}']=h.low.values[i]
     return L,h
 def run(params):
-    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',cut='15:55',levels='all',minpoke=0.0)
+    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',tick=0.0,cut='15:55',levels='all',minpoke=0.0)
     P.update(params)
     trades=[];stats=dict(n_sweeps=0,n_disp=0,n_fill=0)
     for di in range(1,len(days)):
@@ -162,6 +162,9 @@ def run(params):
                     elif P['entry']=='far': entry = zlo if side=='long' else zhi
                     elif P['entry']=='level': entry = lv
                     elif P['entry']=='close': entry = c[k]
+                    # tick: move a limit inside the zone, away from the near edge, to make the fill likelier
+                    if P['entry'] in ('near','mid') and P['tick']:
+                        entry = entry-P['tick'] if side=='long' else entry+P['tick']
                     stop = wick-0.5 if side=='long' else wick+0.5
                     risk=abs(entry-stop)
                     if risk<=0.5: continue

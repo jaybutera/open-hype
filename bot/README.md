@@ -63,6 +63,7 @@ fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
 | 2026-07-09 | 2022-v2 | `2022-v2-0709` | 0 | 0 | 0 | 0 | 14 wakes; two PDH short sweeps died at displacement; the OR-low sweep and 44-point run up was the model's shape and the bias rule excluded longs |
 | 2026-07-09 | 2022-v3 | `2022-v3-0709` | 0 | 0 | 0 | 0 | 23 wakes, $11.48; 1m shift swing worked (7505.8) but neither 4h-level sweep got a displacement before the wick was taken |
 | 2026-07-08 | 2022-v4 | `2022-v4-0708` | 0 | 0 | 0 | 0 | $5.00; 4h down, short only; the 09:45 sweep of the session high got no displacement, then the bot kept only that attempt's alert and missed the 10:00 failed break of ORH 7463.0 (10:10 body 9.9 closed below 7459.3, gap 7458.8 to 7461.1), which the scan sells at 7458.8 for 2R by 10:45 |
+| 2026-07-08 | 2022-v4 | `2022-v4-0708-b` | 0 (1 order) | 0 | 0 | 0 | $9.65, rerun with the level-stays-live wording; four attempts at ORH 7463.0, the fourth completed the checklist: sell limit 7450.0 at the gap's near edge, stop 7467.5, target 7405.8 (daily low, 2.54R); price touched 7450.0 at 10:50 without trading through, order cancelled after 12 bars, unfilled; 7419.3 at 11:30 would have been 1.75R |
 | 2026-07-09 | 2022-v4 (target line still v2) | `2022-v4-0709` | 0 | 0 | 0 | 0 | $10.62; 4h read as up, long only; ORL 7480.4 sweep at 10:20 displaced with a gap and was declined on the target line (PDH 7509.2 at 0.8R); the 11:15 sweep of 7516.2 got a 7.1 body against a 10.4 threshold |
 
 Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
@@ -89,9 +90,15 @@ wick, one position at a time). Net R over the sample, from the scan on
 | the same without the FVG requirement | 57 | +13.0 | 44% |
 | the same, but no trade unless the nearest level in the trade's direction is at least 2R away, and that level as the target (the v2 line 8) | 8 | +1.0 | 38% |
 | the same with a daily or 4h level between 2R and 3R replacing the 2R target | 63 | +24.7 | 51% |
+| the same with the limit 0.3 to 1.0 points inside the near edge, or at the middle of the gap | 56 to 64 | +28.4 to +29.6 | 53% to 55% |
 
 Both halves of the sample (before and after 2026-07-01) are positive for the
-chosen set. The first `2022-v4` run (2026-07-09, before the target line was
+chosen set. Where the limit sits inside the gap changes the result by a few R
+either way over 95 days, so the near edge stays; the scan fills a limit only
+when price trades through it, which is also what the paper engine does.
+`core.md` used to say there is no trade without 2R before the next opposing
+level; that sentence now defers to the model, since the second 07-08 run read
+the two as a conflict. The first `2022-v4` run (2026-07-09, before the target line was
 changed) declined two long setups on the v2 target line because an opening
 range level sat 4 to 13 points above the entry; both ran past that level. The swing-based shift definition was the blocker: a momentum leg
 into a level leaves no swing near the level, so the shift needed a 20 to 30
