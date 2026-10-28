@@ -67,6 +67,21 @@ which cost 0.5R of target distance), and 5m-swing trailing is what turned
 this one from a loss into a small win, so do not loosen the trailing text in
 `core.md` without scanning it.
 
+Run `2022-v4-0709-b` (07-09, 09:00 to 12:00, $10.09): checklist completed
+for the OR low long, entry alert at the gap edge 7495.7, never touched; the
+move ran 28.8 points from the edge without a retrace. No trade. Three-day
+score against the baseline is in the README scoreboard; the two are not
+separated by these days.
+
+The open question is the entry. The gap-edge retrace is what the scan rates
+best over 95 days (+28R), but it misses the strongest moves (07-09) and the
+sim's market fill on a cross alert lands at the firing 1m bar's close
+(07-08, 3.65 points through the edge). Candidates to scan before spending a
+run: (a) a second entry trigger when no retrace comes within N bars, at
+market on the next 5m close in the trade direction; (b) a limit at the near
+edge plus a market order if the edge is touched and the limit is still
+unfilled one 1m bar later; (c) sessions to 16:00 ET so fills resolve.
+
 ## What to do next
 
 1. One run at a time, short windows. Next candidate: 07-09 from 09:00 to

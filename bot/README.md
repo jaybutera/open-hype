@@ -66,12 +66,21 @@ fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
 | 2026-07-08 | 2022-v4 | `2022-v4-0708` | 0 | 0 | 0 | 0 | $5.00; 4h down, short only; the 09:45 sweep of the session high got no displacement, then the bot kept only that attempt's alert and missed the 10:00 failed break of ORH 7463.0 (10:10 body 9.9 closed below 7459.3, gap 7458.8 to 7461.1), which the scan sells at 7458.8 for 2R by 10:45 |
 | 2026-07-08 | 2022-v4 | `2022-v4-0708-b` | 0 (1 order) | 0 | 0 | 0 | $9.65, rerun with the level-stays-live wording; four attempts at ORH 7463.0, the fourth completed the checklist: sell limit 7450.0 at the gap's near edge, stop 7467.5, target 7405.8 (daily low, 2.54R); price touched 7450.0 at 10:50 without trading through, order cancelled after 12 bars, unfilled; 7419.3 at 11:30 would have been 1.75R |
 | 2026-07-08 (09:40 to 11:45) | 2022-v4 | `2022-v4-0708-c` | 1 short, open at the end | 0 realised, +73.28 unrealised at 11:45 (mid 7430.85) | 1.06 | +72.2 unrealised | $12.26; first fill of any model profile: ORH 7463.0 swept 10:25, displacement 10:35, gap 7450.0 to 7451.1, market entry on the 10:50 touch filled 7446.35 (3.65 through the edge, the sim fills a cross alert at the 1m bar's close), stop 7467.5, target 2R 7404.0; stop trailed to 7450.5 at 1R and 7439.1 at 1.16R behind 5m swing highs. Replay after the cutoff: the trailed stop fills at 12:05 for +7.25 points (+34.3 gross, 0.34R); the untrailed stop would have filled at 12:52 for -1R; 7404.0 was never reached (day low 7424.3) |
+| 2026-07-09 | 2022-v4 (final wording) | `2022-v4-0709-b` | 0 | 0 | 0 | 0 | $10.09; 4h up, longs only; the OR low 7480.4 sweep at 10:20 completed the checklist (displacement 10:25 body 9.6, gap 7493.8 to 7495.7, stop 7479.5, target 7535 at 2.43R), entry alert armed at 7495.7 and never touched: price ran to 7524.5 by 11:20 without a retrace, setup expired at 11:30 |
 | 2026-07-09 | 2022-v4 (target line still v2) | `2022-v4-0709` | 0 | 0 | 0 | 0 | $10.62; 4h read as up, long only; ORL 7480.4 sweep at 10:20 displaced with a gap and was declined on the target line (PDH 7509.2 at 0.8R); the 11:15 sweep of 7516.2 got a 7.1 body against a 10.4 threshold |
 
 Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
-0.00, 7 trades to 0. On 2026-07-08 the baseline netted +50.11 from two trades;
-2022-v4 in its short run would have netted about +32 after fees had the
-session run to its trailed stop at 12:05. Six model runs, zero completed checklists. The two
+0.00, 7 trades to 0.
+
+2022-v4 with its final wording (commit 9e87c9c or later) on the same three
+days: 07-07 no trade (longs only, the market fell all morning); 07-08 one
+short, +73.28 unrealised at the 11:45 cutoff, +34.3 gross on replay to its
+trailed stop at 12:05; 07-09 one completed checklist (OR low 7480.4 long,
+entry alert at the gap edge 7495.7) that never filled because price displaced
+at 10:25 and ran 28.8 points without retracing. Realised: baseline -1.77, v4
+0.00. With open positions: baseline +18.33, v4 +73.28 at its cutoff or +34.3
+replayed to the stop. One trade against seven; the three days do not separate
+the two. Six model runs, zero completed checklists. The two
 07-09 journals independently name the bias rule as what kept the bot out of
 the one sweep, displace and run sequence of that morning.
 
