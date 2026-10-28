@@ -63,7 +63,8 @@ side of it so the close that makes it a sweep wakes you, and keep the alert
 armed while bars close beyond the level: the close that ends a failed break is
 a sweep too. When a sweep bar has closed, arm a 5m close alert beyond the sweep
 bar's far extreme; that close is the candidate displacement. Read it, check the
-body and the gap once the next bar has closed, and place the limit.
+body and the gap once the next bar has closed, and arm the entry alert at the
+gap's near edge.
 
 A level is never used up. When an attempt dies (three bars and no
 displacement, or the wick taken), the level stays on the list and the next 5m

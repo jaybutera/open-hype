@@ -59,7 +59,7 @@ def levels_for(d, dprev):
     for n,i in enumerate(sl[-3:]): L[f'4hL{n}']=h.low.values[i]
     return L,h
 def run(params):
-    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',tick=0.0,cut='15:55',levels='all',minpoke=0.0)
+    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',tick=0.0,fill='through',cut='15:55',levels='all',minpoke=0.0)
     P.update(params)
     trades=[];stats=dict(n_sweeps=0,n_disp=0,n_fill=0)
     for di in range(1,len(days)):
@@ -191,7 +191,7 @@ def run(params):
                         tt=f1.index[ti]
                         if fill_t is None:
                             if tt>idx[k]+pd.Timedelta(minutes=5*P['retr']): break
-                            touched = (fl<entry) if side=='long' else (fh>entry)
+                            touched = ((fl<=entry) if side=='long' else (fh>=entry)) if P['fill']=='touch' else ((fl<entry) if side=='long' else (fh>entry))
                             if touched:
                                 fill_t=tt
                                 # same-bar stop check

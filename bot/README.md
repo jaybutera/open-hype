@@ -91,6 +91,7 @@ wick, one position at a time). Net R over the sample, from the scan on
 | the same, but no trade unless the nearest level in the trade's direction is at least 2R away, and that level as the target (the v2 line 8) | 8 | +1.0 | 38% |
 | the same with a daily or 4h level between 2R and 3R replacing the 2R target | 63 | +24.7 | 51% |
 | the same with the limit 0.3 to 1.0 points inside the near edge, or at the middle of the gap | 56 to 64 | +28.4 to +29.6 | 53% to 55% |
+| the same entered at market on the first touch of the near edge (the rule in `models/2022-v3.md`) | 66 | +28.1 | 53% |
 
 Both halves of the sample (before and after 2026-07-01) are positive for the
 chosen set. Where the limit sits inside the gap changes the result by a few R
