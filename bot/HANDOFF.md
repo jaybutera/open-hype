@@ -53,19 +53,37 @@ Scan a wording change before paying for a run:
 `python3 scripts/bot-scan.py ~/src/ict-scanner/data/xyz:SP500_1m.parquet '[{}, {"tick":0.5}]'`
 (defaults are the v4 rules; keys and meanings are in `run()`).
 
+## Latest result (2026-10-27, run `2022-v4-0708-c`)
+
+First fill of any model profile. 07-08, 09:40 to 11:45 ET, $12.26: short
+4.728 at 7446.35 after the ORH failed break (sweep 10:25, displacement 10:35,
+gap 7450.0 to 7451.1), stop 7467.5, target 7404.0 (2R), stop trailed to
+7439.1 by 11:31. Open at the cutoff with +73.28 unrealised. Replaying the rest
+of the day from the parquet: the trailed stop fills at 12:05 for +0.34R; the
+untrailed stop would have lost 1R at 12:52; the target was never reached.
+Two things to know: the sim fills a market order placed on a cross alert at
+the close of the 1m bar that fired it (3.65 points through the edge here,
+which cost 0.5R of target distance), and 5m-swing trailing is what turned
+this one from a loss into a small win, so do not loosen the trailing text in
+`core.md` without scanning it.
+
 ## What to do next
 
-1. The three-day batch was stopped after its first run (07-07, $27.34, no
-   trade, woke every minute). Run one short session at a time: 07-08 from
-   09:40 to 11:45 ET covers the ORH setup the scan trades at 10:00 to 10:45.
-   Widen to full mornings and other days only after one run has filled.
-2. If the bot still fails to fill, read the journal for the mechanical reason
+1. One run at a time, short windows. Next candidate: 07-09 from 09:00 to
+   12:00 ET (the earlier v4 run declined the 10:20 ORL sweep on the old target
+   line; the current rules take it at about 7496.1 with stop 7479.5, and the
+   day ran to 7524.5 by 11:26). Then a day outside July the bot has never seen,
+   picked from `scripts/bot-scan.py --trades`.
+2. Consider ending sim sessions at 16:00 instead of 12:00 once a run fills,
+   so open positions resolve; the scan's edge assumes positions run to stop or
+   target. Cost grows with wakes, not clock time, so a quiet afternoon is cheap.
+3. If the bot still fails to fill, read the journal for the mechanical reason
    (missed alert, misread bar, rule conflict) and fix the wording, not the
    model. Every miss so far was execution, not the setup.
-3. If it trades and loses, check the losses against the scan's trades for the
+4. If it trades and loses, check the losses against the scan's trades for the
    same day (`--trades` flag prints them) before changing a rule.
-4. Days the scan trades (useful for tests): 07-07 short ONL 10:05 (loss),
+5. Days the scan trades (useful for tests): 07-07 short ONL 10:05 (loss),
    07-08 short ORH 10:00 (2R), 07-09 long PDH-as-support 09:30 (2R). The scan's
    PDH is the prior RTH high; the bot's level list also includes it.
-5. When the profile beats the baseline on the three days, merge bot-v4 to
+6. When the profile beats the baseline on the three days, merge bot-v4 to
    master and run `scripts/deploy-box.sh`. Until then leave master untouched.
