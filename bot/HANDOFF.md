@@ -55,9 +55,10 @@ Scan a wording change before paying for a run:
 
 ## What to do next
 
-1. Run the batch `/tmp/hl-sim/batch-v4.sh` (07-07, 07-08, 07-09 with the
-   market-on-touch entry) if it has not finished; compare with the baseline
-   rows in the README scoreboard (baseline three days: -1.77 realised).
+1. The three-day batch was stopped after its first run (07-07, $27.34, no
+   trade, woke every minute). Run one short session at a time: 07-08 from
+   09:40 to 11:45 ET covers the ORH setup the scan trades at 10:00 to 10:45.
+   Widen to full mornings and other days only after one run has filled.
 2. If the bot still fails to fill, read the journal for the mechanical reason
    (missed alert, misread bar, rule conflict) and fix the wording, not the
    model. Every miss so far was execution, not the setup.
