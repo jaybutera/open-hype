@@ -79,17 +79,18 @@ sim's market fill on a cross alert lands at the firing 1m bar's close
 (07-08, 3.65 points through the edge). Scanned: a fallback market entry at the
 second 5m close after the zone is known, when no touch came and the close is
 on the trade's side, gives 79 trades and +30.2R (fallback after 3 or 6 bars:
-+27.6R, +28.3R; both halves positive). It is now line 6 of the model (commit
-after 486286c). Untested in a sim run. Still open: sessions to 16:00 ET so
++27.6R, +28.3R; both halves positive). It is line 6 of the model (commit 9d90a6b) and run `2022-v4-0709-c`
+executed it as the replay predicted: long 3.944 at 7504.85 on the 10:40 close,
++72.96 unrealised at 12:00. Three-day score is in the README. Still open: sessions to 16:00 ET so
 fills resolve, and the sim's market fill at the firing 1m bar's close.
 
 ## What to do next
 
-1. One run at a time, short windows. Next candidate: 07-09 from 09:00 to
-   12:00 ET (the earlier v4 run declined the 10:20 ORL sweep on the old target
-   line; the current rules take it at about 7496.1 with stop 7479.5, and the
-   day ran to 7524.5 by 11:26). Then a day outside July the bot has never seen,
-   picked from `scripts/bot-scan.py --trades`.
+1. One run at a time. Both v4 trades were open at their cutoffs, so the next
+   runs should end at 16:00 ET (cost grows with wakes, not clock time) to get
+   realised numbers. Then a day outside July the bot has never seen, picked
+   from `scripts/bot-scan.py --trades`, and a rerun of 07-07 with the final
+   wording to complete the three-day set.
 2. Consider ending sim sessions at 16:00 instead of 12:00 once a run fills,
    so open positions resolve; the scan's edge assumes positions run to stop or
    target. Cost grows with wakes, not clock time, so a quiet afternoon is cheap.
