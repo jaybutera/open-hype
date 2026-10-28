@@ -76,11 +76,12 @@ separated by these days.
 The open question is the entry. The gap-edge retrace is what the scan rates
 best over 95 days (+28R), but it misses the strongest moves (07-09) and the
 sim's market fill on a cross alert lands at the firing 1m bar's close
-(07-08, 3.65 points through the edge). Candidates to scan before spending a
-run: (a) a second entry trigger when no retrace comes within N bars, at
-market on the next 5m close in the trade direction; (b) a limit at the near
-edge plus a market order if the edge is touched and the limit is still
-unfilled one 1m bar later; (c) sessions to 16:00 ET so fills resolve.
+(07-08, 3.65 points through the edge). Scanned: a fallback market entry at the
+second 5m close after the zone is known, when no touch came and the close is
+on the trade's side, gives 79 trades and +30.2R (fallback after 3 or 6 bars:
++27.6R, +28.3R; both halves positive). It is now line 6 of the model (commit
+after 486286c). Untested in a sim run. Still open: sessions to 16:00 ET so
+fills resolve, and the sim's market fill at the firing 1m bar's close.
 
 ## What to do next
 

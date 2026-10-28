@@ -59,7 +59,7 @@ def levels_for(d, dprev):
     for n,i in enumerate(sl[-3:]): L[f'4hL{n}']=h.low.values[i]
     return L,h
 def run(params):
-    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',tick=0.0,fill='through',cut='15:55',levels='all',minpoke=0.0)
+    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',tick=0.0,fill='through',fallback=0,cut='15:55',levels='all',minpoke=0.0)
     P.update(params)
     trades=[];stats=dict(n_sweeps=0,n_disp=0,n_fill=0)
     for di in range(1,len(days)):
@@ -191,6 +191,14 @@ def run(params):
                         tt=f1.index[ti]
                         if fill_t is None:
                             if tt>idx[k]+pd.Timedelta(minutes=5*P['retr']): break
+                            # fallback: no retrace after `fallback` 5m bars past the zone, enter at market
+                            # on the next 5m close that is still in the trade direction (bar close = this 1m close at a 5m boundary)
+                            if P['fallback'] and tt>=t0+pd.Timedelta(minutes=5*P['fallback']) and (tt+pd.Timedelta(minutes=1)).minute%5==0:
+                                if (fc>entry) if side=='long' else (fc<entry):
+                                    entry=fc; risk=abs(entry-stop)
+                                    if risk<=0.5: break
+                                    tgt = entry+P['R']*risk if side=='long' else entry-P['R']*risk
+                                    fill_t=tt; continue
                             touched = ((fl<=entry) if side=='long' else (fh>=entry)) if P['fill']=='touch' else ((fl<entry) if side=='long' else (fh>entry))
                             if touched:
                                 fill_t=tt
