@@ -42,8 +42,10 @@ levels far from price. Always arm, as well as the level alerts, a cross alert
 at the nearest 15m swing high above price and the nearest 15m swing low below
 it. When one of those fires, re-read 15m, note the new structure in the
 journal, re-arm at the next swings, and check whether the level list has
-changed. A session in which no alert fires before 10:00 ET is a session set up
-wrong.
+changed. On a trend day the swings fall one after another; re-arm the swing
+alert on the side that fired once per 15m close, not per 5m bar, and keep the
+level alerts as the wake in between. A session in which no alert fires before
+10:00 ET is a session set up wrong.
 
 Once the cash session is open, the level list grows. After the 09:35 ET close
 the opening range high and low (the 09:30 5m bar) are levels. From then on the
@@ -69,12 +71,15 @@ gap's near edge.
 A level is never used up. When an attempt dies (three bars and no
 displacement, or the wick taken), the level stays on the list and the next 5m
 close back across it starts a fresh attempt with its own sweep bar and its own
-wick; the earlier bars play no part. While price trades around a level, the
-5m close alerts on both sides of it are the wake: keep them armed the whole
-time, not only during an attempt. A cross alert at a level that price is
-chopping across is re-armed once per 5m close, not on every tick; the sweep
-is decided at the close, so nothing is lost by waiting for it. Watch every
-level price is near, not just the one of the last attempt. On 2026-07-08 the bot read one failed attempt at the session high and
+wick; the earlier bars play no part. While price trades around a level, one
+alert per level is the wake: a 5m close back on the original side of it, the
+close that would make a sweep. Closes beyond the level do not need a wake of
+their own; count them from the candles when the close back fires, and four or
+more make it a break. Do not keep a cross alert armed at a level price is
+chopping across: the sweep is decided at the close, so nothing is lost by
+waiting for it, and a wake per tick is what made the 2026-07-07 and
+2026-10-16 sessions cost three times a normal one. Watch every level price is
+near, not just the one of the last attempt. On 2026-07-08 the bot read one failed attempt at the session high and
 then slept through a failed break of the opening range high two bars later
 that displaced, left a gap and ran 2R.
 
