@@ -46,8 +46,10 @@ ones.
 - `2022-v4-1016`: one long 12 at 7737.2 (session equal lows 7733.4, fourth
   failed-break attempt, 0.2-point gap), stopped at 7730.1 twelve minutes
   later. Net -96.33 after fees. A trend day down against the bot's 4h-up read.
-- `baseline-1016`: started 2026-10-28 evening; result goes in the README
-  scoreboard when it lands.
+- `baseline-1016`: two shorts and one long, +69.60 gross, 33.23 fees, +36.37
+  net, $18.50. It traded the short side the 4h-up rule closed to v4, read GEX
+  24 times, and was done by 15:00 ET. On the one GEX day run so far the
+  baseline is ahead by 132.70 net and cost $14 less.
 
 ## How to run
 
