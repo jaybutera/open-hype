@@ -86,7 +86,10 @@ the minute the agent acted in.
   `takenAt` from `appNow()`.
 - `hl-chart-mcp.mjs`: `get_candles` reads `/api/replay/candles` up to the
   cursor when `/api/sim/clock` says a sim is active.
-- `vite-gex-plugin.ts`: GEX answers 503 under SIM=1 (no history).
+- `vite-gex-plugin.ts`: under SIM=1 GEX comes from the end-of-day archive
+  (`gex-archive.ts`, `~/data/gexbot-eod` from `scripts/gex-eod-fetch.mjs`):
+  the record at the replay cursor, shifted like the candles; a day without an
+  archive answers 503 as GEXBot does for history.
 - `scripts/sim.mjs`: the runner. `CLAUDE_BIN` swaps the agent binary.
 
 ## Known gaps
