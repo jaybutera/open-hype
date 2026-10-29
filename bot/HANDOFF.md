@@ -50,6 +50,14 @@ ones.
   net, $18.50. It traded the short side the 4h-up rule closed to v4, read GEX
   24 times, and was done by 15:00 ET. On the one GEX day run so far the
   baseline is ahead by 132.70 net and cost $14 less.
+- `2022-v4-1016-r2`: identical repeat of the first v4 run (commit f11b60f,
+  same prompt). No trade, $30.86, 481 tool calls, 114 alerts. Same bias and
+  level reads through 10:45; at the 10:50 bar run 1 had the session equal
+  lows 7733.4 on its level list and traded their fourth sweep, run 2 tracked
+  the GEX strike 7730 instead and saw no sweep bar. Eleven sweep bars, none
+  followed by a displacement with a gap. Run-to-run variance on one day is
+  one full trade, so a single sim day cannot rank profiles; compare over
+  several GEX days or by the mechanical scan.
 
 ## How to run
 
@@ -94,8 +102,7 @@ lists each trade, which is how to pick a test day).
 
 ## What to do next
 
-1. Record `baseline-1016` and compare with `2022-v4-1016` on the same day.
-   Then, one run at a time, the other GEX days (10-15 and 10-19 to 10-28),
+1. 10-16 is done three times (v4 twice, baseline once). Next, one run at a time, the other GEX days (10-15 and 10-19 to 10-28),
    v4 and baseline on the same day, with the cost in each row.
 2. The scan says the mechanical core is break-even, so a better result has to
    come from what the scan cannot see: the GEX levels and the discretion in
