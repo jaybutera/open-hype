@@ -95,42 +95,51 @@ the one sweep, displace and run sequence of that morning.
 
 ## Calibration scan
 
-Six model runs with zero trades were not three quiet days. `scripts/bot-scan.py`
-applies the model mechanically to the 98 SP500 weekdays from 2026-04-27 to
-2026-09-09 (sweeps 09:30 to 11:30 ET, 5m bars, fixed 2R target, stop beyond
-the sweep wick, one position at a time; the perp also trades on weekends, and
-those days are skipped since the bot never runs on them). Net R over the
-sample, from the scan on 2026-10-28:
+`scripts/bot-scan.py` applies the model mechanically to the SP500 1m recording
+(weekdays from 2026-04-27 to 2026-10-28, 132 sessions; sweeps 09:30 to 11:30
+ET, 5m bars, fixed 2R target, stop beyond the sweep wick, one position at a
+time, two losses end the day). It is a calibration aid for the wording in
+`bot/`, not a backtest of the bot: it has no GEX and no discretion.
+
+The scan run on 2026-10-27 that chose the v3 rules read the 4h bias from 4h
+bars indexed before 09:30 ET, which included the 08:00 to 12:00 bar still
+forming at the open, so the bias knew the first two and a half hours of the
+session. That is why it showed +23R to +30R. With the bias read from closed 4h
+bars only (fixed 2026-10-28), the same rule sets on the same data:
 
 | rule set | setups that filled | net R | win rate |
 |---|---|---|---|
-| v2 model as written (shift through a 3-bar swing, limit at the far half of the zone, bias "none" when daily and 4h disagree) | 20 | -7.5 | 25% |
-| shift = displacement closes beyond the sweep bar's extreme | 24 | +3.5 | 42% |
-| plus the limit at the near edge of the FVG | 34 | +2.7 | 44% |
-| plus the 4h direction alone as the bias | 41 | +19.5 | 56% |
-| plus a failed break (up to three closes beyond the level, then a close back) counted as a sweep | 52 | +23.2 | 56% |
-| the same with no bias filter | 78 | -1.1 | 38% |
-| the same with the v2 bias rule (daily and 4h must agree, else 4h levels only) | 47 | 0.0 | 40% |
-| the same without the FVG requirement | 55 | +7.5 | 40% |
-| the same, but no trade unless the nearest level in the trade's direction is at least 2R away, and that level as the target (the v2 line 8) | 9 | 0.0 | 33% |
-| the same with a daily or 4h level between 2R and 3R replacing the 2R target | 51 | +23.5 | 55% |
-| the same with the limit 0.3 to 1.0 points inside the near edge, or at the middle of the gap | 45 to 52 | +24.4 to +28.4 | 58% |
-| the same entered at market on the first touch of the near edge | 53 | +25.2 | 57% |
-| the same plus a market entry at the second 5m close after the zone when no touch came (the rules in `models/2022-v3.md`) | 63 | +25.6 | 59% |
+| the rules in `models/2022-v3.md` (shift = close beyond the sweep bar, failed break as a sweep, FVG required, market on the first touch of the near edge, fallback market entry at the second close, 4h direction as the bias) | 67 | +5.7 | 43% |
+| the same with no bias filter | 127 | +4.2 | 41% |
+| the same with the v2 bias rule (daily and 4h must agree, else 4h levels only) | 64 | -5.3 | 39% |
+| the same with the daily as the bias | 71 | -9.0 | 35% |
+| the same without the FVG requirement | 72 | -7.6 | 32% |
+| the same without the MSS | 90 | -0.8 | 39% |
+| the same with the shift through a 3-bar swing (the v2 definition) | 55 | +11.0 on the earlier sample | |
+| displacement body 1.5x, 2.5x, 3x the average instead of 2x | 85, 55, 39 | +1.0, +5.5, +1.6 | |
+| target 1.5R or 3R instead of 2R | 67, 67 | +5.1, -0.7 | |
+| gap at least 1 point, or a quarter of the average body | 62, 64 | +7.7, +8.7 | 45% |
+| sweep wick at least 1, 2 or 3 points through the level | 57, 39, 34 | +2.2, -7.7, -6.4 | |
+| sweeps 09:30 to 10:30 only | 54 | +6.7 | 44% |
+| daily, overnight and 4h levels only (no opening range or session extremes) | 59 | +5.9 | 44% |
+| displacement must be the bar right after the sweep bar | 41 | +9.8 | 49% |
+| the same, single-bar sweeps only | 35 | +12.0 | 54% |
 
-Both halves of the sample (before and after 2026-07-01) are positive for the
-chosen set: 31 trades for +12.6R, then 32 trades for +13.0R. Where the limit sits inside the gap changes the result by a few R
-either way over 98 days, so the near edge stays; the scan fills a limit only
-when price trades through it, which is also what the paper engine does.
-`core.md` used to say there is no trade without 2R before the next opposing
-level; that sentence now defers to the model, since the second 07-08 run read
-the two as a conflict. The first `2022-v4` run (2026-07-09, before the target line was
-changed) declined two long setups on the v2 target line because an opening
-range level sat 4 to 13 points above the entry; both ran past that level. The swing-based shift definition was the blocker: a momentum leg
-into a level leaves no swing near the level, so the shift needed a 20 to 30
-point drop and the retrace never offered 2R. The scan found one qualifying
-setup on each of 2026-07-07 (a loss), 2026-07-08 and 2026-07-09 (both to 2R).
-These are the rules in `models/2022-v3.md` and profile `2022-v4`.
+Every variant sits between -9R and +12R over 130 sessions, with 35 to 127
+trades, and the better ones are not stable across the two halves of the
+sample (the one-bar displacement: -0.3R before 2026-07-01, +10.1R after). A
+round trip at taker fees on $93,000 of notional costs about $17, a sixth of a
+$100 R, so at 67 trades the fees alone take about 11R. Read mechanically, the
+model as written has no edge in this recording; the earlier table claiming one
+was the look-ahead. What the scan does support is the ranking that went into
+the v3 wording: the sweep-bar shift over the swing shift, the gap requirement,
+the market-on-touch entry (no worse than a limit that needs trade-through), and
+the fallback (same R per trade with a fifth more trades). Weekend sessions,
+which the perp trades, are skipped.
+
+The `--trades` flag lists every trade with day, level, side, entry, stop and
+result; use it to pick a recorded day with a setup before spending a sim run
+on it.
 
 ## Reading a run
 

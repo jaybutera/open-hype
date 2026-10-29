@@ -53,13 +53,14 @@ def levels_for(d, dprev):
     on=m1[(m1.index>=pd.Timestamp(f'{dprev} 18:00',tz=ET))&(m1.index<pd.Timestamp(f'{d} 09:30',tz=ET))]
     if len(on): L['ONH']=on.high.max(); L['ONL']=on.low.min()
     # 4h swings over last 10 days
-    h=h4[(h4.index<pd.Timestamp(f'{d} 09:30',tz=ET))&(h4.index>=pd.Timestamp(f'{d} 09:30',tz=ET)-pd.Timedelta(days=12))]
+    # only 4h bars that have closed by 09:30 ET: the 08:00 bar is still forming then and its close is at 12:00
+    h=h4[(h4.index+pd.Timedelta(hours=4)<=pd.Timestamp(f'{d} 09:30',tz=ET))&(h4.index>=pd.Timestamp(f'{d} 09:30',tz=ET)-pd.Timedelta(days=12))]
     sh,sl=swings(h.high.values,h.low.values)
     for n,i in enumerate(sh[-3:]): L[f'4hH{n}']=h.high.values[i]
     for n,i in enumerate(sl[-3:]): L[f'4hL{n}']=h.low.values[i]
     return L,h
 def run(params):
-    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',tick=0.0,fill='through',fallback=0,cut='15:55',levels='all',minpoke=0.0)
+    P=dict(period='all',entry='near',m=2.0,fvg=True,mss='sweepbar',dwin=3,retr=12,sweep='failed',failk=3,bias='4h',R=2.0,tgt='fixed',tick=0.0,fill='through',fallback=0,cut='15:55',levels='all',minpoke=0.0,mingap=0.0,mingapb=0.0,sw0='09:30',sw1='11:30')
     P.update(params)
     trades=[];stats=dict(n_sweeps=0,n_disp=0,n_fill=0)
     for di in range(1,len(days)):
@@ -86,7 +87,8 @@ def run(params):
         taken_levels=set(); traded=0; losses=0; inpos_until=None
         for i in range(n0,len(allb)):
             t=idx[i].time()
-            if t>=pd.Timestamp('11:30').time(): break
+            if t>=pd.Timestamp(P['sw1']).time(): break
+            if t<pd.Timestamp(P['sw0']).time(): continue
             if inpos_until is not None and idx[i]<inpos_until: continue
             if losses>=2: break
             # intraday levels
@@ -157,6 +159,8 @@ def run(params):
                         while q>0 and ((c[q]>o[q]) if side=='long' else (c[q]<o[q])): q-=1
                         z=(min(o[q],c[q]),max(o[q],c[q]))
                     zlo,zhi=min(z),max(z)
+                    if P.get('mingap',0) and zhi-zlo<P['mingap']: continue
+                    if P.get('mingapb',0) and zhi-zlo<P['mingapb']*avgb: continue
                     if P['entry']=='mid': entry=(zlo+zhi)/2
                     elif P['entry']=='near': entry = zhi if side=='long' else zlo
                     elif P['entry']=='far': entry = zlo if side=='long' else zhi
