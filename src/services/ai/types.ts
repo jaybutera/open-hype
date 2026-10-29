@@ -68,6 +68,22 @@ export interface SnapshotLine {
   text?: string;
 }
 
+/** One mounted chart pane's asset and plotted candles (used to check overlay sets aimed at it). */
+export interface SnapshotPane {
+  pane: 'primary' | 'secondary';
+  asset: string;
+  interval: string;
+  candles: SnapshotCandle[];
+}
+
+/** How recently the user used the page that answered; picks between several open tabs. */
+export interface SnapshotClient {
+  focused: boolean;
+  visible: boolean;
+  /** appNow-independent wall-clock ms of the last pointer/key input, 0 if none. */
+  lastInputAt: number;
+}
+
 export interface ChartSnapshot {
   takenAt: number;
   mode: 'paper' | 'live';
@@ -92,6 +108,10 @@ export interface ChartSnapshot {
   overlays: Array<{ id: string; name: string; enabled: boolean }>;
   /** GEXBot levels for the asset's options (xyz:SP500 -> SPX etc.); null when the asset has none or nothing has loaded. */
   gex?: GexSummary | null;
+  /** Every mounted pane, the active one included. Server side only; not sent to the AI. */
+  panes?: SnapshotPane[];
+  /** Focus and input recency of the page that answered. Server side only. */
+  client?: SnapshotClient;
 }
 
 /* ------------------------------------------------------------ inputs --- */

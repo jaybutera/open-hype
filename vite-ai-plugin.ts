@@ -3,6 +3,7 @@ import type { Plugin } from 'vite';
 import { resolve, dirname } from 'node:path';
 import { normalizePush, OverlayValidationError } from './src/services/ai/validate.ts';
 import type { ChartSnapshot, OverlaySet } from './src/services/ai/types.ts';
+import { pickSnapshot, publicSnapshot } from './src/services/ai/snapshotPick.ts';
 import { AlertValidationError } from './src/services/ai/alerts.ts';
 import { AlertEngine, type SimBar } from './alert-engine.ts';
 import { SimClock, type SimParams } from './sim-clock.ts';
@@ -48,6 +49,8 @@ const SIM = process.env.SIM === '1';
 const SIM_START_TIMEOUT_MS = 60_000;
 const SIM_TICK_TIMEOUT_MS = 30_000;
 const SNAPSHOT_TIMEOUT_MS = 1500;
+/** After the first tab answers, how long to wait for the other connected tabs. */
+const SNAPSHOT_GRACE_MS = 250;
 const MAX_BODY = 1_000_000;
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -92,6 +95,7 @@ export function aiOverlayPlugin(): Plugin {
   let sets: OverlaySet[] = [];
   const enabled = new Set<string>();
   const waiters = new Map<string, (s: ChartSnapshot) => void>();
+
   let reqSeq = 0;
 
   /** The server's set list is authoritative; toggles come from the page. */
@@ -128,16 +132,13 @@ export function aiOverlayPlugin(): Plugin {
 
       server.ws.on('hl-ai:snapshot', (data: { snapshot?: ChartSnapshot; reqId?: string }) => {
         if (!data?.snapshot || typeof data.snapshot !== 'object') return;
-        snapshot = data.snapshot;
+        if (!data.reqId || !waiters.has(data.reqId)) snapshot = data.snapshot;
         // The page's toggle state wins for ids the server knows about.
-        for (const o of snapshot.overlays ?? []) {
+        for (const o of data.snapshot.overlays ?? []) {
           if (!sets.some(x => x.id === o.id)) continue;
           if (o.enabled) enabled.add(o.id); else enabled.delete(o.id);
         }
-        if (data.reqId) {
-          const w = waiters.get(data.reqId);
-          if (w) { waiters.delete(data.reqId); w(snapshot); }
-        }
+        if (data.reqId) waiters.get(data.reqId)?.(data.snapshot);
       });
 
       /* ------------------------------------------------------------ sim --- */
@@ -199,11 +200,33 @@ export function aiOverlayPlugin(): Plugin {
         client.send('hl-ai:trades', tradesPayload());
       });
 
+      // Every connected tab answers; keep the one the user is on (focused, visible, latest input),
+      // so a background tab on another asset does not supply the view, the default asset or the bars.
       const requestSnapshot = (): Promise<ChartSnapshot | null> => {
         const reqId = `r${++reqSeq}`;
+        const expected = Math.max(1, server.ws.clients?.size ?? 1);
+        const replies: ChartSnapshot[] = [];
         return new Promise(resolve => {
-          const timer = setTimeout(() => { waiters.delete(reqId); resolve(null); }, SNAPSHOT_TIMEOUT_MS);
-          waiters.set(reqId, s => { clearTimeout(timer); resolve(s); });
+          let grace: ReturnType<typeof setTimeout> | null = null;
+          const finish = () => {
+            clearTimeout(timer);
+            if (grace) clearTimeout(grace);
+            waiters.delete(reqId);
+            const best = pickSnapshot(replies);
+            if (best) snapshot = best;
+            if (best && replies.some(r => r.asset !== best.asset || r.pane !== best.pane)) {
+              server.config.logger.info(
+                `[hl-ai] ${replies.length} tabs answered (${replies.map(r => `${r.pane}:${r.asset}`).join(', ')}); using ${best.pane}:${best.asset}`,
+              );
+            }
+            resolve(best);
+          };
+          const timer = setTimeout(finish, SNAPSHOT_TIMEOUT_MS);
+          waiters.set(reqId, s => {
+            replies.push(s);
+            if (replies.length >= expected) finish();
+            else if (!grace) grace = setTimeout(finish, SNAPSHOT_GRACE_MS);
+          });
           server.ws.send('hl-ai:snapshot-request', { reqId });
         });
       };
@@ -255,7 +278,7 @@ export function aiOverlayPlugin(): Plugin {
           if (url.pathname === '/api/ai/view' && req.method === 'GET') {
             const fresh = await requestSnapshot();
             const view = (s: ChartSnapshot) => ({
-              ...withOverlays(s),
+              ...publicSnapshot(withOverlays(s)),
               ...(SIM ? { replay: false } : {}),
               alerts: engine.list().filter(a => a.asset === s.asset),
               proposals: desk.list().slice(-10),

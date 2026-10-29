@@ -8,7 +8,7 @@
 import { etToUtcMs, formatEt } from '../../utils/chartTime.ts';
 import {
   COLOR_NAMES, MAX_SETS_PER_PUSH, MAX_SHAPES_PER_SET, SET_PALETTE, SHAPE_TYPES,
-  type ChartSnapshot, type OverlaySet, type OverlayShape, type SnapshotCandle,
+  type ChartSnapshot, type OverlaySet, type OverlayShape, type SnapshotCandle, type SnapshotPane,
 } from './types.ts';
 
 export class OverlayValidationError extends Error {
@@ -80,8 +80,23 @@ interface Ctx {
   snapshot: ChartSnapshot | null;
   candles: SnapshotCandle[];
   barMs: number;
+  /** Interval of the pane whose candles are checked. */
+  interval: string;
   warnings: string[];
   errors: string[];
+  /** No pane shows the set's asset. */
+  noPane?: boolean;
+}
+
+/**
+ * The pane whose candles belong to `asset`: the active pane when it shows it,
+ * else another mounted pane on that asset, else null.
+ */
+export function pickPane(snapshot: ChartSnapshot, asset: string): SnapshotPane | null {
+  if (snapshot.asset === asset) {
+    return { pane: snapshot.pane, asset, interval: snapshot.interval, candles: snapshot.candles };
+  }
+  return snapshot.panes?.find(p => p.asset === asset) ?? null;
 }
 
 interface Snapped { t: number; bar: SnapshotCandle | null; now: boolean }
@@ -123,7 +138,7 @@ function snapTime(raw: unknown, path: string, ctx: Ctx, allowNow: boolean): Snap
     const grid = Math.floor(ms / barMs) * barMs;
     ctx.warnings.push(
       `${path}: ${formatEt(ms)} is outside the visible candles (${first.et} .. ${last.et}); ` +
-      `snapped to the ${ctx.snapshot?.interval ?? ''} grid at ${formatEt(grid)}, bar prices not checked`,
+      `snapped to the ${ctx.interval} grid at ${formatEt(grid)}, bar prices not checked`,
     );
     return { t: grid, bar: null, now: false };
   }
@@ -283,7 +298,10 @@ export function normalizeOverlaySet(
   opts: NormalizeOptions = {},
 ): { set: OverlaySet; warnings: string[] } {
   const candles = snapshot?.candles ?? [];
-  const ctx: Ctx = { snapshot, candles, barMs: intervalMs(snapshot?.interval, candles), warnings: [], errors: [] };
+  const ctx: Ctx = {
+    snapshot, candles, barMs: intervalMs(snapshot?.interval, candles),
+    interval: snapshot?.interval ?? '', warnings: [], errors: [],
+  };
 
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new OverlayValidationError('each set must be an object { name, shapes, description?, asset?, color? }');
@@ -309,9 +327,19 @@ export function normalizeOverlaySet(
     else asset = s.asset.trim();
   }
   if (!asset) errors.push('asset is required: no chart snapshot to default it from');
-  else if (snapshot && asset !== snapshot.asset) {
-    ctx.warnings.push(`asset ${asset} differs from the chart's ${snapshot.asset}; the set only draws when the user views ${asset}, and times/prices were not checked against its candles`);
-    ctx.candles = [];
+  else if (snapshot) {
+    // Check against the pane that shows the set's asset: the active pane first, then any other
+    // mounted pane. If none shows it, skip the bar checks rather than use another asset's bars.
+    const pane = pickPane(snapshot, asset);
+    if (pane) {
+      ctx.candles = pane.candles;
+      ctx.interval = pane.interval;
+      ctx.barMs = intervalMs(pane.interval, pane.candles);
+    } else {
+      ctx.candles = [];
+      ctx.noPane = true;
+      ctx.warnings.push(`asset ${asset} differs from the chart's ${snapshot.asset}; the set only draws when the user views ${asset}, and times/prices were not checked against its candles`);
+    }
   }
 
   let color = SET_PALETTE[(opts.index ?? 0) % SET_PALETTE.length];
@@ -330,7 +358,7 @@ export function normalizeOverlaySet(
       catch (e) { errors.push((e as Error).message); }
     });
   }
-  if (ctx.candles.length === 0 && snapshot && asset !== snapshot.asset) {
+  if (ctx.noPane) {
     // The "no candles to snap to" notes are noise once the asset warning is given.
     ctx.warnings = ctx.warnings.filter(w => !w.includes('no candles in the chart view'));
   }

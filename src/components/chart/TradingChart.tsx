@@ -82,6 +82,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const clearDrawings = useDrawingStore(s => s.clearAsset);
   /** Candles as plotted (deduped, sorted), real UTC ms; index-aligned with the series data. */
   const plottedRef = useRef<SnapshotCandle[]>([]);
+  /** asset|interval the plotted candles belong to; stale bars stay on the series while a new asset loads. */
+  const plottedKeyRef = useRef('');
   const aiPrimitivesRef = useRef<Map<string, AiOverlayPrimitive>>(new Map());
   const aiSets = useAiOverlayStore(s => s.sets);
   const aiEnabledIds = useAiOverlayStore(s => s.enabledIds);
@@ -241,6 +243,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     const order = raw.map((_, i) => i).sort((a, b) => (raw[a].time as number) - (raw[b].time as number));
     const data = order.map(i => raw[i]);
     plottedRef.current = order.map(i => plotted[i]);
+    plottedKeyRef.current = `${currentAsset}|${interval}`;
 
     try {
       seriesRef.current.setData(data);
@@ -783,12 +786,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   }, [gexStrikes, gexData, gexOffset, currentAsset, interval]);
 
 
-  // The active pane answers AI snapshot requests with what is actually on screen
+  // Each pane answers AI snapshot requests with what is actually on screen; the
+  // active one becomes the snapshot's main view, the other is listed under `panes`.
   useEffect(() => {
-    if (!isActive) return;
-    return registerSnapshotProvider(() => {
+    return registerSnapshotProvider(paneId, () => {
       const chart = chartRef.current;
-      const plotted = plottedRef.current;
+      // Bars of the previous asset/interval are not this pane's until the new candles plot.
+      const plotted = plottedKeyRef.current === `${currentAsset}|${interval}` ? plottedRef.current : [];
       const range = chart?.timeScale().getVisibleLogicalRange() ?? null;
       let from = 0;
       let to = plotted.length - 1;
@@ -809,7 +813,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         lines: paneLinesRef.current.map(l => ({ id: l.id, price: l.price, ...(l.text ? { text: l.text } : {}) })),
       };
     });
-  }, [isActive, paneId, currentAsset, interval]);
+  }, [paneId, currentAsset, interval]);
 
   const handleChartMouseMove = useCallback((e: React.MouseEvent) => {
     if (!seriesRef.current) return;

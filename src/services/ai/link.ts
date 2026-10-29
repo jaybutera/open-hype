@@ -38,12 +38,25 @@ export interface PaneView {
 
 export type SnapshotProvider = () => PaneView | null;
 
-let provider: SnapshotProvider | null = null;
+const providers = new Map<PaneId, SnapshotProvider>();
 
-/** The active TradingChart pane registers here. Returns an unregister function. */
-export function registerSnapshotProvider(fn: SnapshotProvider): () => void {
-  provider = fn;
-  return () => { if (provider === fn) provider = null; };
+/**
+ * Every mounted TradingChart pane registers here; the snapshot takes its main
+ * view from the active pane and lists the others under `panes`, so overlay
+ * checks can use the candles of the pane that shows the set's asset.
+ * Returns an unregister function.
+ */
+export function registerSnapshotProvider(paneId: PaneId, fn: SnapshotProvider): () => void {
+  providers.set(paneId, fn);
+  return () => { if (providers.get(paneId) === fn) providers.delete(paneId); };
+}
+
+let lastInputAt = 0;
+if (typeof window !== 'undefined') {
+  const mark = () => { lastInputAt = Date.now(); };
+  for (const ev of ['pointerdown', 'keydown', 'wheel', 'focus'] as const) {
+    window.addEventListener(ev, mark, { capture: true, passive: true });
+  }
 }
 
 let paperEngine: PaperEngine | null = null;
@@ -109,7 +122,16 @@ function ordersFor(asset: string, mode: 'paper' | 'live'): SnapshotOrder[] {
 export function buildSnapshot(): ChartSnapshot {
   const market = useMarketStore.getState();
   const mode = useSettingsStore.getState().mode;
-  const view = provider?.() ?? null;
+  const views = new Map<PaneId, PaneView>();
+  for (const [id, fn] of providers) {
+    try {
+      const v = fn();
+      if (v) views.set(id, v);
+    } catch (e) {
+      console.warn('[ai] pane snapshot failed', id, e);
+    }
+  }
+  const view = views.get(market.activePaneId) ?? null;
   const paneId = view?.pane ?? market.activePaneId;
   const pane = market.panes[paneId] ?? market.panes.primary;
   const asset = view?.asset ?? pane?.asset ?? 'BTC';
@@ -159,6 +181,12 @@ export function buildSnapshot(): ChartSnapshot {
       const d = ticker ? g.current(ticker) : undefined;
       return ticker && d ? gexSummary(d, g.offsetFor(ticker), 8, interval) : null;
     })(),
+    panes: [...views.values()].map(v => ({ pane: v.pane, asset: v.asset, interval: v.interval, candles: v.candles })),
+    client: {
+      focused: typeof document !== 'undefined' && document.hasFocus(),
+      visible: typeof document !== 'undefined' && document.visibilityState === 'visible',
+      lastInputAt,
+    },
   };
 }
 

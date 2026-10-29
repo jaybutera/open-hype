@@ -133,6 +133,33 @@ describe('normalizeOverlaySet', () => {
     expect(warnings.join()).toMatch(/differs from the chart's BTC/);
   });
 
+  it('checks bars against the pane that shows the set asset, never another asset', () => {
+    // Active pane is SP500 near 7700; the other pane shows XYZ100 near 29300.
+    const sp = candles(20).map(c => ({ ...c, o: c.o + 7600, h: c.h + 7600, l: c.l + 7600, c: c.c + 7600 }));
+    const nq = candles(20).map(c => ({ ...c, o: c.o + 29200, h: c.h + 29200, l: c.l + 29200, c: c.c + 29200 }));
+    const s = snap({
+      pane: 'secondary', asset: 'xyz:SP500', candles: sp,
+      panes: [
+        { pane: 'primary', asset: 'xyz:XYZ100', interval: '5m', candles: nq },
+        { pane: 'secondary', asset: 'xyz:SP500', interval: '5m', candles: sp },
+      ],
+    });
+    const arrow = { type: 'arrow', time: T0 + 5 * BAR, price: sp[5].l, dir: 'up' };
+    // Default asset is the active pane's, and the SP500 price fits its SP500 bar.
+    const a = normalizeOverlaySet({ name: 'a', shapes: [arrow] }, s);
+    expect(a.set.asset).toBe('xyz:SP500');
+    expect(a.warnings).toEqual([]);
+    // A set for the other pane's asset is checked against that pane's bars.
+    const b = normalizeOverlaySet({ name: 'b', asset: 'xyz:XYZ100', shapes: [{ ...arrow, price: sp[5].l }] }, s);
+    expect(b.warnings.join()).toMatch(/outside the .* bar \(high 29307/);
+    const b2 = normalizeOverlaySet({ name: 'b2', asset: 'xyz:XYZ100', shapes: [{ ...arrow, price: nq[5].l }] }, s);
+    expect(b2.warnings).toEqual([]);
+    // No pane shows ETH: no bar check against SP500 or XYZ100 bars.
+    const c = normalizeOverlaySet({ name: 'c', asset: 'ETH', shapes: [{ ...arrow, price: 3000 }] }, s);
+    expect(c.warnings.join()).not.toMatch(/outside the/);
+    expect(c.warnings.join()).toMatch(/not checked/);
+  });
+
   it('keeps times as given when there are no candles', () => {
     const { set, warnings } = normalizeOverlaySet({ name: 'empty', shapes: [{ type: 'vline', time: T0 + 1234 }] }, snap({ candles: [] }));
     expect((set.shapes[0] as { time: number }).time).toBe(T0 + 1234);
