@@ -25,7 +25,7 @@ def resample(df,rule,origin='start_day'):
     return o
 m5=resample(m1,'5min'); h4=resample(m1,'4h',origin=pd.Timestamp('2026-04-26 00:00',tz=ET))
 # RTH day frames
-days=sorted(set(m5.index.date))
+days=sorted(d for d in set(m5.index.date) if d.weekday()<5)  # perp trades weekends; the bot does not
 def rth(df,d): return df[(df.index.date==d)&(df.index.time>=pd.Timestamp('09:30').time())&(df.index.time<pd.Timestamp('16:00').time())]
 daily={}
 for d in days:
