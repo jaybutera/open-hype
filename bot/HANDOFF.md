@@ -12,9 +12,9 @@ framework, spending sim credits sparingly ($5 to $11 a run).
 
 ## What was found
 
-- `scripts/bot-scan.py` applies the model mechanically to 95 recorded days
+- `scripts/bot-scan.py` applies the model mechanically to 98 recorded weekdays
   (`~/src/ict-scanner/data/xyz:SP500_1m.parquet`, same data the sim replays).
-  The v2 wording fills 34 setups in 95 days, +1.2R. Two rules blocked: the
+  The v2 wording fills 20 setups in 98 weekdays, -7.5R (weekend sessions are skipped since 2026-10-28; the earlier figures counted them). Two rules blocked: the
   MSS through a 3-bar swing, and the target at the nearest level >= 2R.
 - Rules in `models/2022-v3.md` (profile `2022-v4`): shift = close beyond the
   sweep bar's extreme; failed break (<= 3 closes beyond, one back) is a sweep;
@@ -74,7 +74,7 @@ score against the baseline is in the README scoreboard; the two are not
 separated by these days.
 
 The open question is the entry. The gap-edge retrace is what the scan rates
-best over 95 days (+28R), but it misses the strongest moves (07-09) and the
+best over 98 weekdays (+25R), but it misses the strongest moves (07-09) and the
 sim's market fill on a cross alert lands at the firing 1m bar's close
 (07-08, 3.65 points through the edge). Scanned: a fallback market entry at the
 second 5m close after the zone is known, when no touch came and the close is
