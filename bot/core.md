@@ -59,7 +59,9 @@ significant level for the model. Take profit at the strike price is touching,
 not the next one. In the first 15 minutes of cash, net vol GEX is provisional;
 lean on the OI majors and zero gamma. Never cancel a resting order on a single
 GEX reading; a regime change needs two readings that agree, and an order is
-never pulled while price is reaching it.
+never pulled while price is reaching it. Do not enter toward a major strike
+or zero gamma that is under 1.5R away: it is where the move stalls, so it is
+the target, not the path.
 
 When `get_gex` is unavailable, say so once in the journal and trade structure
 alone. Do not keep retrying it.

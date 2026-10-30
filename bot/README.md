@@ -22,7 +22,7 @@ It carries no method.
 | `method/top-down.md` | the process: HTF bias, structure into levels, LTF entry; what each step writes down | per experiment |
 | `models/2022.md` | the one setup the bot may trade, as a checklist with definitions | per experiment |
 | `journaling.md` | what the bot writes to the run's journal before an order and at the close | rarely |
-| `profiles/*.json` | which files make up one bot; `2022-v1` is the first, `2022-v2` adds structure alerts and intraday levels after a run that slept through 2026-07-08; `2022-v3` is v2 with the shift swing taken from inside the leg; `2022-v4` is `models/2022-v3.md` and `method/top-down-v3.md`, the rules recalibrated by the scan below | per experiment |
+| `profiles/*.json` | which files make up one bot; `2022-v1` is the first, `2022-v2` adds structure alerts and intraday levels after a run that slept through 2026-07-08; `2022-v3` is v2 with the shift swing taken from inside the leg; `2022-v4` is `models/2022-v3.md` and `method/top-down-v3.md`, the rules recalibrated by the scan below; `2022-v5` is `models/2022-v4.md` and `method/top-down-v4.md`: direction from the daily and the GEX regime, displacement by eye instead of a 2x body, the gap on 5m or 1m, a resting limit in the gap, alerts on the trade side only | per experiment |
 | `../scripts/bot-scan.py` | mechanical scan of the model's rules over recorded 1m candles, for checking a wording change before spending a sim run on it | per experiment |
 
 A profile is `{ "files": [...] }`. The runner (`scripts/sim.mjs --profile NAME`)
