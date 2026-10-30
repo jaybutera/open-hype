@@ -59,6 +59,36 @@ ones.
   one full trade, so a single sim day cannot rank profiles; compare over
   several GEX days or by the mechanical scan.
 
+## 2022-v5 (2026-10-30)
+
+Written after reading the 10-16 journals side by side. The baseline won the
+day by reading the daily as down and the GEX regime as negative (three
+readings), entering 1m gaps left by displacements through levels in that
+direction with 6 to 8 point structural stops, and keeping its wakes to 20.
+v4 read the 4h as up, so it was long only, and spent 65 to 80 wakes counting
+closes on levels that were breaking; its eleven sweeps all failed the 2x body
+rule. Neither scan (`scripts/bot-scan.py`, `scripts/bot-scan-cont.py`) finds
+an edge for any threshold on the October GEX days (table in the README), so
+v5 removes the thresholds rather than retuning them:
+
+- `method/top-down-v4.md`: direction from the daily; the 4h says whether
+  price is expanding or retracing. GEX read at 09:35 and 09:55 as the regime:
+  negative gamma below zero gamma means breaks and continuation, positive
+  gamma above it means sweeps and reversion; regime against the daily means
+  HTF levels only and first-level targets. Alerts on the trade side only, one
+  per level, structure wake per 15m close, 20 to 30 wakes a session.
+- `models/2022-v4.md`: displacement by eye (a bar that dwarfs its
+  neighbours, closes through the extreme, leaves a gap), in either form
+  (sweep or break), gap on 5m or 1m, a resting limit a quarter into the gap
+  with stop and target attached, stop beyond the structural extreme, target
+  2R or the strike or HTF level between 1.5R and 3R, no entry toward a wall
+  under 1.5R away, no trailing after a single bar.
+- `core.md`: the 1.5R wall rule.
+
+Profile `2022-v5`, commit c100227. First run: `2022-v5-1016` (the baseline's
+day, so in sample; the check is that it trades the short side at a baseline
+cost). Then the same profile and the baseline on one fresh GEX day.
+
 ## How to run
 
 ```

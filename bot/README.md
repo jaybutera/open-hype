@@ -143,6 +143,31 @@ The `--trades` flag lists every trade with day, level, side, entry, stop and
 result; use it to pick a recorded day with a setup before spending a sim run
 on it.
 
+### The October GEX days under both scans
+
+Run 2026-10-30, the ten weekdays with a GEX archive (2026-10-15 to 10-28),
+sweeps or breaks 09:30 to 11:30 ET, fixed 2R, stop beyond the structural
+extreme, one position at a time:
+
+| scan | rules | trades on the GEX days | net R | over all 132 sessions |
+|---|---|---|---|---|
+| `bot-scan.py` (sweep form) | v3 rules, 4h bias | 4 | -2.4 | +5.7 |
+| | daily bias | 6 | -3.0 | -9.0 |
+| | no bias | 8 | -3.4 | -1.5 |
+| | daily bias, body 1.5x, gap a quarter of the average body | 5 | -2.0 | -10.7 |
+| `bot-scan-cont.py` (break form) | daily bias, stop beyond the gap | 6 | -3.0 | -16.5 |
+| | daily bias, stop beyond the break bar | 6 | -3.8 | -1.4 |
+| | daily and 4h must agree | 2 | +1.0 | 0.0 |
+| | daily bias, to 15:30 | 9 | 0.0 | -21.1 |
+
+The one scan trade that wins on 2026-10-16 is the PDH 7753.7 sweep at 09:30
+(short at 7744.8, stop 7760.2, 2R at 11:15), which every bias except the 4h
+allows and which the baseline traded in its own way. Read mechanically, neither
+form has an edge in October; the baseline's +36.37 on 10-16 came from the
+regime read, 1m gap entries with 6 to 8 point stops, and skipping the
+sweeps against the regime, none of which the scans see. `2022-v5` writes
+those down instead of thresholds.
+
 ## Reading a run
 
 - `journal.md` in the run dir: the bot's own record of what it saw, the setups
