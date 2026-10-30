@@ -104,12 +104,19 @@ export function OrderPanel({ engine }: Props) {
     }
   };
 
+  const setExecuteOutcome = useTradeSetupStore(s => s.setExecuteOutcome);
+  /** A setup Execute failed: show it here and on the chart, where the click was. */
+  const failSetup = (message: string) => {
+    setError(message);
+    setExecuteOutcome(false, message);
+  };
+
   /** Setup Execute in live mode: no confirm card, the order goes straight to the exchange. */
   const executeLive = async (input: LiveOrderInput, setupId: string) => {
     setError(null);
     setSuccess(null);
     if (tradingStatus !== 'ready') {
-      setError(walletAddress ? 'Enable trading in the wallet menu first' : 'Connect a wallet first');
+      failSetup(walletAddress ? 'Enable trading in the wallet menu first' : 'Connect a wallet first');
       return;
     }
     setLiveBusy(true);
@@ -120,12 +127,12 @@ export function OrderPanel({ engine }: Props) {
         coin: input.coin, side: input.side, size: Number(input.size), price: Number(input.price),
         leverage: input.leverage ?? leverage, cap: maxLeverageFor(input.coin),
       });
-      if (!fit.ok) { setError(fit.error); return; }
+      if (!fit.ok) { failSetup(fit.error); return; }
       if (fit.bumped) setLeverage(fit.leverage);
       const r = await submitPrepared(await prepareOrder({ ...input, leverage: fit.leverage }));
-      if (r.ok) { removeSetup(setupId); setSuccess(r.message); } else setError(r.message);
+      if (r.ok) { removeSetup(setupId); setSuccess(r.message); setExecuteOutcome(true, r.message); } else failSetup(r.message);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      failSetup(e instanceof Error ? e.message : String(e));
     } finally {
       setLiveBusy(false);
     }
@@ -144,7 +151,7 @@ export function OrderPanel({ engine }: Props) {
   const handleExecuteSetup = (id: string) => {
     const setup = useTradeSetupStore.getState().activeSetups.find(s => s.id === id);
     if (!setup) {
-      setError('Setup not found');
+      failSetup('Setup not found');
       return;
     }
 
@@ -157,7 +164,7 @@ export function OrderPanel({ engine }: Props) {
     const sizeStr = assetSize.toString();
 
     if (assetSize <= 0) {
-      setError('Risk not set — size is zero');
+      failSetup('Risk not set — size is zero');
       return;
     }
 
@@ -182,7 +189,7 @@ export function OrderPanel({ engine }: Props) {
       available: parseFloat(engine.getAvailableBalance()) || 0, leverage, cap: maxLeverageFor(setupAsset),
     });
     if (!fit.ok) {
-      setError(fit.error);
+      failSetup(fit.error);
       return;
     }
     if (fit.bumped) {
@@ -201,7 +208,7 @@ export function OrderPanel({ engine }: Props) {
       orderType: { limit: { tif: 'Gtc' } },
     });
     if (!r1.success) {
-      setError(`Entry failed: ${r1.error}`);
+      failSetup(`Entry failed: ${r1.error}`);
       return;
     }
 
@@ -230,12 +237,13 @@ export function OrderPanel({ engine }: Props) {
     if (!r3.success) errors.push(`SL: ${r3.error}`);
 
     if (errors.length > 0) {
-      setError(errors.join(' | '));
+      failSetup(errors.join(' | '));
     }
 
     removeSetup(id);
     if (errors.length === 0) {
       setSuccess('Setup executed — 3 orders placed');
+      setExecuteOutcome(true, 'Setup executed — 3 orders placed');
       setTimeout(() => setSuccess(null), 2000);
     }
   };

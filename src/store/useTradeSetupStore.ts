@@ -49,6 +49,9 @@ interface TradeSetupStore {
   requestExecute: (id: string) => void;
   /** Returns and clears the pending request, so exactly one taker runs it. */
   takeExecuteRequest: () => { id: string; nonce: number } | null;
+  /** Result of the last setup Execute, shown on the chart since the order panel may be hidden. */
+  executeOutcome: { ok: boolean; message: string; at: number } | null;
+  setExecuteOutcome: (ok: boolean, message: string) => void;
 }
 
 function resolveClicks(side: Side, clicks: number[], entryFirst?: boolean): { entry: number; sl: number; tp: number } {
@@ -178,6 +181,9 @@ export const useTradeSetupStore = create<TradeSetupStore>((set, get) => ({
     if (req) set({ executeRequest: null });
     return req;
   },
+
+  executeOutcome: null,
+  setExecuteOutcome: (ok, message) => set({ executeOutcome: { ok, message, at: Date.now() } }),
 }));
 
 // Recompute all active setups when riskUsdc changes

@@ -123,9 +123,19 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const updateSetup = useTradeSetupStore(s => s.updateSetup);
   const removeSetup = useTradeSetupStore(s => s.removeSetup);
   const requestExecute = useTradeSetupStore(s => s.requestExecute);
+  const executeOutcome = useTradeSetupStore(s => s.executeOutcome);
+  // The last Execute's result shows in the hint slot for a few seconds, on the active pane.
+  const [showOutcome, setShowOutcome] = useState(false);
+  useEffect(() => {
+    if (!executeOutcome) return;
+    setShowOutcome(true);
+    const t = setTimeout(() => setShowOutcome(false), 4000);
+    return () => clearTimeout(t);
+  }, [executeOutcome]);
   const clearPending = useTradeSetupStore(s => s.clearPending);
 
   const isActive = activePaneId === paneId;
+  const outcome = showOutcome && isActive ? executeOutcome : null;
 
   // Setups belonging to this pane, on the asset it charts now
   const paneSetups = activeSetups.filter(s => (s.paneId ?? 'primary') === paneId && s.asset === currentAsset);
@@ -980,8 +990,10 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           Draw
         </button>
         <GexToolbar ticker={gexTicker} interval={interval} />
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: tool !== 'none' ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? 'var(--up)' : 'var(--down)') : '#555', alignSelf: 'center' }}>
-          {tool !== 'none'
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: outcome ? (outcome.ok ? 'var(--up)' : 'var(--down)') : tool !== 'none' ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? 'var(--up)' : 'var(--down)') : '#555', alignSelf: 'center' }}>
+          {outcome
+            ? outcome.message
+            : tool !== 'none'
             ? drawHint
             : (pendingSetup && isActive)
             ? `${pendingSetup.entryFirst ? 'Entry set — click SL and TP' : `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup`} (${pendingSetup.clicks.length}/3) — ESC to cancel`

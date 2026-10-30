@@ -33,7 +33,7 @@ const buttonStyle = {
   lineHeight: 1,
 } as const;
 
-/** Right-hand dock with a thin strip on its left edge that collapses it to that strip; the state is remembered across reloads. */
+/** Right-hand dock with a thin strip on its left edge that collapses it to that strip; the state is remembered across reloads. Collapsed children stay mounted. */
 export function CollapsibleSide({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const toggle = () => setCollapsed(c => { saveCollapsed(!c); return !c; });
@@ -51,7 +51,8 @@ export function CollapsibleSide({ children }: { children: ReactNode }) {
           {collapsed ? '◀' : '▶'}
         </button>
       </div>
-      {!collapsed && children}
+      {/* Hidden, not unmounted: the OrderPanel inside runs Execute clicks from the chart. */}
+      <div style={{ display: collapsed ? 'none' : 'flex', minHeight: 0 }}>{children}</div>
     </div>
   );
 }
