@@ -306,6 +306,51 @@ export async function prepareTriggerMove(order: LiveOpenOrder, newTriggerPx: Dec
   };
 }
 
+/** A resting live limit order (not a trigger), the kind a chart drag can move. */
+export function isLiveLimit(order: { isTrigger: boolean; orderType: string }): boolean {
+  return !order.isTrigger && /limit/i.test(order.orderType);
+}
+
+/**
+ * Build the batchModify wire that moves a resting live limit order to `newPx`, keeping
+ * its side, remaining size, reduce-only flag and time in force. Throws with a user-facing message.
+ */
+export async function prepareLimitMove(order: LiveOpenOrder, newPx: Decimal.Value): Promise<{ oid: number; order: OrderWire; px: string }> {
+  if (!isLiveLimit(order)) throw new Error(`Order #${order.oid} is not a resting limit order`);
+  const asset = await resolveAsset(order.coin);
+  const raw = new Decimal(newPx);
+  if (!raw.isFinite() || raw.lte(0)) throw new Error(`Invalid limit price ${newPx}`);
+  const px = formatPrice(raw, asset.szDecimals);
+
+  // A limit dragged through the current price would fill at once as a taker; refuse instead.
+  const m = mid(order.coin);
+  const isBuy = order.side === 'buy';
+  const p = new Decimal(px);
+  if (isBuy ? p.gte(m) : p.lte(m)) {
+    throw new Error(`${isBuy ? 'Buy' : 'Sell'} limit ${px} must be ${isBuy ? 'below' : 'above'} the current price ${m.toString()}`);
+  }
+  const tif: TIF = order.tif === 'Alo' || order.tif === 'Ioc' ? order.tif : 'Gtc';
+  return {
+    oid: order.oid,
+    px,
+    order: {
+      a: asset.assetId, b: isBuy, p: px,
+      s: formatSize(order.sz, asset.szDecimals), r: order.reduceOnly,
+      t: { limit: { tif } },
+    },
+  };
+}
+
+/** Move a resting live limit order to a new price in place (batchModify). */
+export function modifyLiveLimit(order: LiveOpenOrder, newPx: Decimal.Value): Promise<LiveResult> {
+  return run(async () => {
+    const m = await prepareLimitMove(order, newPx);
+    const statuses = await exchange().batchModify([{ oid: m.oid, order: m.order }], vault());
+    const res = statuses.length ? describeStatuses(statuses) : { ok: true, message: '', statuses };
+    return res.ok ? { ...res, message: `Limit ${order.side} moved to ${m.px}` } : res;
+  });
+}
+
 /** Move a live TP/SL trigger order to a new trigger price in place (batchModify). */
 export function modifyLiveTrigger(order: LiveOpenOrder, newTriggerPx: Decimal.Value): Promise<LiveResult> {
   return run(async () => {

@@ -12,26 +12,38 @@ import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import Decimal from 'decimal.js';
 import type { PaperOrder } from '../../engine/paper/matching.ts';
 import type { LiveOpenOrder } from '../../store/useLiveAccountStore.ts';
-import { triggerKind } from '../../services/hl/liveTrader.ts';
+import { triggerKind, isLiveLimit } from '../../services/hl/liveTrader.ts';
 import { upColor, downColor, chartBgColor, withAlpha } from '../../store/useThemeStore.ts';
 
 /** What an order line needs: a paper order, or a live trigger order mapped into the same shape. */
 export type LineOrder = Pick<PaperOrder, 'id' | 'side' | 'price' | 'size' | 'tpsl' | 'triggerPx'>;
 
-/** Live TP/SL trigger orders are draggable; everything else live is a plain price line. */
+/** Live TP/SL trigger orders. */
 export function isLiveTrigger(o: { isTrigger: boolean; orderType: string }): boolean {
   return o.isTrigger && triggerKind(o.orderType) !== undefined;
 }
 
+/** Live TP/SL triggers and resting limits are draggable; anything else live is a plain price line. */
+export function isLiveDraggable(o: { isTrigger: boolean; orderType: string }): boolean {
+  return isLiveTrigger(o) || isLiveLimit(o);
+}
+
+/** The price a live order's line sits at: trigger price for TP/SL, limit price otherwise. */
+export function liveLinePx(o: LiveOpenOrder): string {
+  return isLiveTrigger(o) ? o.triggerPx : o.limitPx;
+}
+
 /**
- * Draggable lines for the live TP/SL triggers on `coin`, ids `live-<oid>`. `moves` holds
- * triggers already sent to a new price, drawn there until the account refresh shows it.
+ * Draggable lines for the live TP/SL triggers and resting limits on `coin`, ids `live-<oid>`.
+ * `moves` holds orders already sent to a new price, drawn there until the account refresh shows it.
  */
 export function liveLineOrders(orders: LiveOpenOrder[], coin: string, moves: Record<number, { px: number }> = {}): LineOrder[] {
-  return orders.filter(o => o.coin === coin && isLiveTrigger(o)).map(o => ({
-    id: `live-${o.oid}`, side: o.side, price: new Decimal(o.limitPx), size: new Decimal(o.sz),
-    tpsl: triggerKind(o.orderType), triggerPx: new Decimal(moves[o.oid]?.px ?? o.triggerPx),
-  }));
+  return orders.filter(o => o.coin === coin && isLiveDraggable(o)).map(o => isLiveTrigger(o)
+    ? {
+      id: `live-${o.oid}`, side: o.side, price: new Decimal(o.limitPx), size: new Decimal(o.sz),
+      tpsl: triggerKind(o.orderType), triggerPx: new Decimal(moves[o.oid]?.px ?? o.triggerPx),
+    }
+    : { id: `live-${o.oid}`, side: o.side, price: new Decimal(moves[o.oid]?.px ?? o.limitPx), size: new Decimal(o.sz) });
 }
 
 const LINE_HIT_TOLERANCE = 6;

@@ -13,10 +13,16 @@ const orders: LiveOpenOrder[] = [
   { ...base, oid: 4, coin: 'ETH' },
 ];
 
-describe('live TP/SL order lines', () => {
-  it('maps only this coin\'s TP/SL triggers, at their trigger price', () => {
+describe('live order lines', () => {
+  it('maps this coin\'s TP/SL triggers at their trigger price and resting limits at their limit price', () => {
     const lines = liveLineOrders(orders, 'BTC');
-    expect(lines.map(l => [l.id, l.tpsl, l.triggerPx?.toNumber()])).toEqual([['live-1', 'sl', 80873], ['live-2', 'tp', 81019]]);
+    expect(lines.map(l => [l.id, l.tpsl, (l.triggerPx ?? l.price).toNumber()])).toEqual([
+      ['live-1', 'sl', 80873], ['live-2', 'tp', 81019], ['live-3', undefined, 80000],
+    ]);
+  });
+
+  it('a moved limit is drawn at the price it was sent to', () => {
+    expect(liveLineOrders(orders, 'BTC', { 3: { px: 79500 } })[2].price.toNumber()).toBe(79500);
   });
 
   it('a moved trigger is drawn at the price it was sent to', () => {

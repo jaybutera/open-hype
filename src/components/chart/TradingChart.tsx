@@ -7,8 +7,8 @@ import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { TradeBoxPrimitive, chartXToTime } from './TradeBoxPrimitive.ts';
-import { OrderLinePrimitive, isLiveTrigger, liveLineOrders, type LineOrder } from './OrderLinePrimitive.ts';
-import { modifyLiveTrigger, triggerKind } from '../../services/hl/liveTrader.ts';
+import { OrderLinePrimitive, isLiveDraggable, isLiveTrigger, liveLinePx, liveLineOrders, type LineOrder } from './OrderLinePrimitive.ts';
+import { modifyLiveLimit, modifyLiveTrigger, triggerKind } from '../../services/hl/liveTrader.ts';
 import { SessionPrimitive } from './SessionPrimitive.ts';
 import { FibPrimitive } from './FibPrimitive.ts';
 import { HLinePrimitive, snapPrice } from './HLinePrimitive.ts';
@@ -129,8 +129,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
 
   // Setups belonging to this pane, on the asset it charts now
   const paneSetups = activeSetups.filter(s => (s.paneId ?? 'primary') === paneId && s.asset === currentAsset);
-  // Draggable order lines: paper orders, and live TP/SL triggers (moved with batchModify).
-  // Live limit orders stay plain price lines.
+  // Draggable order lines: paper orders, and live TP/SL triggers and resting limits (moved with batchModify).
   const [liveMoves, setLiveMoves] = useState<Record<number, { px: number; from: string }>>({});
   const [orderMsg, setOrderMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const paneOrders: LineOrder[] = mode === 'paper'
@@ -393,7 +392,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         } catch {}
       }
       for (const o of liveOrders) {
-        if (o.coin !== currentAsset || isLiveTrigger(o)) continue;
+        if (o.coin !== currentAsset || isLiveDraggable(o)) continue;
         const px = parseFloat(o.isTrigger ? o.triggerPx : o.limitPx);
         if (!(px > 0)) continue;
         try {
@@ -617,10 +616,10 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     }
   }, [paneSetups, requestExecute, removeSetup, updateSetup]);
 
-  // A moved live trigger is drawn at its new price until the account refresh shows the change.
+  // A moved live order is drawn at its new price until the account refresh shows the change.
   useEffect(() => {
     setLiveMoves(m => {
-      const keep = Object.entries(m).filter(([oid, mv]) => liveOrders.some(o => o.oid === Number(oid) && o.triggerPx === mv.from));
+      const keep = Object.entries(m).filter(([oid, mv]) => liveOrders.some(o => o.oid === Number(oid) && liveLinePx(o) === mv.from));
       return keep.length === Object.keys(m).length ? m : Object.fromEntries(keep);
     });
   }, [liveOrders]);
@@ -637,10 +636,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       const live = useLiveAccountStore.getState().openOrders.find(o => o.oid === oid);
       if (!live || !(newPrice > 0)) return;
       // A click without a move drops at the same price; nothing to send.
-      if (Math.abs(newPrice - parseFloat(live.triggerPx)) < 1e-9 * newPrice) return;
-      setLiveMoves(m => ({ ...m, [oid]: { px: newPrice, from: live.triggerPx } }));
-      void modifyLiveTrigger(live, newPrice).then(r => {
-        setOrderMsg({ ok: r.ok, text: r.ok ? r.message : `${triggerKind(live.orderType)?.toUpperCase() ?? 'Order'} not moved: ${r.message}` });
+      const from = liveLinePx(live);
+      if (Math.abs(newPrice - parseFloat(from)) < 1e-9 * newPrice) return;
+      setLiveMoves(m => ({ ...m, [oid]: { px: newPrice, from } }));
+      const trigger = isLiveTrigger(live);
+      void (trigger ? modifyLiveTrigger(live, newPrice) : modifyLiveLimit(live, newPrice)).then(r => {
+        const what = trigger ? triggerKind(live.orderType)?.toUpperCase() ?? 'Order' : 'Limit';
+        setOrderMsg({ ok: r.ok, text: r.ok ? r.message : `${what} not moved: ${r.message}` });
         if (!r.ok) setLiveMoves(m => { const { [oid]: _, ...rest } = m; return rest; });
       });
       return;

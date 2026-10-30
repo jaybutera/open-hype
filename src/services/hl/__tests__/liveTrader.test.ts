@@ -7,7 +7,7 @@ import { useLiveAccountStore } from '../../../store/useLiveAccountStore.ts';
 import { actionHash } from '../signing.ts';
 import {
   prepareOrder, placeLiveOrder, cancelLiveOrders, closeLivePosition, placeLivePositionTrigger, submitPrepared,
-  modifyLiveTrigger, prepareTriggerMove,
+  modifyLiveTrigger, prepareTriggerMove, modifyLiveLimit,
 } from '../liveTrader.ts';
 import type { LiveOpenOrder } from '../../../store/useLiveAccountStore.ts';
 import { stubHyperliquidFetch, META, XYZ_META } from '../../../test/hlMocks.ts';
@@ -259,5 +259,31 @@ describe('moving a live TP/SL trigger (chart drag)', () => {
   it('surfaces a per-order rejection', async () => {
     stubHyperliquidFetch({ exchange: () => ({ status: 'ok', response: { type: 'batchModify', data: { statuses: [{ error: 'Cannot modify canceled or filled order' }] } } }) });
     expect(await modifyLiveTrigger(sl, 59000)).toEqual(expect.objectContaining({ ok: false, message: 'rejected: Cannot modify canceled or filled order' }));
+  });
+});
+
+describe('moving a live limit order (chart drag)', () => {
+  const lim: LiveOpenOrder = {
+    coin: 'BTC', oid: 585048172447, side: 'buy', limitPx: '59000.0', sz: '0.20811', origSz: '0.20811',
+    orderType: 'Limit', isTrigger: false, triggerPx: '0.0', triggerCondition: 'N/A',
+    reduceOnly: false, isPositionTpsl: false, timestamp: 1, tif: 'Alo',
+  };
+
+  it('sends one signed batchModify keeping side, size and time in force', async () => {
+    const net = stubHyperliquidFetch({ exchange: () => ({ status: 'ok', response: { type: 'batchModify', data: { statuses: [{ resting: { oid: lim.oid } }] } } }) });
+    expect(await modifyLiveLimit(lim, 58750.4)).toMatchObject({ ok: true, message: 'Limit buy moved to 58750' });
+    const [call] = net.exchangeCalls();
+    expect(call.action).toEqual({
+      type: 'batchModify',
+      modifies: [{ oid: lim.oid, order: { a: 0, b: true, p: '58750', s: '0.20811', r: false, t: { limit: { tif: 'Alo' } } } }],
+    });
+    expect(recoverL1(call)).toBe(agent.address);
+  });
+
+  it('refuses a drag through the current price before signing', async () => {
+    const net = stubHyperliquidFetch();
+    expect(await modifyLiveLimit(lim, 60100)).toMatchObject({ ok: false, message: 'Buy limit 60100 must be below the current price 60000' });
+    expect(await modifyLiveLimit({ ...lim, side: 'sell' }, 59900)).toMatchObject({ ok: false, message: 'Sell limit 59900 must be above the current price 60000' });
+    expect(net.exchangeCalls()).toHaveLength(0);
   });
 });

@@ -32,6 +32,8 @@ export interface LiveOpenOrder {
   reduceOnly: boolean;
   isPositionTpsl: boolean;
   timestamp: number;
+  /** Time in force of a resting limit ("Gtc", "Alo", "Ioc"); null on triggers. */
+  tif?: string | null;
 }
 
 export interface LiveFill {
@@ -70,7 +72,7 @@ interface RawClearinghouse {
 interface RawOpenOrder {
   coin: string; side: 'A' | 'B'; limitPx: string; sz: string; oid: number; timestamp: number;
   triggerCondition: string; isTrigger: boolean; triggerPx: string; reduceOnly: boolean;
-  orderType: string; origSz: string; isPositionTpsl: boolean;
+  orderType: string; origSz: string; isPositionTpsl: boolean; tif?: string | null;
 }
 
 /** Builder-deployed dexes whose assets the app trades; each has its own clearinghouse. */
@@ -131,7 +133,7 @@ function toOrder(o: RawOpenOrder): LiveOpenOrder {
     coin: o.coin, oid: o.oid, side: o.side === 'B' ? 'buy' : 'sell',
     limitPx: o.limitPx, sz: o.sz, origSz: o.origSz, orderType: o.orderType,
     isTrigger: o.isTrigger, triggerPx: o.triggerPx, triggerCondition: o.triggerCondition,
-    reduceOnly: o.reduceOnly, isPositionTpsl: o.isPositionTpsl, timestamp: o.timestamp,
+    reduceOnly: o.reduceOnly, isPositionTpsl: o.isPositionTpsl, timestamp: o.timestamp, tif: o.tif ?? null,
   };
 }
 
