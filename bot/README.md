@@ -72,6 +72,9 @@ fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
 | 2026-10-16 (09:00 to 16:00) | baseline | `baseline-1016` | 2 shorts, 1 long | +69.60 | 33.23 | +36.37 | $18.50, 256 tool calls, 24 GEX reads; short 12 at 7717 (10:50 fill) covered 7703 at 11:11 for +168; short 12 at 7696 at 11:25 stopped 7702 for -72; long 12 at 7668 at 12:53 stopped 7665.8 for -26.4; finished on its own at 15:00 ET with no position |
 | 2026-10-16 (09:00 to 16:00) | 2022-v4 | `2022-v4-1016` | 1 long | -85.20 | 11.13 | -96.33 | $32.89, 460 tool calls, 80 wakes; first run with GEX served from the archive (previous close before 09:30, then the day's readings). 4h read as up, so longs only, on a trend day down (7759.7 pre-market to 7630.1). Session equal lows 7733.4 were swept four times; the fourth completed the checklist with a 0.2-point gap, market long 12 at 7737.2 (margin-capped, 0.85% risk), stopped at 7730.1 twelve minutes later. Every other long level broke by four closes instead of sweeping; the short side, where the structure was, was closed by the bias rule |
 | 2026-10-16 (09:00 to 16:00) | 2022-v4 | `2022-v4-1016-r2` | none | 0 | 0 | 0 | $30.86, 481 tool calls, 65 wakes, 114 alerts; identical repeat of `2022-v4-1016` (same commit f11b60f, same prompt). Same 4h-up read, same levels down to 7745 and 7730; the one difference is the 10:50 bar: run 1 had the session equal lows 7733.4 on its list and took their fourth sweep as a setup, run 2 tracked the GEX -vol strike 7730 instead and read the same bar as close 1 of an excursion below 7745. Eleven attempts reached a sweep bar, every one died at displacement (no 2x body with a gap in three bars) or had its wick taken first. Same wording, same bars: one trade against none |
+| 2026-10-16 (09:00 to 16:00) | 2022-v5 | `2022-v5-1016` | 0 (1 order) | 0 | 0 | 0 | $16.63, 28 wakes, 38 alerts, 7 GEX reads; daily read down, regime negative gamma at every read but one; four displacements in the direction found (09:30, 10:50, 11:05, 14:50) and none traded: the 09:47 sell limit a quarter into the 5m gap (7749.0) was never reached (retrace high 7746.4) and was cancelled under the 12-bar rule; the 11:01 and 11:16 setups were refused on line 7 because the vol put wall, which trailed spot all day (7730, 7735, 7720, 7700, 7650, 7640), sat under the entry; price went 20 to 30 points the trade's way from each |
+| 2026-10-22 (09:00 to 13:00) | baseline | `baseline-1022` | 1 short | +127.5 | 4.6 | +122.9 | $5.91; at 10:28, after the 10:24 break of the overnight low, a resting sell limit 5 at 7676.5 in the broken 7675 to 7682 shelf, stop 7686.5 above the 7685 OI put wall, target 7651 at the 7650 vol strike ("not chasing into the wall"); rested two hours, filled 12:20, target hit 12:4x |
+| 2026-10-22 (09:00 to 13:00) | 2022-v6 | `2022-v6-1022` | 1 short | -100.0 | 6.0 | -106.0 | $9.16, 19 wakes, 9 GEX reads; side short set at 10:35 by the two-read rule (09:55 was 3 points under zero gamma, no regime), after the 7699.3 to 7646 leg was done; sold the leg's last displacement at the 1m gap edge 7656.0 (filled 10:55), stop 7671.3 at the leg origin, target 7630.1 (1.69R, daily level); the 7650 vol strike 6 points below had held every read with the biggest builds and price pinned on it; the retrace to the put wall took the stop at 12:00, then price fell back to 7645 |
 
 Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
 0.00, 7 trades to 0.
@@ -167,6 +170,40 @@ form has an edge in October; the baseline's +36.37 on 10-16 came from the
 regime read, 1m gap entries with 6 to 8 point stops, and skipping the
 sweeps against the regime, none of which the scans see. `2022-v5` writes
 those down instead of thresholds.
+
+### The GEX regime on the October days
+
+From the 0DTE archive (`SPX`, `gex_zero`), read at 09:55, 10:30 and 11:30 ET:
+spot minus zero gamma in points, net vol GEX in thousands, then the cash
+session open to close. The daily-direction rule in `method/top-down-v4.md`
+said down on every one of these days.
+
+| day | 09:55 | 10:30 | 11:30 | cash open to close | side of zero gamma at 10:30 and the move after |
+|---|---|---|---|---|---|
+| 10-15 | -22, -21k | +6, +31k | +30, +176k | 7686 to 7743 | above; +43 |
+| 10-16 | -5, -14k | -10, -55k | -27, -215k | 7755 to 7651 | below; -83 |
+| 10-19 | -7, -8k | +12, +41k | +24, +191k | 7695 to 7688 | above; +16 to the 11:37 high, then -38 |
+| 10-20 | +7, +14k | +50, +141k | +7, +89k | 7682 to 7716 | above; the high was 10:30, -26 |
+| 10-21 | +1, +11k | -7, -15k | +18, +225k | 7736 to 7757 | below; +38 |
+| 10-22 | -8, -13k | -34, -95k | -24, -116k | 7686 to 7665 | below; pinned on the 7650 vol strike, -23 to the 15:02 low |
+| 10-23 | +1, -3k | -7, -28k | +26, +105k | 7620 to 7623 | below; +36 to the 11:34 high |
+| 10-26 | +14, +27k | +15, +73k | +27, +246k | 7646 to 7674 | above; +28 to the 11:01 high, then back |
+| 10-27 | -11, -17k | -4, +1k | +25, +337k | 7695 to 7718 | at zero gamma; +44 |
+| 10-28 | -5, -1k | +2, +10k | +4, +21k | 7737 to 7762 | above; +29 |
+| 10-29 | -2, -6k | +7, +28k | +12, +116k | 7712 to 7721 | above; +13 to the 11:34 high, then -42 |
+
+Net vol GEX in the first hour is within 30k of zero on every day and its
+sign at 09:55 matched the session on five of eleven. By 11:30 it is large
+and signed, and it describes the move already made more than the one to
+come: on 10-19, 10-23 and 10-26 a positive reading above zero gamma was
+followed by the afternoon giving the morning back, which is what positive
+gamma is supposed to do. The two clean negative-gamma days (10-16, 10-22)
+were the two trend days down, and on both the first leg ended on the vol
+strike that carried the biggest builds (7700 then 7650 on 10-16, 7650 all
+day on 10-22), and the sells that paid were sold on the retrace toward zero
+gamma and the OI put wall with that strike as the target. Days where price
+sat within about 7 points of zero gamma at 10:30 (10-21, 10-23, 10-27,
+10-28) went either way.
 
 ## Reading a run
 

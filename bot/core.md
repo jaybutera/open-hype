@@ -23,8 +23,9 @@ let the clock run. Boredom, a strong opinion about direction, or a level that
   allows. Two stacked orders need two margins. If the size that fits the margin
   risks less than that, take it; never widen the stop to fit a size.
 - The stop goes in with the entry as a trigger order, never "mentally".
-- Target is at least 2R. The model in `models/` says where it goes and which
-  levels may cap it; do not add a cap of your own.
+- Target is 2R, or the level the model in `models/` names between 1.5R and
+  3R; the model says which levels may cap it, do not add a cap of your own,
+  and under 1.5R there is no trade.
 - Reaching the target is the plan. Do not pull a target forward because price
   stalled, and do not trail a stop into the noise of the entry timeframe.
   Trail only behind a structure point once price has moved more than 1R.
