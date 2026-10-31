@@ -32,8 +32,12 @@ Before the side is set there is nothing to trade. Arm the structure wakes
 ## 2. The side, from the GEX regime
 
 Read `get_gex` at 09:35 and again at 09:55; the 09:35 net vol is provisional.
-Timers in this session are 5m close alerts (arm a 5m close alert and treat
-its fire as the timer; a shell sleep does not wake the session on time).
+Timers in this session are close alerts: a `close` alert on the 5m
+interval, direction `below`, at a level far above price (say 99999) fires at
+the next 5m close whatever price does, and that fire is the timer; one per
+wake you need, re-armed when it fires. A shell sleep does not wake the
+session on time, and a close alert at a real price only fires when a bar
+closes beyond it (on 2026-10-20 that cost the 09:35 read).
 Write each time: spot against zero gamma, the sign of net vol GEX and of net
 OI GEX, the major positive and negative strikes by vol and by OI. The OI
 majors are the put wall and the call wall. A vol major is a wall too when it
