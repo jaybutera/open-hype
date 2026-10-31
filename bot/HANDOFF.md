@@ -106,10 +106,10 @@ interfering; four at once was fine, five pushed free memory under 3 GB.
 waiter used today. The sim's paper balance is not visible to the bot through
 `get_chart_view` (it assumes $10,000); worth exposing.
 
-Two runs were still going when the session stopped: `2022-v7-1019` and
-`2022-v7-1023` under `/tmp/hl-sim/` on box. Read their `journal.md` and
-`paper-accounts.json`, add their rows, and run the baseline on 10-19 and
-10-23 to complete the pairs.
+v7 on 10-19 and 10-23 both traded nothing (rows in the README); the baseline
+has not run on those two days yet, so run it there to complete the pairs.
+v7 over eight fresh days: -86.5 against the baseline's -343.3 on the six
+where both ran.
 
 ## How to run
 

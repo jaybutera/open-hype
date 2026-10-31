@@ -88,6 +88,7 @@ fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
 | 2026-10-29 (09:00 to 13:00) | baseline | `baseline-1029` | 3 longs | -81.9 | 8.3 | -90.2 | $9.91; three market longs of 3 in the first 40 minutes (7710.95 at 09:31 on the failed sweep of the overnight low, 7715.6 at 09:45, 7715.05 at 10:06), stops 7701.5, 7703.5 and 7709.5, all three stopped by 10:10; stood down after the third loss. The day then went to 7731.5 by 11:30 |
 | 2026-10-21 (09:00 to 13:00) | baseline | `baseline-1021` | 1 short | -46.0 | 3.7 | -49.7 | $5.19; the same trade as `2022-v7-1021` at a smaller size: sell limit 4 at 7721.5 in the 7714 to 7722.6 breakdown zone, stop 7733, target 7700.5, filled 10:31, stopped 10:49 |
 | 2026-10-23 (09:00 to 13:00) | 2022-v7 | `2022-v7-1023` | 0 | 0 | 0 | 0 | $7.66, 24 wakes, 7 GEX reads; negative at 09:35, no regime at 09:55 (1.4 points over zero gamma), side long only at 11:15 after the 7608.1 low and the +47-point run; price then pinned on the 7650 OI put wall for forty minutes with no displacement. Flat on a day the daily rule and the early reads both pointed the wrong way |
+| 2026-10-19 (09:00 to 13:00) | 2022-v7 | `2022-v7-1019` | 0 | 0 | 0 | 0 | $8.81, 25 wakes, 9 GEX reads; the reads alternated (no regime, negative, positive, no regime, positive) and the side was set long only at 11:15; the one displacement of the day, the 10:10 bar through the 7690 vol wall and zero gamma, came with no side set, and its retrace at 10:30 into the 1m gap would in any case have had the 7705 OI call wall under 1.5R. After 11:15 the zero gamma / call wall zone was swept four times and held with no displacement bar after any sweep |
 
 Fresh GEX days, both profiles, 09:00 to 13:00 ET: 10-15 baseline -85.2, v7 0;
 10-20 baseline -86.1, v7 0; 10-21 baseline -49.7, v7 -108.1; 10-22 baseline
@@ -96,10 +97,7 @@ v7 +21.6. Six days: baseline -343.3 for $46.6 of sim credit, 2022-v7 -86.5
 for $64.3. v7 placed six orders, filled two (one win, one loss), and refused
 nine completed checklists on line 7; of the refusals that were fillable, two
 would have won about 1R (10-15 10:40, 10-26 10:15 on the v8 run) and one
-would have lost 1R (10-15 09:50). The `2022-v7-1019` run
-was still running when the session stopped for credits on 2026-10-30; its
-row is not yet here (read `/tmp/hl-sim/<run>/journal.md` on box, see
-below). `baseline-1019` and `baseline-1023` were killed at the open and have
+would have lost 1R (10-15 09:50). `baseline-1019` and `baseline-1023` were killed at the open and have
 no result.
 
 Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
