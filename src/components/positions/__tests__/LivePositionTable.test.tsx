@@ -46,7 +46,10 @@ describe('LivePositionTable', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent('Close Long');
     expect(rows[0]).toHaveTextContent('$15.43');
+    // closedPnl is gross; the net column takes the USDC fee off, on open fills too
+    expect(rows[0]).toHaveTextContent('$14.41');
     expect(rows[1]).toHaveTextContent('Open Long');
+    expect(rows[1]).toHaveTextContent('$-1.01');
   });
 
   it('balances tab shows spot tokens and each perp dex', () => {

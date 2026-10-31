@@ -42,6 +42,9 @@ const HISTORY_PAGE = 200;
 const fmtPx = (n: number) => n.toLocaleString(undefined, { maximumSignificantDigits: 6 });
 const fmtSz = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 6 });
 const pnlColor = (n: number) => (n > 0 ? 'var(--up)' : n < 0 ? 'var(--down)' : '#8a8f98');
+// Hyperliquid's closedPnl is before fees. Net takes the fee off when it is in USDC; a fee paid in
+// another token (HYPE) stays in its own column.
+const netPnl = (f: LiveFill) => f.closedPnl - (f.feeToken === 'USDC' ? f.fee : 0);
 const fmtTime = (t: number) => {
   const d = new Date(t);
   return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour12: false })}`;
@@ -60,7 +63,7 @@ function TradeHistory({ fills, loaded }: { fills: LiveFill[]; loaded: boolean })
             <th style={{ ...th, textAlign: 'left' }}>Asset</th>
             <th style={{ ...th, textAlign: 'left' }}>Direction</th>
             <th style={th}>Price</th><th style={th}>Size</th><th style={th}>Value</th>
-            <th style={th}>Fee</th><th style={{ ...th, paddingRight: 16 }}>Closed PnL</th>
+            <th style={th}>Fee</th><th style={th}>Gross</th><th style={{ ...th, paddingRight: 16 }}>Net</th>
           </tr>
         </thead>
         <tbody>
@@ -73,8 +76,9 @@ function TradeHistory({ fills, loaded }: { fills: LiveFill[]; loaded: boolean })
               <td style={td}>{fmtSz(f.sz)}</td>
               <td style={td}>${fmt(f.px * f.sz)}</td>
               <td style={{ ...td, color: '#8a8f98' }}>{fmt(f.fee, 4)} {f.feeToken !== 'USDC' ? f.feeToken : ''}</td>
-              <td style={{ ...td, paddingRight: 16, color: pnlColor(f.closedPnl), fontWeight: f.closedPnl ? 600 : 400 }}>
-                {f.closedPnl ? `$${fmt(f.closedPnl)}` : '-'}
+              <td style={{ ...td, color: '#8a8f98' }}>{f.closedPnl ? `$${fmt(f.closedPnl)}` : '-'}</td>
+              <td style={{ ...td, paddingRight: 16, color: pnlColor(netPnl(f)), fontWeight: f.closedPnl ? 600 : 400 }}>
+                ${fmt(netPnl(f))}
               </td>
             </tr>
           ))}

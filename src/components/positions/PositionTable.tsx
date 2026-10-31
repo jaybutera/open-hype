@@ -318,12 +318,14 @@ export function PositionTable({ engine }: Props) {
                 <th style={{ textAlign: 'right', padding: '4px 8px' }}>Price</th>
                 <th style={{ textAlign: 'right', padding: '4px 8px' }}>Size</th>
                 <th style={{ textAlign: 'right', padding: '4px 8px' }}>Fee</th>
-                <th style={{ textAlign: 'right', padding: '4px 16px' }}>PnL</th>
+                <th style={{ textAlign: 'right', padding: '4px 8px' }}>Gross</th>
+                <th style={{ textAlign: 'right', padding: '4px 16px' }}>Net</th>
               </tr>
             </thead>
             <tbody>
               {[...paperFills].reverse().map((fill, idx) => {
                 const pnl = parseFloat(fill.realizedPnl);
+                const net = pnl - parseFloat(fill.fee);
                 return (
                   <tr key={fill.id} className="fill-row" style={{ borderBottom: '1px solid #1a1f2e' }}>
                     <td style={{ padding: '6px 16px', color: '#8a8f98', whiteSpace: 'nowrap' }}>{fmtTime(fill.timestamp)}</td>
@@ -337,11 +339,14 @@ export function PositionTable({ engine }: Props) {
                     <td style={{ textAlign: 'right', padding: '6px 8px' }}>${parseFloat(fill.price).toFixed(2)}</td>
                     <td style={{ textAlign: 'right', padding: '6px 8px' }}>{fill.size}</td>
                     <td style={{ textAlign: 'right', padding: '6px 8px', color: '#8a8f98' }}>${parseFloat(fill.fee).toFixed(4)}</td>
+                    <td style={{ textAlign: 'right', padding: '6px 8px', color: '#8a8f98' }}>
+                      {pnl !== 0 ? `$${pnl.toFixed(2)}` : '-'}
+                    </td>
                     <td style={{
                       textAlign: 'right', padding: '6px 16px',
-                      color: pnl >= 0 ? 'var(--up)' : 'var(--down)',
+                      color: net > 0 ? 'var(--up)' : net < 0 ? 'var(--down)' : '#8a8f98',
                     }}>
-                      {pnl !== 0 ? `$${pnl.toFixed(2)}` : '-'}
+                      ${net.toFixed(2)}
                     </td>
                   </tr>
                 );
