@@ -59,35 +59,57 @@ ones.
   one full trade, so a single sim day cannot rank profiles; compare over
   several GEX days or by the mechanical scan.
 
-## 2022-v5 (2026-10-30)
+## 2022-v5 to v8 (2026-10-30)
 
-Written after reading the 10-16 journals side by side. The baseline won the
-day by reading the daily as down and the GEX regime as negative (three
-readings), entering 1m gaps left by displacements through levels in that
-direction with 6 to 8 point structural stops, and keeping its wakes to 20.
-v4 read the 4h as up, so it was long only, and spent 65 to 80 wakes counting
-closes on levels that were breaking; its eleven sweeps all failed the 2x body
-rule. Neither scan (`scripts/bot-scan.py`, `scripts/bot-scan-cont.py`) finds
-an edge for any threshold on the October GEX days (table in the README), so
-v5 removes the thresholds rather than retuning them:
+Eleven sim runs on six fresh GEX days today; every one has a row in the
+README scoreboard, and the regime table there is the key finding: the daily
+direction rule said down on all eleven October GEX days while seven of them
+closed up, so v5 was short-only through a 175-point rally. Profiles since:
 
-- `method/top-down-v4.md`: direction from the daily; the 4h says whether
-  price is expanding or retracing. GEX read at 09:35 and 09:55 as the regime:
-  negative gamma below zero gamma means breaks and continuation, positive
-  gamma above it means sweeps and reversion; regime against the daily means
-  HTF levels only and first-level targets. Alerts on the trade side only, one
-  per level, structure wake per 15m close, 20 to 30 wakes a session.
-- `models/2022-v4.md`: displacement by eye (a bar that dwarfs its
-  neighbours, closes through the extreme, leaves a gap), in either form
-  (sweep or break), gap on 5m or 1m, a resting limit a quarter into the gap
-  with stop and target attached, stop beyond the structural extreme, target
-  2R or the strike or HTF level between 1.5R and 3R, no entry toward a wall
-  under 1.5R away, no trailing after a single bar.
-- `core.md`: the 1.5R wall rule.
+- `2022-v6` (commit c314ab0): side from the GEX regime (two reads twenty
+  minutes apart agreeing on which side of zero gamma price is and the net
+  vol sign), OI majors as the only walls, entry at the 1m gap edge,
+  continuous 09:30 to 15:30 window. Lost -1R on 10-22 selling six points
+  above a vol strike that had held 7650 all day.
+- `2022-v7` (3d6a555, timer recipe 08c6d6a): a vol major that holds its
+  strike over two or more reads with the biggest builds is a wall; the entry
+  zone is the first gap of the leg; the order rests while the regime holds
+  (cancelled on a 5m close through the far edge, a regime flip, or the
+  target reached unfilled). Six fresh days: -86.5 against the baseline's
+  -343.3; two fills (10-29 +21.6, 10-21 -108.1), the rest refusals on line 7.
+  This is the current best profile and the one to keep testing.
+- `2022-v8` (db4408e): v7 with the entry at the near edge of the 5m gap
+  instead of the 1m gap (v7 missed a 2.13R fill on 10-26 by 3.4 points). One
+  proof run on 10-26 traded nothing because it read the morning's level
+  differently; unproven, not worse.
 
-Profile `2022-v5`, commit c100227. First run: `2022-v5-1016` (the baseline's
-day, so in sample; the check is that it trades the short side at a baseline
-cost). Then the same profile and the baseline on one fresh GEX day.
+What the six days say: the refusals on line 7 (a wall under 1.5R) are now
+the whole story. In positive-gamma mornings the OI call wall below and the
+vol wall above bound a 40-point band and every long setup forms in its upper
+half, so the structural stop beyond the lower wall and the target at the
+upper one never reach 1.5R. Fillable refusals went about +1R, +1R and -1R.
+Two candidates for v9, to be tested on at least three days before either is
+adopted: (a) in the sweep regime with the side against the daily, allow the
+first wall as a target down to 1.2R; or (b) let the stop sit between the
+sweep wick and the wall when the wall is more than three points past the
+wick. Also from 10-21: a side set on net vol readings decaying toward zero
+(-22.9k then -7.2k) with the biggest builds on the other side flipped within
+an hour; two reads should agree in sign and the second should not be
+smaller than the first.
+
+Cost: a 09:00 to 13:00 ET v7 session is $8.6 to $10.8 (16 reads on 10-21
+made it $16.3; the method says every 30 minutes, the bot read at every
+timer wake). Runs on different `--port`s run in parallel on box without
+interfering; four at once was fine, five pushed free memory under 3 GB.
+`/tmp/hl-sim/launch.sh NAME DAY START END PROFILE PORT` and
+`/tmp/hl-sim/waitrun.sh NAME` on box are the launcher and the blocking
+waiter used today. The sim's paper balance is not visible to the bot through
+`get_chart_view` (it assumes $10,000); worth exposing.
+
+Two runs were still going when the session stopped: `2022-v7-1019` and
+`2022-v7-1023` under `/tmp/hl-sim/` on box. Read their `journal.md` and
+`paper-accounts.json`, add their rows, and run the baseline on 10-19 and
+10-23 to complete the pairs.
 
 ## How to run
 

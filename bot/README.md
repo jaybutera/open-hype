@@ -86,6 +86,20 @@ fix and are corrected here. Run dirs are on box under `/tmp/hl-sim/`.
 | 2026-10-26 (09:00 to 11:30) | 2022-v8 | `2022-v8-1026` | 0 | 0 | 0 | 0 | $8.62; the 5m-edge proof run read the morning differently from `2022-v7-1026`: it took the 10:10 bar as the displacement off a zero gamma sweep whose target 7671 printed before the bar after it closed (voided), then checked the 10:15 break of 7671 (5m gap 7670.0 to 7677.9, stop 7658.5 beyond the 7660 OI call wall, 7700 vol wall at 1.14R) and the 10:35 sweep of 7671 (1.22R) and refused both on line 7; the first would have filled at 10:30 and reached 7700 at 11:01. Run-to-run variance is again one full setup; the wall-bounded R arithmetic, not the gap edge, is what keeps v7 and v8 out of positive-gamma mornings |
 | 2026-10-21 (09:00 to 13:00) | 2022-v7 | `2022-v7-1021` | 1 short | -100.0 | 8.1 | -108.1 | $16.29, 27 wakes, 16 GEX reads (too many: every timer wake re-read); side short at 10:30 on reads of -22.9k and -7.2k net vol (decaying toward zero, with the biggest builds already on the call side at 7740 and 7750); sell limit 7722.6 at the gap of the 10:05 break of the overnight low, filled 10:31, stop 7734.0 above the leg origin, target the 7700 put wall (1.98R); stopped 10:49; one minute after the fill the read was +8.6k with spot on zero gamma, and the side flipped long at 11:20 as the day ran to 7763. The three long setups after that were refused on line 7 (the first level in the way under 1.5R against the daily) or line 3 |
 | 2026-10-29 (09:00 to 13:00) | baseline | `baseline-1029` | 3 longs | -81.9 | 8.3 | -90.2 | $9.91; three market longs of 3 in the first 40 minutes (7710.95 at 09:31 on the failed sweep of the overnight low, 7715.6 at 09:45, 7715.05 at 10:06), stops 7701.5, 7703.5 and 7709.5, all three stopped by 10:10; stood down after the third loss. The day then went to 7731.5 by 11:30 |
+| 2026-10-21 (09:00 to 13:00) | baseline | `baseline-1021` | 1 short | -46.0 | 3.7 | -49.7 | $5.19; the same trade as `2022-v7-1021` at a smaller size: sell limit 4 at 7721.5 in the 7714 to 7722.6 breakdown zone, stop 7733, target 7700.5, filled 10:31, stopped 10:49 |
+
+Fresh GEX days, both profiles, 09:00 to 13:00 ET: 10-15 baseline -85.2, v7 0;
+10-20 baseline -86.1, v7 0; 10-21 baseline -49.7, v7 -108.1; 10-22 baseline
++122.9, v6 -106.0, v7 0; 10-26 baseline -155.0, v7 0; 10-29 baseline -90.2,
+v7 +21.6. Six days: baseline -343.3 for $46.6 of sim credit, 2022-v7 -86.5
+for $64.3. v7 placed six orders, filled two (one win, one loss), and refused
+nine completed checklists on line 7; of the refusals that were fillable, two
+would have won about 1R (10-15 10:40, 10-26 10:15 on the v8 run) and one
+would have lost 1R (10-15 09:50). The `2022-v7-1019` and `2022-v7-1023` runs
+were still running when the session stopped for credits on 2026-10-30; their
+rows are not yet here (read `/tmp/hl-sim/<run>/journal.md` on box, see
+below). `baseline-1019` and `baseline-1023` were killed at the open and have
+no result.
 
 Three days: baseline -1.77 realised (+18.33 with the open position), 2022-v1
 0.00, 7 trades to 0.
