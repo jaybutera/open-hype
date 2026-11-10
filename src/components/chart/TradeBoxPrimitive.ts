@@ -11,16 +11,17 @@ import type {
   SeriesType,
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
-import type { TradeSetup } from '../../store/useTradeSetupStore.ts';
+import { MAX_TPS, TP_PCT_STEP, type SetupField, type TradeSetup } from '../../store/useTradeSetupStore.ts';
 import { upColor, downColor, chartBgColor, withAlpha } from '../../store/useThemeStore.ts';
 
-type DragField = 'entry' | 'sl' | 'tp';
+type DragField = SetupField;
 
 const LINE_HIT_TOLERANCE = 6;
 const ENTRY_LINE = '#3861fb';
 const LABEL_COLOR = '#e1e4e8';
 const EXEC_W = 64;
 const CLOSE_W = 20;
+const ADD_TP_W = 34;
 const BTN_H = 18;
 const BTN_GAP = 4;
 const CHIP_H = 18;
@@ -69,22 +70,46 @@ function timeToX(chart: Chart, series: Series, t: number): { x: number; spacing:
   return { x: b.lastX + ((t - b.lastT) / b.interval) * b.spacing, spacing: b.spacing };
 }
 
+export interface TpLayout {
+  id: string;
+  y: number;
+  /** Chip text: P&L alone with one TP; with several, the leg's number, share, R and P&L. */
+  text: string;
+  chip: Rect;
+  /** ✕ beside the chip; null with a single TP. */
+  remove: Rect | null;
+}
+
 export interface TradeBoxLayout {
   /** Box left and right edges. */
   x1: number;
   x2: number;
   entryY: number;
   slY: number;
-  tpY: number;
+  /** TP legs nearest to entry first, with their chips. */
+  tps: TpLayout[];
   /** P&L chips sit right of the box, or left of it when the right side has no room. */
   chipsLeft: boolean;
   info: string;
   execute: Rect;
+  /** Adds a TP leg on the next chart click; null at MAX_TPS. */
+  addTp: Rect | null;
   remove: Rect;
 }
 
 function entryInfo(setup: TradeSetup): string {
-  return `${setup.side === 'buy' ? 'LONG' : 'SHORT'} ${fmtSize(setup.assetSize)} · R:R ${setup.rr.toFixed(1)}`;
+  const rr = `R:R ${setup.rr.toFixed(1)}${setup.tps.length > 1 ? ' avg' : ''}`;
+  return `${setup.side === 'buy' ? 'LONG' : 'SHORT'} ${fmtSize(setup.assetSize)} · ${rr}`;
+}
+
+function tpText(setup: TradeSetup, i: number): string {
+  const t = setup.tps[i];
+  const move = Math.abs(t.price - setup.entryPrice);
+  const pnl = setup.assetSize * (t.pct / 100) * move;
+  if (setup.tps.length === 1) return `+${fmtUsd(pnl)} USD`;
+  const risk = Math.abs(setup.entryPrice - setup.slPrice);
+  const r = risk > 0 ? move / risk : 0;
+  return `TP${i + 1} · ${t.pct}% · ${r.toFixed(1)}R · +${fmtUsd(pnl)}`;
 }
 
 /**
@@ -95,12 +120,13 @@ function entryInfo(setup: TradeSetup): string {
 export function tradeBoxLayout(
   width: number,
   setup: TradeSetup,
-  y: { entryY: number; slY: number; tpY: number },
+  y: { entryY: number; slY: number; tpYs: number[] },
   chart: Chart | null,
   series: Series | null,
 ): TradeBoxLayout {
   const info = entryInfo(setup);
-  const entryChipW = textW(info) + BTN_GAP + EXEC_W + BTN_GAP + CLOSE_W;
+  const canAdd = setup.tps.length < MAX_TPS;
+  const entryChipW = textW(info) + BTN_GAP + EXEC_W + (canAdd ? BTN_GAP + ADD_TP_W : 0) + BTN_GAP + CLOSE_W;
   let x1: number;
   let x2: number;
   const anchor = chart && series && setup.startTime !== undefined ? timeToX(chart, series, setup.startTime) : null;
@@ -115,8 +141,28 @@ export function tradeBoxLayout(
   const chipX = chipsLeft ? x1 - 6 - entryChipW : Math.max(4, Math.min(x2 + 6, width - entryChipW - 4));
   const by = y.entryY - BTN_H / 2;
   const execute = { x: chipX + textW(info) + BTN_GAP, y: by, w: EXEC_W, h: BTN_H };
-  const remove = { x: execute.x + EXEC_W + BTN_GAP, y: by, w: CLOSE_W, h: BTN_H };
-  return { x1, x2, ...y, chipsLeft, info, execute, remove };
+  const addTp = canAdd ? { x: execute.x + EXEC_W + BTN_GAP, y: by, w: ADD_TP_W, h: BTN_H } : null;
+  const remove = { x: (addTp ? addTp.x + ADD_TP_W : execute.x + EXEC_W) + BTN_GAP, y: by, w: CLOSE_W, h: BTN_H };
+  const multi = setup.tps.length > 1;
+  const tps = setup.tps.map((t, i): TpLayout => {
+    const text = tpText(setup, i);
+    const ty = y.tpYs[i];
+    const w = textW(text) + (multi ? BTN_GAP + CLOSE_W : 0);
+    const cx = chipsLeft ? x1 - 6 - w : chipX;
+    const chip = { x: cx, y: ty - CHIP_H / 2, w: textW(text), h: CHIP_H };
+    const remove = multi ? { x: cx + textW(text) + BTN_GAP, y: ty - BTN_H / 2, w: CLOSE_W, h: BTN_H } : null;
+    return { id: t.id, y: ty, text, chip, remove };
+  });
+  return { x1, x2, entryY: y.entryY, slY: y.slY, tps, chipsLeft, info, execute, addTp, remove };
+}
+
+export interface TradeBoxActions {
+  onExecute: (id: string) => void;
+  onRemove: (id: string) => void;
+  onDrag: (id: string, field: DragField, price: number) => void;
+  onAddTp: (id: string) => void;
+  onRemoveTp: (id: string, tpId: string) => void;
+  onNudgeTp: (id: string, tpId: string, delta: number) => void;
 }
 
 export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
@@ -125,51 +171,39 @@ export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
   private _chart: Chart | null = null;
   private _requestUpdate: (() => void) | null = null;
   private _paneViews: [TradeBoxPaneView, TradeBoxPaneView];
-  private _onExecute: (id: string) => void;
-  private _onRemove: (id: string) => void;
-  private _onDrag: (id: string, field: DragField, price: number) => void;
+  private _actions: TradeBoxActions;
+  private _axisViews: LevelAxisView[] = [];
 
   // Drag state
   private _dragging: DragField | null = null;
   /** Pane width from the last draw, for button hit tests. */
   _width = 0;
 
-  constructor(
-    setup: TradeSetup,
-    onExecute: (id: string) => void,
-    onRemove: (id: string) => void,
-    onDrag: (id: string, field: DragField, price: number) => void,
-  ) {
+  constructor(setup: TradeSetup, actions: TradeBoxActions) {
     this._setup = setup;
-    this._onExecute = onExecute;
-    this._onRemove = onRemove;
-    this._onDrag = onDrag;
+    this._actions = actions;
     this._paneViews = [new TradeBoxPaneView(this, 'bottom'), new TradeBoxPaneView(this, 'top')];
-    this._axisViews = [
-      new LevelAxisView(this, 'tp'),
-      new LevelAxisView(this, 'entry'),
-      new LevelAxisView(this, 'sl'),
-    ];
+    this._syncAxisViews();
   }
-
-  private _axisViews: LevelAxisView[];
 
   get setup() { return this._setup; }
   get series() { return this._series; }
 
+  /** One axis label per level; rebuilt when the TP legs change. */
+  private _syncAxisViews() {
+    const fields: DragField[] = [...this._setup.tps.map(t => `tp:${t.id}` as const), 'entry', 'sl'];
+    if (fields.length === this._axisViews.length && fields.every((f, i) => this._axisViews[i].field === f)) return;
+    this._axisViews = fields.map(f => new LevelAxisView(this, f));
+  }
+
   updateSetup(setup: TradeSetup) {
     this._setup = setup;
+    this._syncAxisViews();
     this._requestUpdate?.();
   }
 
-  updateCallbacks(
-    onExecute: (id: string) => void,
-    onRemove: (id: string) => void,
-    onDrag: (id: string, field: DragField, price: number) => void,
-  ) {
-    this._onExecute = onExecute;
-    this._onRemove = onRemove;
-    this._onDrag = onDrag;
+  updateCallbacks(actions: TradeBoxActions) {
+    this._actions = actions;
   }
 
   attached(param: SeriesAttachedParameter<Time, SeriesType>) {
@@ -189,15 +223,20 @@ export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
   /** Entry, TP and SL prices on the price scale. */
   priceAxisViews() { return this._axisViews; }
 
-  /** Keep entry, SL and TP inside the price scale, so a level past the candles still shows. */
+  /** Price of a level on the box. */
+  priceOf(field: DragField): number {
+    const s = this._setup;
+    if (field === 'entry') return s.entryPrice;
+    if (field === 'sl') return s.slPrice;
+    if (field === 'tp') return s.tpPrice;
+    return s.tps.find(t => t.id === field.slice(3))?.price ?? s.tpPrice;
+  }
+
+  /** Keep entry, SL and every TP inside the price scale, so a level past the candles still shows. */
   autoscaleInfo(): AutoscaleInfo {
-    const { entryPrice, slPrice, tpPrice } = this._setup;
-    return {
-      priceRange: {
-        minValue: Math.min(entryPrice, slPrice, tpPrice),
-        maxValue: Math.max(entryPrice, slPrice, tpPrice),
-      },
-    };
+    const { entryPrice, slPrice, tps } = this._setup;
+    const all = [entryPrice, slPrice, ...tps.map(t => t.price)];
+    return { priceRange: { minValue: Math.min(...all), maxValue: Math.max(...all) } };
   }
 
   updateAllViews() {
@@ -209,69 +248,71 @@ export class TradeBoxPrimitive implements ISeriesPrimitive<Time> {
     if (!this._series || this._width <= 0) return null;
     const entryY = this._series.priceToCoordinate(this._setup.entryPrice);
     const slY = this._series.priceToCoordinate(this._setup.slPrice);
-    const tpY = this._series.priceToCoordinate(this._setup.tpPrice);
-    if (entryY === null || slY === null || tpY === null) return null;
-    return tradeBoxLayout(this._width, this._setup, { entryY, slY, tpY }, this._chart, this._series);
+    const tpYs = this._setup.tps.map(t => this._series!.priceToCoordinate(t.price));
+    if (entryY === null || slY === null || tpYs.some(v => v === null)) return null;
+    return tradeBoxLayout(this._width, this._setup, { entryY, slY, tpYs: tpYs as number[] }, this._chart, this._series);
   }
 
-  /** Click on the drawn Execute / ✕ buttons. Returns true when a button took the click. */
+  /** Click on the drawn Execute / +TP / ✕ buttons. Returns true when a button took the click. */
   handleButtonClick(x: number, y: number): boolean {
     const b = this.layout();
     if (!b) return false;
-    if (inRect(b.execute, x, y)) { this._onExecute(this._setup.id); return true; }
-    if (inRect(b.remove, x, y)) { this._onRemove(this._setup.id); return true; }
+    const id = this._setup.id;
+    if (inRect(b.execute, x, y)) { this._actions.onExecute(id); return true; }
+    if (b.addTp && inRect(b.addTp, x, y)) { this._actions.onAddTp(id); return true; }
+    if (inRect(b.remove, x, y)) { this._actions.onRemove(id); return true; }
+    for (const t of b.tps) {
+      if (t.remove && inRect(t.remove, x, y)) { this._actions.onRemoveTp(id, t.id); return true; }
+    }
     return false;
+  }
+
+  /** Wheel over a TP chip moves that leg's share by TP_PCT_STEP. Returns true when it took the wheel. */
+  handleWheel(x: number, y: number, deltaY: number): boolean {
+    if (this._setup.tps.length < 2 || deltaY === 0) return false;
+    const b = this.layout();
+    const t = b?.tps.find(tp => inRect(tp.chip, x, y));
+    if (!t) return false;
+    this._actions.onNudgeTp(this._setup.id, t.id, deltaY < 0 ? TP_PCT_STEP : -TP_PCT_STEP);
+    return true;
+  }
+
+  /** Level line under (x, y): entry first, then SL, then the TPs. */
+  private _lineAt(b: TradeBoxLayout, x: number, y: number): DragField | null {
+    if (x < b.x1 - LINE_HIT_TOLERANCE) return null;
+    if (Math.abs(y - b.entryY) <= LINE_HIT_TOLERANCE) return 'entry';
+    if (Math.abs(y - b.slY) <= LINE_HIT_TOLERANCE) return 'sl';
+    const tp = b.tps.find(t => Math.abs(y - t.y) <= LINE_HIT_TOLERANCE);
+    return tp ? `tp:${tp.id}` : null;
   }
 
   hitTest(x: number, y: number): PrimitiveHoveredItem | null {
     const b = this.layout();
     if (!b) return null;
-    if (b && inRect(b.execute, x, y)) {
-      return { cursorStyle: 'pointer', externalId: `execute-${this._setup.id}` } as PrimitiveHoveredItem;
+    const id = this._setup.id;
+    const pointer = (what: string) => ({ cursorStyle: 'pointer', externalId: `${what}-${id}` }) as PrimitiveHoveredItem;
+    if (inRect(b.execute, x, y)) return pointer('execute');
+    if (b.addTp && inRect(b.addTp, x, y)) return pointer('add-tp');
+    if (inRect(b.remove, x, y)) return pointer('remove');
+    for (const t of b.tps) {
+      if (t.remove && inRect(t.remove, x, y)) return pointer(`remove-tp-${t.id}`);
+      if (b.tps.length > 1 && inRect(t.chip, x, y)) return { cursorStyle: 'ns-resize', externalId: `pct-${t.id}` } as PrimitiveHoveredItem;
     }
-    if (b && inRect(b.remove, x, y)) {
-      return { cursorStyle: 'pointer', externalId: `remove-${this._setup.id}` } as PrimitiveHoveredItem;
-    }
-    if (x < b.x1 - LINE_HIT_TOLERANCE) return null;
-    const { entryY, slY, tpY } = b;
-
-    if (entryY !== null && Math.abs(y - entryY) <= LINE_HIT_TOLERANCE) {
-      return { cursorStyle: 'ns-resize', externalId: `drag-entry-${this._setup.id}` } as PrimitiveHoveredItem;
-    }
-    if (slY !== null && Math.abs(y - slY) <= LINE_HIT_TOLERANCE) {
-      return { cursorStyle: 'ns-resize', externalId: `drag-sl-${this._setup.id}` } as PrimitiveHoveredItem;
-    }
-    if (tpY !== null && Math.abs(y - tpY) <= LINE_HIT_TOLERANCE) {
-      return { cursorStyle: 'ns-resize', externalId: `drag-tp-${this._setup.id}` } as PrimitiveHoveredItem;
-    }
-
-    return null;
+    const line = this._lineAt(b, x, y);
+    return line ? ({ cursorStyle: 'ns-resize', externalId: `drag-${line}-${id}` } as PrimitiveHoveredItem) : null;
   }
 
   // Called externally from chart mouse handlers (drag only; buttons go through handleButtonClick)
   handleMouseDown(x: number, y: number): boolean {
     const b = this.layout();
-    if (!b || x < b.x1 - LINE_HIT_TOLERANCE) return false;
-    const { entryY, slY, tpY } = b;
-
-    if (entryY !== null && Math.abs(y - entryY) <= LINE_HIT_TOLERANCE) {
-      this._dragging = 'entry';
-      return true;
-    }
-    if (slY !== null && Math.abs(y - slY) <= LINE_HIT_TOLERANCE) {
-      this._dragging = 'sl';
-      return true;
-    }
-    if (tpY !== null && Math.abs(y - tpY) <= LINE_HIT_TOLERANCE) {
-      this._dragging = 'tp';
-      return true;
-    }
-    return false;
+    if (!b) return false;
+    this._dragging = this._lineAt(b, x, y);
+    return this._dragging !== null;
   }
 
   handleMouseMove(price: number): boolean {
     if (!this._dragging) return false;
-    this._onDrag(this._setup.id, this._dragging, price);
+    this._actions.onDrag(this._setup.id, this._dragging, price);
     return true;
   }
 
@@ -321,7 +362,7 @@ class TradeBoxRenderer implements ISeriesPrimitivePaneRenderer {
       this._primitive._width = w;
       const L = this._primitive.layout();
       if (!L) return;
-      const { x1, x2, entryY, slY, tpY } = L;
+      const { x1, x2, entryY, slY, tps } = L;
       const bw = x2 - x1;
 
       if (this._layer === 'top') {
@@ -329,14 +370,25 @@ class TradeBoxRenderer implements ISeriesPrimitivePaneRenderer {
         return;
       }
 
-      // Profit zone (entry → TP) and loss zone (entry → SL)
+      // Profit zone entry → TP1, lighter on out to the last TP; loss zone entry → SL
+      const tp1Y = tps[0].y;
+      const lastY = tps[tps.length - 1].y;
       ctx.fillStyle = withAlpha(upColor(), 0.22);
-      ctx.fillRect(x1, Math.min(entryY, tpY), bw, Math.abs(tpY - entryY));
+      ctx.fillRect(x1, Math.min(entryY, tp1Y), bw, Math.abs(tp1Y - entryY));
+      if (tps.length > 1) {
+        ctx.fillStyle = withAlpha(upColor(), 0.11);
+        ctx.fillRect(x1, Math.min(tp1Y, lastY), bw, Math.abs(lastY - tp1Y));
+      }
       ctx.fillStyle = withAlpha(downColor(), 0.22);
       ctx.fillRect(x1, Math.min(entryY, slY), bw, Math.abs(slY - entryY));
 
       // Level edges inside the box, dotted on to the price scale
-      for (const [yy, color, lw] of [[tpY, upColor(), 1], [slY, downColor(), 1], [entryY, ENTRY_LINE, 1.5]] as const) {
+      const levels: Array<readonly [number, string, number]> = [
+        ...tps.map(t => [t.y, upColor(), 1] as const),
+        [slY, downColor(), 1],
+        [entryY, ENTRY_LINE, 1.5],
+      ];
+      for (const [yy, color, lw] of levels) {
         drawDashedLine(ctx, x1, x2, yy, color, lw, []);
         drawDashedLine(ctx, x2, w, yy, color, 1, [1, 3]);
       }
@@ -345,42 +397,39 @@ class TradeBoxRenderer implements ISeriesPrimitivePaneRenderer {
 
   private _drawChips(ctx: CanvasRenderingContext2D, L: TradeBoxLayout) {
     const setup = this._primitive.setup;
-    const { x1, entryY, slY, tpY } = L;
+    const { x1, entryY, slY } = L;
     const isLong = setup.side === 'buy';
-    // Chips hug the box edge on whichever side they sit
-    const chipAt = (text: string) => (L.chipsLeft ? x1 - 6 - textW(text) : L.execute.x - BTN_GAP - textW(L.info));
-    const tpText = `+${fmtUsd(setup.potentialPnl)} USD`;
+    const entryX = L.execute.x - BTN_GAP - textW(L.info);
+    for (const t of L.tps) {
+      drawChip(ctx, t.chip.x, t.y, t.text, upColor());
+      if (t.remove) drawButton(ctx, t.remove, '#2a2f3e', '✕');
+    }
     const slText = `−${fmtUsd(setup.potentialLoss)} USD`;
-    drawChip(ctx, chipAt(tpText), tpY, tpText, upColor());
-    drawChip(ctx, chipAt(slText), slY, slText, downColor());
-    drawChip(ctx, L.execute.x - BTN_GAP - textW(L.info), entryY, L.info, ENTRY_LINE);
+    drawChip(ctx, L.chipsLeft ? x1 - 6 - textW(slText) : entryX, slY, slText, downColor());
+    drawChip(ctx, entryX, entryY, L.info, ENTRY_LINE);
     drawButton(ctx, L.execute, isLong ? upColor() : downColor(), 'EXECUTE');
+    if (L.addTp) drawButton(ctx, L.addTp, '#2a2f3e', '+TP');
     drawButton(ctx, L.remove, '#2a2f3e', '✕');
   }
 }
 
 class LevelAxisView implements ISeriesPrimitiveAxisView {
   private _primitive: TradeBoxPrimitive;
-  private _field: DragField;
+  readonly field: DragField;
 
   constructor(primitive: TradeBoxPrimitive, field: DragField) {
     this._primitive = primitive;
-    this._field = field;
-  }
-
-  private _price(): number {
-    const s = this._primitive.setup;
-    return this._field === 'entry' ? s.entryPrice : this._field === 'tp' ? s.tpPrice : s.slPrice;
+    this.field = field;
   }
 
   coordinate(): number {
-    return this._primitive.series?.priceToCoordinate(this._price()) ?? -1;
+    return this._primitive.series?.priceToCoordinate(this._primitive.priceOf(this.field)) ?? -1;
   }
 
-  text(): string { return fmtPrice(this._price()); }
+  text(): string { return fmtPrice(this._primitive.priceOf(this.field)); }
   textColor(): string { return '#ffffff'; }
   backColor(): string {
-    return this._field === 'entry' ? ENTRY_LINE : this._field === 'tp' ? upColor() : downColor();
+    return this.field === 'entry' ? ENTRY_LINE : this.field === 'sl' ? downColor() : upColor();
   }
 }
 

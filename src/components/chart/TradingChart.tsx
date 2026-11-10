@@ -5,8 +5,8 @@ import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useThemeStore, upColor, downColor, withAlpha, candleColors } from '../../store/useThemeStore.ts';
 import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
-import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
-import { TradeBoxPrimitive, chartXToTime } from './TradeBoxPrimitive.ts';
+import { useTradeSetupStore, resolveClicks } from '../../store/useTradeSetupStore.ts';
+import { type TradeBoxActions, TradeBoxPrimitive, chartXToTime } from './TradeBoxPrimitive.ts';
 import { OrderLinePrimitive, isLiveDraggable, isLiveTrigger, liveLinePx, liveLineOrders, type LineOrder } from './OrderLinePrimitive.ts';
 import { modifyLiveLimit, modifyLiveTrigger, triggerKind } from '../../services/hl/liveTrader.ts';
 import { SessionPrimitive } from './SessionPrimitive.ts';
@@ -45,6 +45,21 @@ interface Props {
 
 const VOLUME_KEY = 'hl-volume';
 const TOOLBOX_KEY = 'hl-draw-toolbox';
+
+/** Status line while a setup is being drawn: what is placed so far and what finishes it. */
+function pendingHint(p: { side: 'buy' | 'sell'; clicks: number[]; entryFirst?: boolean }): string {
+  const tail = 'ctrl+click adds TPs · Enter finishes · ESC cancels';
+  if (!p.entryFirst) {
+    const side = p.side === 'buy' ? 'Long' : 'Short';
+    return `${side} setup: click entry, SL and TP in any order (${p.clicks.length}) · ${tail}`;
+  }
+  const [entry, ...rest] = p.clicks;
+  const profit = (c: number) => (p.side === 'buy' ? c > entry : c < entry);
+  const tps = new Set(rest.filter(profit)).size;
+  const hasSl = rest.some(c => c !== entry && !profit(c));
+  const ready = resolveClicks(p.side, p.clicks, true) !== null;
+  return `Entry set · ${hasSl ? 'SL ✓' : 'SL —'} · ${tps} TP${tps === 1 ? '' : 's'}${ready ? '' : ' · click SL and TP in any order'} · ${tail}`;
+}
 
 export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -122,6 +137,9 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const startSetupAt = useTradeSetupStore(s => s.startSetupAt);
   const updateSetup = useTradeSetupStore(s => s.updateSetup);
   const removeSetup = useTradeSetupStore(s => s.removeSetup);
+  const startAddTp = useTradeSetupStore(s => s.startAddTp);
+  const removeTp = useTradeSetupStore(s => s.removeTp);
+  const nudgeTpPct = useTradeSetupStore(s => s.nudgeTpPct);
   const requestExecute = useTradeSetupStore(s => s.requestExecute);
   const executeOutcome = useTradeSetupStore(s => s.executeOutcome);
   // The last Execute's result shows in the hint slot for a few seconds, on the active pane.
@@ -133,6 +151,9 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     return () => clearTimeout(t);
   }, [executeOutcome]);
   const clearPending = useTradeSetupStore(s => s.clearPending);
+  const finishPending = useTradeSetupStore(s => s.finishPending);
+  const addingTpTo = useTradeSetupStore(s => s.addingTpTo);
+  const cancelAddTp = useTradeSetupStore(s => s.cancelAddTp);
 
   const isActive = activePaneId === paneId;
   const outcome = showOutcome && isActive ? executeOutcome : null;
@@ -486,6 +507,19 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       if (prim.handleButtonClick(x, y)) return;
     }
 
+    // +TP on a box: the next plain click on this pane adds the leg there (a loss-side click just ends it)
+    const adding = useTradeSetupStore.getState();
+    if (adding.addingTpTo && !e.shiftKey && !e.altKey) {
+      const target = adding.activeSetups.find(s => s.id === adding.addingTpTo);
+      if (target && (target.paneId ?? 'primary') === paneId && target.asset === currentAsset) {
+        adding.addTp(target.id, snapPrice(priceNum));
+      } else {
+        adding.cancelAddTp();
+      }
+      return;
+    }
+
+
     if (tool === 'none' && !e.shiftKey && !e.ctrlKey) {
       for (const prim of hlinePrimitivesRef.current.values()) {
         if (prim.handleMouseDown(x, y)) {
@@ -531,6 +565,20 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       return;
     }
 
+    const setupStore = useTradeSetupStore.getState();
+    // While a setup is pending, ctrl+click adds a point (another TP, or the SL) and keeps it open
+    const pendingNow = setupStore.pendingSetup;
+    if (pendingNow && e.ctrlKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      addClick(
+        priceNum,
+        chartRef.current ? chartXToTime(chartRef.current, seriesRef.current, x) : null,
+        { paneId, asset: currentAsset },
+        true,
+      );
+      return;
+    }
+
     // Line tool, or ctrl+click without the tool: a horizontal line at the clicked price
     if (tool === 'line' || (e.ctrlKey && !e.shiftKey && !e.altKey)) {
       e.preventDefault();
@@ -540,7 +588,8 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     }
 
     // shift+click starts a long setup with the entry at the clicked price; ctrl+shift+click a short.
-    // Two more plain clicks place SL and TP. Shift+click during a pending setup restarts it here.
+    // Then clicks in any order: below/above entry is the SL or a TP by side. A plain click finishes
+    // once there is an SL and a TP; ctrl+click adds further TPs. Shift+click during a pending setup restarts it here.
     if (e.shiftKey) {
       e.preventDefault();
       startSetupAt(
@@ -608,23 +657,47 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       }
     }
 
+    const actions: TradeBoxActions = {
+      onExecute: requestExecute,
+      onRemove: removeSetup,
+      onDrag: updateSetup,
+      onAddTp: startAddTp,
+      onRemoveTp: removeTp,
+      onNudgeTp: nudgeTpPct,
+    };
     for (const setup of paneSetups) {
       const existing = primMap.get(setup.id);
       if (existing) {
         existing.updateSetup(setup);
-        existing.updateCallbacks(requestExecute, removeSetup, updateSetup);
+        existing.updateCallbacks(actions);
       } else {
-        const prim = new TradeBoxPrimitive(
-          setup,
-          requestExecute,
-          removeSetup,
-          updateSetup,
-        );
+        const prim = new TradeBoxPrimitive(setup, actions);
         series.attachPrimitive(prim);
         primMap.set(setup.id, prim);
       }
     }
-  }, [paneSetups, requestExecute, removeSetup, updateSetup]);
+  }, [paneSetups, requestExecute, removeSetup, updateSetup, startAddTp, removeTp, nudgeTpPct]);
+
+  // Wheel over a TP chip moves that leg's share instead of zooming the chart. Capture phase on the
+  // container runs before the chart's own wheel handler, and a non-passive listener can cancel it.
+  useEffect(() => {
+    const el = chartContainerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      for (const prim of tradeBoxPrimitivesRef.current.values()) {
+        if (prim.handleWheel(x, y, e.deltaY)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener('wheel', onWheel, { capture: true });
+  }, []);
 
   // A moved live order is drawn at its new price until the account refresh shows the change.
   useEffect(() => {
@@ -880,8 +953,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   useEffect(() => {
     if (!isActive) return;
     const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && useTradeSetupStore.getState().pendingSetup) {
+        finishPending();
+        return;
+      }
       if (e.key === 'Escape') {
         clearPending();
+        cancelAddTp();
         setTool('none');
         setFibFirstClick(null);
         setEditingLine(null);
@@ -889,7 +967,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [clearPending, isActive]);
+  }, [clearPending, finishPending, cancelAddTp, isActive]);
 
   const drawHint = tool === 'fib'
     ? (!fibFirstClick ? 'Click first fib point — ESC to cancel' : 'Click second fib point — ESC to cancel')
@@ -990,13 +1068,15 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
           Draw
         </button>
         <GexToolbar ticker={gexTicker} interval={interval} />
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: outcome ? (outcome.ok ? 'var(--up)' : 'var(--down)') : tool !== 'none' ? '#e1e4e8' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? 'var(--up)' : 'var(--down)') : '#555', alignSelf: 'center' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: outcome ? (outcome.ok ? 'var(--up)' : 'var(--down)') : tool !== 'none' ? '#e1e4e8' : (addingTpTo && isActive) ? 'var(--up)' : (pendingSetup && isActive) ? (pendingSetup.side === 'buy' ? 'var(--up)' : 'var(--down)') : '#555', alignSelf: 'center' }}>
           {outcome
             ? outcome.message
             : tool !== 'none'
             ? drawHint
+            : (addingTpTo && isActive)
+            ? 'Click a price on the profit side to add a TP — ESC to cancel'
             : (pendingSetup && isActive)
-            ? `${pendingSetup.entryFirst ? 'Entry set — click SL and TP' : `Click to place ${pendingSetup.side === 'buy' ? 'Long' : 'Short'} setup`} (${pendingSetup.clicks.length}/3) — ESC to cancel`
+            ? pendingHint(pendingSetup)
             : 'Shift+Click: long setup at entry · Ctrl+Shift+Click: short setup'}
         </span>
       </div>

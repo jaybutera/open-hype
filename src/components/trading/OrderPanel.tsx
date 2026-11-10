@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
-import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
+import { useTradeSetupStore, tpLegSizes } from '../../store/useTradeSetupStore.ts';
 import type { PaperEngine } from '../../engine/paper/PaperEngine.ts';
 import type { OrderType, Side } from '../../types/order.ts';
 import { useWalletStore } from '../../store/useWalletStore.ts';
@@ -177,6 +177,12 @@ export function OrderPanel({ engine }: Props) {
     // toward the asset's cap so the trade fits rather than failing outright
     // (live: in executeLive, against the exchange account's free margin).
     if (isLive) {
+      if (setup.tps.length > 1) {
+        // Hyperliquid's docs call the order-attached TP/SL group one-cancels-other and don't say the SL
+        // survives a partial TP fill, so split TPs are not sent live until that is checked on the exchange.
+        failSetup(`${setup.tps.length} TPs run on paper only for now; remove the extra TPs to execute live`);
+        return;
+      }
       void executeLive({
         coin: setupAsset, side: setup.side, size: assetSize, kind: 'limit', price: setup.entryPrice,
         tp: setup.tpPrice, sl: setup.slPrice, leverage,
@@ -214,16 +220,20 @@ export function OrderPanel({ engine }: Props) {
 
     const entryOid = r1.oid as string;
 
-    const r2 = engine.placeOrder({
-      coin: setupAsset,
-      side: closeSide,
-      price: setup.tpPrice.toFixed(2),
-      size: sizeStr,
-      reduceOnly: false,
-      orderType: { trigger: { isMarket: true, triggerPx: setup.tpPrice.toFixed(2), tpsl: 'tp' } },
-      parentOid: entryOid,
+    // One reduce-only TP trigger per leg, each closing its share; the SL closes the whole size.
+    const legSizes = tpLegSizes(setup.tps, assetSize);
+    setup.tps.forEach((tp, i) => {
+      const r = engine.placeOrder({
+        coin: setupAsset,
+        side: closeSide,
+        price: tp.price.toFixed(2),
+        size: legSizes[i].toString(),
+        reduceOnly: false,
+        orderType: { trigger: { isMarket: true, triggerPx: tp.price.toFixed(2), tpsl: 'tp' } },
+        parentOid: entryOid,
+      });
+      if (!r.success) errors.push(`${setup.tps.length > 1 ? `TP${i + 1}` : 'TP'}: ${r.error}`);
     });
-    if (!r2.success) errors.push(`TP: ${r2.error}`);
 
     const r3 = engine.placeOrder({
       coin: setupAsset,
@@ -242,8 +252,9 @@ export function OrderPanel({ engine }: Props) {
 
     removeSetup(id);
     if (errors.length === 0) {
-      setSuccess('Setup executed — 3 orders placed');
-      setExecuteOutcome(true, 'Setup executed — 3 orders placed');
+      const msg = `Setup executed — ${setup.tps.length + 2} orders placed`;
+      setSuccess(msg);
+      setExecuteOutcome(true, msg);
       setTimeout(() => setSuccess(null), 2000);
     }
   };
@@ -443,7 +454,9 @@ export function OrderPanel({ engine }: Props) {
           </div>
           <div>Entry: {setup.entryPrice.toFixed(2)} | Size: {setup.assetSize.toPrecision(4)}</div>
           <div>
-            <span style={{ color: 'var(--up)' }}>TP: {setup.tpPrice.toFixed(2)} (+${setup.potentialPnl.toFixed(2)})</span>
+            <span style={{ color: 'var(--up)' }}>
+              TP: {setup.tps.map(t => (setup.tps.length > 1 ? `${t.price.toFixed(2)} ${t.pct}%` : t.price.toFixed(2))).join(', ')} (+${setup.potentialPnl.toFixed(2)})
+            </span>
             {' · '}
             <span style={{ color: 'var(--down)' }}>SL: {setup.slPrice.toFixed(2)} (-${setup.potentialLoss.toFixed(2)})</span>
           </div>

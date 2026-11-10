@@ -165,6 +165,7 @@ export function buildSnapshot(): ChartSnapshot {
       entry: s.entryPrice,
       sl: s.slPrice,
       tp: s.tpPrice,
+      tps: s.tps.map(t => ({ price: t.price, pct: t.pct })),
       size: s.assetSize,
       riskUsdc: s.riskUsdc,
       rr: s.rr,

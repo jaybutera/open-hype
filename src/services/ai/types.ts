@@ -44,9 +44,13 @@ export interface SnapshotSetup {
   asset: string;
   entry: number;
   sl: number;
+  /** TP1, the nearest leg. */
   tp: number;
+  /** Every TP leg, nearest first, with the percent of size it closes. */
+  tps: Array<{ price: number; pct: number }>;
   size: number;
   riskUsdc: number;
+  /** R if every TP fills, weighted by share. */
   rr: number;
 }
 
