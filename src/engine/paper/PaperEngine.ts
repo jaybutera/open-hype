@@ -1,7 +1,7 @@
 import Decimal from 'decimal.js';
 import type { OrderRequest, PlaceOrderResult, Side } from '../../types/order.ts';
 import { DEFAULT_LEVERAGE, MAINTENANCE_MARGIN_RATE, MAKER_FEE_RATE, TAKER_FEE_RATE } from '../../config/constants.ts';
-import { matchOrders, matchTriggersByCandle, type PaperOrder, type FillResult } from './matching.ts';
+import { matchOrders, matchTriggersByCandle, matchDwell, limitTouched, dwellKey, type PaperOrder, type FillResult } from './matching.ts';
 import { applyFill, computeUnrealizedPnl, computeLiquidationPrice, type PaperPosition } from './positions.ts';
 import { calculateFee, hip3Rates, type DexFee } from './pnl.ts';
 import { createLedgerEntry, fillDir, withFillDirs, createOptionLedgerEntry, resetLedgerIds, type LedgerEntry } from './ledger.ts';
@@ -75,6 +75,8 @@ export class PaperEngine {
   private balance: Decimal;
   private positions: Map<string, PaperPosition> = new Map();
   private openOrders: PaperOrder[] = [];
+  /** dwellKey -> time the touch price first sat at or through that resting limit. */
+  private touchSince: Map<string, number> = new Map();
   private fills: LedgerEntry[] = [];
   private optionPositions: Map<string, OptionPosition> = new Map();
   private leverage: number;
@@ -247,6 +249,11 @@ export class PaperEngine {
     }
 
     const fillResults = matchOrders(coinOrders, mid, this.openOrders);
+    // Limits the touch price has held for LIMIT_DWELL_MS fill even if the mid never got there.
+    const filled = new Set(fillResults.map(f => f.order.id));
+    for (const f of matchDwell(coinOrders, this.touchSince, this.now(), this.openOrders)) {
+      if (!filled.has(f.order.id)) fillResults.push(f);
+    }
     if (fillResults.length === 0) {
       if (pos) this.emitUpdate();
       return;
@@ -256,6 +263,37 @@ export class PaperEngine {
       this.executeFill(fill);
     }
 
+    this.emitUpdate();
+  }
+
+  /**
+   * Touch prices for the dwell fill rule: a resting limit fills once the
+   * price has sat at or through it for LIMIT_DWELL_MS, no close needed.
+   * Live passes the last trade price for both sides; replay passes bid and ask.
+   */
+  onTouchPrice(coin: string, bidSidePx: string, askSidePx: string): void {
+    const bid = new Decimal(bidSidePx);
+    const ask = new Decimal(askSidePx);
+    const now = this.now();
+    const live = new Set<string>();
+    for (const o of this.openOrders) {
+      if (o.type !== 'limit') continue;
+      const key = dwellKey(o);
+      live.add(key);
+      if (o.coin !== coin) continue;
+      const parentOpen = o.parentOid !== undefined && this.openOrders.some(p => p.id === o.parentOid);
+      if (!parentOpen && limitTouched(o, bid, ask)) {
+        if (!this.touchSince.has(key)) this.touchSince.set(key, now);
+      } else {
+        this.touchSince.delete(key);
+      }
+    }
+    for (const key of this.touchSince.keys()) if (!live.has(key)) this.touchSince.delete(key);
+
+    const coinOrders = this.openOrders.filter(o => o.coin === coin);
+    const fills = matchDwell(coinOrders, this.touchSince, now, this.openOrders);
+    if (fills.length === 0) return;
+    for (const f of fills) this.executeFill(f);
     this.emitUpdate();
   }
 

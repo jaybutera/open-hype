@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo } from 'react';
 import { ws } from '../services/ws/connection.ts';
 import { useMarketStore } from '../store/useMarketStore.ts';
 import { useReplayStore } from '../store/useReplayStore.ts';
+import { useAccountStore } from '../store/useAccountStore.ts';
 import type { PaperEngine } from '../engine/paper/PaperEngine.ts';
 import type { CandleData, CandleInterval } from '../types/market.ts';
 
@@ -12,6 +13,10 @@ export function useWebSocket(engine: PaperEngine): void {
   // skip all live subscriptions so real-time data can't bleed into the replay.
   const replayActive = useReplayStore(s => s.active);
   const connectedRef = useRef(false);
+  // Coins with a resting paper limit, for the dwell fill rule's trade feed.
+  const limitCoins = useAccountStore(s =>
+    Array.from(new Set(s.paperOrders.filter(o => o.type === 'limit').map(o => o.coin))).sort().join(','),
+  );
 
   // Connect once
   useEffect(() => {
@@ -109,4 +114,20 @@ export function useWebSocket(engine: PaperEngine): void {
       for (const u of unsubs) u();
     };
   }, [candleKeys.join(','), appendCandle, engine, replayActive]);
+
+  // Last trade price per coin drives the dwell fill rule: a paper limit fills
+  // once trades have sat at or through it for 2s, without waiting for the mid.
+  useEffect(() => {
+    if (replayActive || !limitCoins) return;
+    const unsubs = limitCoins.split(',').map(coin =>
+      ws.subscribe('trades', { coin }, (data) => {
+        const trades = data as Array<{ coin: string; px: string }>;
+        if (!Array.isArray(trades)) return;
+        let last: string | undefined;
+        for (const t of trades) if (t.coin === coin) last = t.px;
+        if (last) engine.onTouchPrice(coin, last, last);
+      }),
+    );
+    return () => { for (const u of unsubs) u(); };
+  }, [limitCoins, engine, replayActive]);
 }

@@ -165,3 +165,42 @@ export function matchOrders(orders: PaperOrder[], midPrice: Decimal, allOpenOrde
 
   return fills;
 }
+
+/** How long the touch price must sit at or through a resting limit before it fills. */
+export const LIMIT_DWELL_MS = 2000;
+
+/**
+ * Whether a resting limit is at its price: a buy when the touch price for the
+ * bid side is at or below the limit, a sell when the ask-side price is at or above.
+ * Live passes the last trade for both; replay passes the recorded bid and ask.
+ */
+export function limitTouched(order: PaperOrder, bidSidePx: Decimal, askSidePx: Decimal): boolean {
+  if (order.type !== 'limit') return false;
+  return order.side === 'buy' ? bidSidePx.lte(order.price) : askSidePx.gte(order.price);
+}
+
+/** Dwell-timer key; a moved order (new price) restarts its timer. */
+export function dwellKey(order: PaperOrder): string {
+  return `${order.id}|${order.price.toString()}`;
+}
+
+/**
+ * Limits whose price has been at or through the limit for LIMIT_DWELL_MS.
+ * `since` maps dwellKey to the time the touch began. Fills at the limit (maker).
+ */
+export function matchDwell(
+  orders: PaperOrder[],
+  since: Map<string, number>,
+  now: number,
+  allOpenOrders?: PaperOrder[],
+): FillResult[] {
+  const fills: FillResult[] = [];
+  for (const order of orders) {
+    if (order.type !== 'limit') continue;
+    if (order.parentOid && allOpenOrders?.some(o => o.id === order.parentOid)) continue;
+    const t = since.get(dwellKey(order));
+    if (t === undefined || now - t < LIMIT_DWELL_MS) continue;
+    fills.push({ order, fillPrice: order.price, fillSize: order.size, isMaker: true });
+  }
+  return fills;
+}

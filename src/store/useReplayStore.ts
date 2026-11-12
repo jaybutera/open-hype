@@ -269,14 +269,14 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
 
     // Interleave every coin's quotes into one chronological stream, so a
     // multi-coin replay preserves cross-asset ordering too.
-    const stream: Array<{ t: number; coin: string; mid: number }> = [];
+    const stream: Array<{ t: number; coin: string; mid: number; bid: number; ask: number }> = [];
     const tickedCoins = new Set<string>();
     for (const coin of tickCoins) {
       const ticks = sliceTicks(coin, nextT, minuteEnd);
       if (ticks.length === 0) continue;
       tickedCoins.add(coin);
       for (const tk of ticks) {
-        stream.push({ t: tk.t, coin, mid: (tk.bid + tk.ask) / 2 });
+        stream.push({ t: tk.t, coin, mid: (tk.bid + tk.ask) / 2, bid: tk.bid, ask: tk.ask });
       }
     }
     stream.sort((a, b) => a.t - b.t);
@@ -288,6 +288,7 @@ export const useReplayStore = create<ReplayStore>((set, get) => {
       // are stamped at the instant they'd actually have happened.
       for (const q of stream) {
         set({ cursor: q.t + 1 });
+        engine.onTouchPrice(q.coin, String(q.bid), String(q.ask));
         engine.onPriceUpdate(q.coin, String(q.mid));
       }
     }
