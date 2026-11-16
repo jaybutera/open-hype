@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Meta, AssetMeta, AssetCtx, CandleData, CandleInterval } from '../types/market.ts';
-import { fetchMetaAndAssetCtxs, fetchCandles, fetchAllMids } from '../services/api/info.ts';
+import { fetchMetaAndAssetCtxs, fetchCandles, fetchAllMids, fetchBars30 } from '../services/api/info.ts';
 import { getReplayCandleSource } from '../services/replay/source.ts';
 
 export type AssetCategory = 'perps' | 'xyz';
@@ -221,7 +221,10 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
     });
     const replay = getReplayCandleSource();
     let candles: CandleData[];
-    if (replay) {
+    if (interval === '30s') {
+      // Replay recordings are 1m; 30s bars only exist live, from the dev server's recorder.
+      candles = replay ? [] : await fetchBars30(asset, { limit: 600 }).catch(() => []);
+    } else if (replay) {
       candles = await replay.loadInitial(asset, interval).catch(() => []);
     } else {
       const now = Date.now();
@@ -251,7 +254,9 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
     const replay = getReplayCandleSource();
     const earliest = Math.min(...candles.map(c => c.t));
     let older: CandleData[];
-    if (replay) {
+    if (interval === '30s') {
+      older = replay ? [] : await fetchBars30(asset, { to: earliest, limit: 600 }).catch(() => []);
+    } else if (replay) {
       older = await replay.loadMore(asset, interval, earliest).catch(() => []);
     } else {
       const intervalMs = intervalToMs(interval);
@@ -276,7 +281,7 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
 
 function intervalToMs(interval: CandleInterval): number {
   const map: Record<string, number> = {
-    '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+    '30s': 30_000, '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
     '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '8h': 28_800_000, '12h': 43_200_000,
     '1d': 86_400_000, '3d': 259_200_000, '1w': 604_800_000, '1M': 2_592_000_000,
   };

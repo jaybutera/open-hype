@@ -19,6 +19,7 @@ export interface GexLookback {
 }
 
 const BY_INTERVAL: Record<string, readonly [number, number]> = {
+  '30s': [1, 5],
   '1m': [1, 5],
   '5m': [5, 10],
   '15m': [15, 30],

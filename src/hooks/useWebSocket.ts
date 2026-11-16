@@ -101,6 +101,27 @@ export function useWebSocket(engine: PaperEngine): void {
     const unsubs: Array<() => void> = [];
     for (const key of candleKeys) {
       const [coin, interval] = key.split('|') as [string, CandleInterval];
+      if (interval === '30s') {
+        // Hyperliquid has no 30s candle feed: fold trades into the forming bar.
+        // The subscribe snapshot repeats trades the recorder already counted; skip them and repeats.
+        const since = Date.now();
+        const seen = new Set<number>();
+        unsubs.push(ws.subscribe('trades', { coin }, (data) => {
+          if (!Array.isArray(data)) return;
+          for (const t of data as Array<{ coin: string; px: string; sz: string; time: number; tid: number }>) {
+            if (t.coin !== coin || t.time < since || seen.has(t.tid)) continue;
+            seen.add(t.tid);
+            if (seen.size > 5000) seen.clear();
+            const pane = Object.values(useMarketStore.getState().panes)
+              .find(p => p && p.asset === coin && p.interval === '30s');
+            const candle = foldTrade(pane?.candles[pane.candles.length - 1], t);
+            if (!candle) continue;
+            appendCandle(candle, interval);
+            engine.onCandleUpdate(coin, candle.h, candle.l, candle.t);
+          }
+        }));
+        continue;
+      }
       const unsub = ws.subscribe('candle', { coin, interval }, (data) => {
         const candle = data as CandleData;
         if (!candle || candle.t === undefined || candle.s !== coin || candle.i !== interval) return;
@@ -130,4 +151,25 @@ export function useWebSocket(engine: PaperEngine): void {
     );
     return () => { for (const u of unsubs) u(); };
   }, [limitCoins, engine, replayActive]);
+}
+
+/** Merge one trade into the 30s bar it falls in; undefined for a trade older than the last bar. */
+export function foldTrade(
+  last: CandleData | undefined,
+  t: { coin: string; px: string; sz: string; time: number },
+): CandleData | undefined {
+  const bucket = Math.floor(t.time / 30_000) * 30_000;
+  if (last && bucket < last.t) return undefined;
+  if (!last || bucket > last.t) {
+    return { t: bucket, T: bucket + 29_999, s: t.coin, i: '30s', o: t.px, h: t.px, l: t.px, c: t.px, v: t.sz, n: 1 };
+  }
+  const px = parseFloat(t.px);
+  return {
+    ...last,
+    h: px > parseFloat(last.h) ? t.px : last.h,
+    l: px < parseFloat(last.l) ? t.px : last.l,
+    c: t.px,
+    v: String(+(parseFloat(last.v) + parseFloat(t.sz)).toPrecision(12)),
+    n: last.n + 1,
+  };
 }

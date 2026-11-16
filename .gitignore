@@ -9,3 +9,4 @@ node_modules
 # secrets (GEXBOT_API_KEY)
 .env
 .env.*
+.hl-bars30/

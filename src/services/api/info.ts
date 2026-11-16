@@ -31,6 +31,19 @@ export async function fetchCandles(
   });
 }
 
+/**
+ * 30s candles from the dev server's recorder (bars30.ts). Hyperliquid has no
+ * sub-minute candles, so history starts when the recorder began watching the coin.
+ */
+export async function fetchBars30(coin: string, opts: { to?: number; limit?: number } = {}): Promise<CandleData[]> {
+  const q = new URLSearchParams({ coin });
+  if (opts.to !== undefined) q.set('to', String(opts.to));
+  if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+  const r = await fetch(`/api/bars30?${q}`);
+  if (!r.ok) throw new Error(`bars30 ${r.status}`);
+  return ((await r.json()) as { bars: CandleData[] }).bars;
+}
+
 export async function fetchClearinghouseState(user: string): Promise<ClearinghouseState> {
   return postInfo<ClearinghouseState>({ type: 'clearinghouseState', user });
 }

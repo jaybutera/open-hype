@@ -36,7 +36,7 @@ const SNAPSHOT_MAX_BARS = 600;
 // Chart-time helpers live in utils/chartTime.ts; re-exported for existing importers.
 export { getNyOffset, utcToChartTime, chartTimeToUtc } from '../../utils/chartTime.ts';
 
-const INTERVALS: CandleInterval[] = ['1m', '5m', '15m', '1h', '4h', '1d'];
+const INTERVALS: CandleInterval[] = ['30s', '1m', '5m', '15m', '1h', '4h', '1d'];
 
 interface Props {
   engine: PaperEngine;
@@ -112,6 +112,11 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const candles = pane?.candles ?? [];
   const currentAsset = pane?.asset ?? 'BTC';
   const interval = pane?.interval ?? '5m';
+
+  // 30s bars need seconds on the axis and crosshair labels.
+  useEffect(() => {
+    chartRef.current?.applyOptions({ timeScale: { secondsVisible: interval === '30s' } });
+  }, [interval]);
   const gexLevelPrimRef = useRef<AiOverlayPrimitive | null>(null);
   const gexPrimRef = useRef<GexPrimitive | null>(null);
   const gexLevelsOn = useGexStore(s => s.levels);
@@ -193,7 +198,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
         horzLines: { color: '#1a1f2e', visible: useThemeStore.getState().showGrid },
       },
       crosshair: { mode: 0 },
-      timeScale: { borderColor: '#2a2f3e', timeVisible: true },
+      timeScale: { borderColor: '#2a2f3e', timeVisible: true, secondsVisible: useMarketStore.getState().panes[paneId]?.interval === '30s' },
       rightPriceScale: { borderColor: '#2a2f3e' },
     });
 

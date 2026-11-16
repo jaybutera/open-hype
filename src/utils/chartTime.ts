@@ -46,10 +46,11 @@ export function chartTimeToUtc(chartSec: number): number {
   return chartSec - getNyOffset(chartSec);
 }
 
-/** UTC ms -> "YYYY-MM-DD HH:MM ET". */
+/** UTC ms -> "YYYY-MM-DD HH:MM ET", or "HH:MM:SS" when the seconds are not zero (30s bars). */
 export function formatEt(utcMs: number): string {
   const shifted = new Date((utcToChartTime(Math.floor(utcMs / 1000))) * 1000);
-  return `${shifted.toISOString().slice(0, 16).replace('T', ' ')} ET`;
+  const iso = shifted.toISOString();
+  return `${iso.slice(0, iso.slice(17, 19) === '00' ? 16 : 19).replace('T', ' ')} ET`;
 }
 
 /** "YYYY-MM-DD HH:MM[:SS]" read as New York wall time -> UTC ms, or null. */

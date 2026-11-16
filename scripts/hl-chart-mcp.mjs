@@ -30,7 +30,7 @@ const COLOR = {
   description: 'Hex #rgb/#rrggbb or one of green, red, blue, yellow, orange, purple, white, gray. Defaults to the set colour.',
 };
 const WINDOW_TIME = { oneOf: [{ type: 'number' }, { type: 'string' }] };
-const INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'];
+const INTERVALS = ['30s', '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'];
 const MAX_CANDLES = 1000;
 const PRICE = { type: 'number', exclusiveMinimum: 0 };
 const TEXT = { type: 'string', description: 'Short on-chart text (a few words).' };
@@ -401,16 +401,16 @@ function etOf(ms) {
   const d = new Date(ms);
   const p = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', hourCycle: 'h23',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
   }).formatToParts(d).reduce((o, x) => (o[x.type] = x.value, o), {});
-  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ET`;
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}${p.second === '00' ? '' : ':' + p.second} ET`;
 }
 
 /* ------------------------------------------------------------ candles --- */
 
 const HL_INFO = 'https://api.hyperliquid.xyz/info';
 const INTERVAL_MS = {
-  '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+  '30s': 30_000, '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
   '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '8h': 28_800_000, '12h': 43_200_000,
   '1d': 86_400_000, '3d': 259_200_000, '1w': 604_800_000, '1M': 31 * 86_400_000,
 };
@@ -475,6 +475,13 @@ function parseTime(value, field, now = Date.now()) {
  * only its most recent ~5000 bars, so page backwards until start is covered.
  */
 async function fetchCandles(coin, interval, start, end) {
+  if (interval === '30s') {
+    // Hyperliquid has no 30s candles; the dev server records them from trades (bars30.ts).
+    const q = `coin=${encodeURIComponent(coin)}&from=${Math.floor(start / 30_000) * 30_000}&to=${end + 1}&limit=5000`;
+    const { status, json } = await http('GET', `/api/bars30?${q}`);
+    if (status !== 200) throw new Error(`dev server /api/bars30 answered ${status}: ${JSON.stringify(json).slice(0, 200)}`);
+    return json.bars;
+  }
   let out = [];
   let hi = end;
   for (let page = 0; page < 20 && hi >= start; page++) {
@@ -543,6 +550,7 @@ async function getCandles(args) {
   }
 
   const simNow = await simClock();
+  if (simNow !== null && interval === '30s') throw new Error('sims replay 1m recordings; 30s bars are live only');
   const now = simNow ?? Date.now();
   let to = args.to === undefined ? now : parseTime(args.to, 'to', now);
   if (to > now) to = now;
@@ -594,7 +602,9 @@ async function getCandles(args) {
   if (clipped) {
     result.clipped = `The window holds more than ${MAX_CANDLES} ${interval} bars; only the most recent ${rows.length} are returned (from ${result.window.first?.et ?? '?'}). Narrow the window or use a larger interval for earlier bars.`;
   }
-  if (rows.length === 0) result.note = `Hyperliquid returned no ${interval} bars for ${asset} in this window; check the asset name (HIP-3 assets use "dex:COIN") and the times.`;
+  if (interval === '30s') {
+    if (rows.length === 0 || rows[0].t > from + barMs) result.note = `30s bars come from the dev server's trade recorder, not Hyperliquid; they start when it began recording ${asset}${rows.length ? ` (first bar here ${result.window.first.et})` : ''}, and a 30s window with no trades has no bar.`;
+  } else if (rows.length === 0) result.note = `Hyperliquid returned no ${interval} bars for ${asset} in this window; check the asset name (HIP-3 assets use "dex:COIN") and the times.`;
   else if (!clipped && rows[0].t > from + barMs && wanted === undefined) {
     result.note = `Hyperliquid has no ${interval} bars for ${asset} before ${result.window.first.et}; it keeps a limited history per interval, so use a larger interval for earlier bars.`;
   }
@@ -609,7 +619,7 @@ const NEAR_STRIKES = 40;
 const GEX_PRIOR_MINUTES = [1, 5, 10, 15, 30];
 /** Minutes back of each max_priors entry, in GEXBot's order. */
 const GEX_MAX_PRIOR_MINUTES = [1, 5, 10, 15, 30, 60];
-const GEX_LOOKBACKS = { '1m': [1, 5], '5m': [5, 10], '15m': [15, 30] };
+const GEX_LOOKBACKS = { '30s': [1, 5], '1m': [1, 5], '5m': [5, 10], '15m': [15, 30] };
 
 function gexLookbackMinutes(interval) {
   return (interval && GEX_LOOKBACKS[interval]) || [15, 30];
