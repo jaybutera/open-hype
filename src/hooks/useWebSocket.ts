@@ -30,13 +30,62 @@ export function useWebSocket(engine: PaperEngine): void {
     };
   }, []);
 
+  // Coins priced from the bbo feed: every pane asset plus anything with a position or order.
+  // allMids only arrives every ~12s, so it lagged the chart and priced paper PnL and closes stale.
+  const bboCoins = useAccountStore(s => {
+    const coins = new Set<string>();
+    for (const p of s.paperPositions) coins.add(p.coin);
+    for (const o of s.paperOrders) coins.add(o.coin);
+    for (const p of s.positions) coins.add(p.coin);
+    return Array.from(coins).sort().join(',');
+  });
+  const paneCoins = [panes.primary?.asset, panes.secondary?.asset].filter(Boolean).join(',');
+  const bboKey = Array.from(new Set([...bboCoins.split(','), ...paneCoins.split(',')].filter(Boolean))).sort().join(',');
+
+  useEffect(() => {
+    if (replayActive || !bboKey) return;
+    const coins = bboKey.split(',');
+    const unsubs = coins.map(coin => {
+      bboTracked.add(coin);
+      let lastApplied = 0;
+      let pending: string | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // One store and engine update per coin per BBO_APPLY_MS; the trailing value always lands.
+      const apply = () => {
+        timer = undefined;
+        if (pending === undefined) return;
+        const mid = pending;
+        pending = undefined;
+        lastApplied = Date.now();
+        useMarketStore.getState().batchUpdateMids({ [coin]: mid });
+        engine.onPriceUpdate(coin, mid);
+      };
+      const unsub = ws.subscribe('bbo', { coin }, (data) => {
+        const msg = data as { coin: string; bbo: [{ px: string } | null, { px: string } | null] };
+        if (!msg || msg.coin !== coin || !Array.isArray(msg.bbo)) return;
+        const mid = bboMid(msg.bbo[0]?.px, msg.bbo[1]?.px);
+        if (!mid) return;
+        pending = mid;
+        const wait = BBO_APPLY_MS - (Date.now() - lastApplied);
+        if (wait <= 0) apply();
+        else if (!timer) timer = setTimeout(apply, wait);
+      });
+      return () => {
+        bboTracked.delete(coin);
+        if (timer) clearTimeout(timer);
+        unsub();
+      };
+    });
+    return () => { for (const u of unsubs) u(); };
+  }, [bboKey, engine, replayActive]);
+
   // Subscribe to perps allMids
   useEffect(() => {
     if (replayActive) return;
     return ws.subscribe('allMids', {}, (data) => {
       const msg = data as { mids: Record<string, string> };
       if (!msg.mids) return;
-      useMarketStore.getState().batchUpdateMids(msg.mids);
+      useMarketStore.getState().batchUpdateMids(withoutTracked(msg.mids));
 
       // Forward price updates for all coins with positions or open orders
       const positions = engine.getPositions();
@@ -52,6 +101,7 @@ export function useWebSocket(engine: PaperEngine): void {
       }
 
       for (const coin of activeCoins) {
+        if (bboTracked.has(coin)) continue;
         const mid = msg.mids[coin];
         if (mid) engine.onPriceUpdate(coin, mid);
       }
@@ -64,7 +114,7 @@ export function useWebSocket(engine: PaperEngine): void {
     return ws.subscribe('allMids', { dex: 'xyz' }, (data) => {
       const msg = data as { mids: Record<string, string> };
       if (!msg.mids) return;
-      useMarketStore.getState().batchUpdateMids(msg.mids);
+      useMarketStore.getState().batchUpdateMids(withoutTracked(msg.mids));
 
       const positions = engine.getPositions();
       const orders = engine.getOpenOrders();
@@ -78,6 +128,7 @@ export function useWebSocket(engine: PaperEngine): void {
       }
 
       for (const coin of activeCoins) {
+        if (bboTracked.has(coin)) continue;
         const mid = msg.mids[coin];
         if (mid) engine.onPriceUpdate(coin, mid);
       }
@@ -151,6 +202,23 @@ export function useWebSocket(engine: PaperEngine): void {
     );
     return () => { for (const u of unsubs) u(); };
   }, [limitCoins, engine, replayActive]);
+}
+
+const BBO_APPLY_MS = 200;
+/** Coins currently priced from bbo; allMids leaves them alone so a stale mid can't overwrite a fresh one. */
+const bboTracked = new Set<string>();
+
+function withoutTracked(mids: Record<string, string>): Record<string, string> {
+  if (bboTracked.size === 0) return mids;
+  const out: Record<string, string> = {};
+  for (const k in mids) if (!bboTracked.has(k)) out[k] = mids[k];
+  return out;
+}
+
+/** Book mid from best bid and ask, or the one side present. */
+export function bboMid(bid: string | undefined, ask: string | undefined): string | undefined {
+  if (bid && ask) return String(+((parseFloat(bid) + parseFloat(ask)) / 2).toPrecision(12));
+  return bid ?? ask;
 }
 
 /** Merge one trade into the 30s bar it falls in; undefined for a trade older than the last bar. */
