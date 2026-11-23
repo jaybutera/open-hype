@@ -14,9 +14,11 @@ interface ThemeValues {
   down: string;
   chartBg: string;
   showGrid: boolean;
+  /** Show the Options page link in the header. Off by default; turned on in Settings. */
+  showOptionsLink: boolean;
 }
 
-const DEFAULTS: ThemeValues = { up: DEFAULT_UP, down: DEFAULT_DOWN, chartBg: DEFAULT_CHART_BG, showGrid: false };
+const DEFAULTS: ThemeValues = { up: DEFAULT_UP, down: DEFAULT_DOWN, chartBg: DEFAULT_CHART_BG, showGrid: false, showOptionsLink: false };
 
 function isHex(v: unknown): v is string {
   return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
@@ -32,6 +34,7 @@ function loadTheme(): ThemeValues {
       down: isHex(p.down) ? p.down : DEFAULT_DOWN,
       chartBg: isHex(p.chartBg) ? p.chartBg : DEFAULT_CHART_BG,
       showGrid: typeof p.showGrid === 'boolean' ? p.showGrid : false,
+      showOptionsLink: p.showOptionsLink === true,
     };
   } catch { return DEFAULTS; }
 }
@@ -58,6 +61,7 @@ interface ThemeStore extends ThemeValues {
   setDown: (c: string) => void;
   setChartBg: (c: string) => void;
   setShowGrid: (v: boolean) => void;
+  setShowOptionsLink: (v: boolean) => void;
   resetColors: () => void;
 }
 
@@ -66,8 +70,8 @@ applyCssVars(initial);
 
 export const useThemeStore = create<ThemeStore>((set, get) => {
   const update = (patch: Partial<ThemeValues>) => {
-    const { up, down, chartBg, showGrid } = { ...get(), ...patch };
-    const next = { up, down, chartBg, showGrid };
+    const { up, down, chartBg, showGrid, showOptionsLink } = { ...get(), ...patch };
+    const next = { up, down, chartBg, showGrid, showOptionsLink };
     saveTheme(next);
     applyCssVars(next);
     set(next);
@@ -78,6 +82,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => {
     setDown: (down) => update({ down }),
     setChartBg: (chartBg) => update({ chartBg }),
     setShowGrid: (showGrid) => update({ showGrid }),
+    setShowOptionsLink: (showOptionsLink) => update({ showOptionsLink }),
     resetColors: () => update({ up: DEFAULT_UP, down: DEFAULT_DOWN, chartBg: DEFAULT_CHART_BG }),
   };
 });

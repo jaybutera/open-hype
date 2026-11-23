@@ -174,7 +174,7 @@ export function OptionsPage({ engine }: Props) {
   const expirations = useMemo(() => chain?.expirations ?? [], [chain]);
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0d1117', color: '#e1e4e8' }}>
+    <div style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden', background: '#0d1117', color: '#e1e4e8' }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
         borderBottom: '1px solid #1a1f2e',

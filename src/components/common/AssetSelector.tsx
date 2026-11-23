@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { StablePrice } from './StablePrice.tsx';
 import { useMarketStore, type AssetCategory, type CategorizedAsset } from '../../store/useMarketStore.ts';
 import { useSettingsStore } from '../../store/useSettingsStore.ts';
 
@@ -71,18 +72,20 @@ export function AssetSelector() {
   };
 
   return (
-    <div style={{ position: 'relative', zIndex: 200 }}>
+    <div style={{ position: 'relative', zIndex: 200, flexShrink: 0 }}>
       <button
         ref={buttonRef}
         className="btn-secondary"
         onClick={() => setOpen(v => !v)}
-        style={{ padding: '8px 16px', fontSize: 15, fontWeight: 700, minWidth: 160, textAlign: 'left' }}
+        style={{ padding: '8px 16px', fontSize: 15, fontWeight: 700, minWidth: 160, textAlign: 'left', whiteSpace: 'nowrap' }}
       >
         {displayName}
         {mid && (
-          <span style={{ marginLeft: 12, color: '#8a8f98', fontWeight: 400, fontSize: 13 }}>
-            ${parseFloat(mid).toLocaleString()}
-          </span>
+          <StablePrice
+            text={`$${parseFloat(mid).toLocaleString()}`}
+            resetKey={currentAsset}
+            style={{ marginLeft: 12, color: '#8a8f98', fontWeight: 400, fontSize: 13 }}
+          />
         )}
       </button>
 

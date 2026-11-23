@@ -37,7 +37,7 @@ export function JournalPage() {
   const selected = windows.find(w => w.id === selectedId) ?? null;
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0d1117', color: '#e1e4e8', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden', background: '#0d1117', color: '#e1e4e8', display: 'flex', flexDirection: 'column' }}>
       {/* Top bar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',

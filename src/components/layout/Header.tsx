@@ -1,4 +1,5 @@
 import { AssetSelector } from '../common/AssetSelector.tsx';
+import { StablePrice } from '../common/StablePrice.tsx';
 import { ModeToggle } from '../common/ModeToggle.tsx';
 import { PaperAccountSelector } from '../common/PaperAccountSelector.tsx';
 import { WalletConnect } from '../account/WalletConnect.tsx';
@@ -12,6 +13,7 @@ import { useSettingsStore } from '../../store/useSettingsStore.ts';
 import { useAccountStore } from '../../store/useAccountStore.ts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useReplayStore } from '../../store/useReplayStore.ts';
+import { useThemeStore } from '../../store/useThemeStore.ts';
 
 export function Header() {
   const mode = useSettingsStore(s => s.mode);
@@ -34,6 +36,7 @@ export function Header() {
   const replaySetup = useReplayStore(s => s.showSetup);
   const setShowSetup = useReplayStore(s => s.setShowSetup);
   const exitReplay = useReplayStore(s => s.exitReplay);
+  const showOptionsLink = useThemeStore(s => s.showOptionsLink);
 
   const handleFavClick = (coin: string) => {
     setAsset(coin);
@@ -43,8 +46,10 @@ export function Header() {
   return (
     <header style={{
       display: 'flex',
+      flexWrap: 'wrap',
       alignItems: 'center',
       gap: 12,
+      rowGap: 8,
       padding: '8px 16px',
       background: '#0d1117',
       borderBottom: '1px solid #1a1f2e',
@@ -65,7 +70,7 @@ export function Header() {
         PnL
       </a>
 
-      <a
+      {showOptionsLink && <a
         href="#/options"
         style={{
           fontSize: 12, fontWeight: 600, color: '#8a8f98',
@@ -75,7 +80,7 @@ export function Header() {
         }}
       >
         Options
-      </a>
+      </a>}
 
       <a
         href="#/journal"
@@ -104,7 +109,7 @@ export function Header() {
         {splitView ? 'Split: ON' : 'Split'}
       </button>
 
-      <button
+      {(replayActive || replaySetup) && <button
         onClick={() => replayActive ? exitReplay() : setShowSetup(!replaySetup)}
         style={{
           fontSize: 12, fontWeight: 700,
@@ -117,7 +122,7 @@ export function Header() {
         title={replayActive ? 'End replay' : 'Replay recorded history'}
       >
         {replayActive ? 'Replay: ON' : 'Replay'}
-      </button>
+      </button>}
 
       <AssetSelector />
 
@@ -137,9 +142,11 @@ export function Header() {
               >
                 {shortName}
                 {mid && (
-                  <span style={{ marginLeft: 6, fontWeight: 400, color: '#555' }}>
-                    {parseFloat(mid).toLocaleString()}
-                  </span>
+                  <StablePrice
+                    text={parseFloat(mid).toLocaleString()}
+                    resetKey={coin}
+                    style={{ marginLeft: 6, fontWeight: 400, color: '#555' }}
+                  />
                 )}
               </button>
             );
@@ -152,7 +159,7 @@ export function Header() {
       {mode === 'paper' && (
         <>
           <PaperAccountSelector />
-          <span style={{ fontSize: 13, color: '#f0b90b', fontWeight: 600, flexShrink: 0 }}>
+          <span style={{ fontSize: 13, color: '#f0b90b', fontWeight: 600, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
             PAPER ${parseFloat(paperBalance).toFixed(2)}
           </span>
         </>
@@ -166,7 +173,7 @@ export function Header() {
             <span
               data-testid="live-balance"
               title={liveSyncError ? `Sync error: ${liveSyncError}` : `Perps $${livePerp.toFixed(2)} + Spot $${liveSpot.toFixed(2)}; available $${liveWithdrawable.toFixed(2)}`}
-              style={{ fontSize: 13, color: liveSyncError ? 'var(--down)' : 'var(--up)', fontWeight: 600, flexShrink: 0 }}
+              style={{ fontSize: 13, color: liveSyncError ? 'var(--down)' : 'var(--up)', fontWeight: 600, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}
             >
               LIVE ${liveValue.toFixed(2)}
             </span>

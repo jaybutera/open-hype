@@ -7,7 +7,8 @@
     <style>
       :root { --up: #0ecb81; --down: #f6465d; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body, #root { height: 100%; width: 100%; }
+      /* The page itself never scrolls; only boxes inside it (order panel, bottom dock, full pages' own containers) do. */
+      html, body, #root { height: 100%; width: 100%; overflow: hidden; overscroll-behavior: none; }
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
         background: #0a0e17;

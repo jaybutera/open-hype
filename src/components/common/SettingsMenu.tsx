@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useReplayStore } from '../../store/useReplayStore.ts';
 import { useThemeStore, DEFAULT_UP, DEFAULT_DOWN, DEFAULT_CHART_BG } from '../../store/useThemeStore.ts';
 
 const rowStyle: React.CSSProperties = {
@@ -21,6 +22,11 @@ export function SettingsMenu() {
   const setChartBg = useThemeStore(s => s.setChartBg);
   const setShowGrid = useThemeStore(s => s.setShowGrid);
   const resetColors = useThemeStore(s => s.resetColors);
+  const showOptionsLink = useThemeStore(s => s.showOptionsLink);
+  const setShowOptionsLink = useThemeStore(s => s.setShowOptionsLink);
+  const replayActive = useReplayStore(s => s.active);
+  const replaySetup = useReplayStore(s => s.showSetup);
+  const setReplaySetup = useReplayStore(s => s.setShowSetup);
 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -54,7 +60,32 @@ export function SettingsMenu() {
           minWidth: 220, zIndex: 300, boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
           padding: '4px 0',
         }}>
-          <div style={{ padding: '6px 12px', fontSize: 10, fontWeight: 700, color: '#8a8f98', letterSpacing: 0.5 }}>
+          <div style={{ padding: '6px 12px 8px' }}>
+            <button
+              className="btn-secondary"
+              onClick={() => { setReplaySetup(!replaySetup); setOpen(false); }}
+              disabled={replayActive}
+              title={replayActive ? 'A replay is running; end it from the header' : 'Replay recorded history'}
+              style={{ padding: '6px 10px', fontSize: 12, width: '100%' }}
+            >
+              {replaySetup ? 'Close replay setup' : 'Replay…'}
+            </button>
+          </div>
+
+          <div style={{ padding: '6px 12px', fontSize: 10, fontWeight: 700, color: '#8a8f98', letterSpacing: 0.5, borderTop: '1px solid #1a1f2e' }}>
+            HEADER
+          </div>
+          <label style={{ ...rowStyle, cursor: 'pointer' }}>
+            Options page link
+            <input
+              type="checkbox"
+              checked={showOptionsLink}
+              onChange={e => setShowOptionsLink(e.target.checked)}
+              style={{ cursor: 'pointer' }}
+            />
+          </label>
+
+          <div style={{ padding: '10px 12px 6px', fontSize: 10, fontWeight: 700, color: '#8a8f98', letterSpacing: 0.5, borderTop: '1px solid #1a1f2e', marginTop: 4 }}>
             CHART
           </div>
           <label style={{ ...rowStyle, cursor: 'pointer' }}>

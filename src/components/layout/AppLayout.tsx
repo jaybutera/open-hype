@@ -31,7 +31,7 @@ export function AppLayout({ engine }: Props) {
   }, [splitView, secondaryPane?.asset, secondaryPane?.interval]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <Header />
       <ReplayControls />
 

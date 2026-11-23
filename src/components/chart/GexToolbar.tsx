@@ -44,7 +44,7 @@ export function GexToolbar({ ticker, interval }: Props) {
   const anyOn = levels || strikes !== 'off';
 
   return (
-    <span data-testid="gex-toolbar" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 8 }}>
+    <span data-testid="gex-toolbar" style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, marginLeft: 8 }}>
       <span aria-hidden style={{ width: 1, height: 14, background: '#2a2f3e', margin: '0 6px 0 2px' }} />
       <span
         style={{ fontSize: 10, letterSpacing: 1, color: '#555', textTransform: 'uppercase', marginRight: 4, userSelect: 'none' }}

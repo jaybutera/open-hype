@@ -988,10 +988,13 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       display: 'flex',
       flexDirection: 'column',
       height: '100%',
+      minWidth: 0,
+      overflow: 'hidden',
       border: `1px solid ${borderColor}`,
       boxSizing: 'border-box',
     }}>
-      <div style={{ display: 'flex', gap: 4, padding: '6px 8px', background: '#0d1117', alignItems: 'center' }}>
+      {/* Wraps onto more rows when a narrow (split) pane can't fit every control. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 8px', background: '#0d1117', alignItems: 'center', minWidth: 0 }}>
         {splitView && (
           <span style={{
             fontSize: 11,

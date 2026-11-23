@@ -376,7 +376,9 @@ export function OrderPanel({ engine }: Props) {
       gap: 10,
       width: 280,
       flexShrink: 0,
-      overflow: 'hidden',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      overscrollBehavior: 'contain',
     }}>
       {/* Side toggle */}
       <div style={{ display: 'flex', gap: 4 }}>
