@@ -1085,7 +1085,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
             ? 'Click a price on the profit side to add a TP — ESC to cancel'
             : (pendingSetup && isActive)
             ? pendingHint(pendingSetup)
-            : 'Shift+Click: long setup at entry · Ctrl+Shift+Click: short setup'}
+            : null}
         </span>
       </div>
 

@@ -413,6 +413,7 @@ export function OrderPanel({ engine }: Props) {
           className="btn-long"
           onClick={() => startSetup('buy')}
           disabled={!!pendingSetup}
+          title="Or Shift+Click the chart at the entry price"
           style={{ flex: 1, padding: '8px', fontSize: 12 }}
         >
           Set Up Long
@@ -421,6 +422,7 @@ export function OrderPanel({ engine }: Props) {
           className="btn-short"
           onClick={() => startSetup('sell')}
           disabled={!!pendingSetup}
+          title="Or Ctrl+Shift+Click the chart at the entry price"
           style={{ flex: 1, padding: '8px', fontSize: 12 }}
         >
           Set Up Short
