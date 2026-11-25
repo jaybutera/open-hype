@@ -171,16 +171,16 @@ const TOOLS = [
     description: [
       'Trade setups reported by strategy runners (scripts/strategy-signals.py runs the ict-strategies presets on live candles and',
       'posts to the dev server), newest first. The user sees the same list as cards in the right column and clicks one to draw it.',
-      'Each row has the asset, side, timeframe, entry, stop, target, rr, the ET time the setup completed, and `status`:',
-      'resting (limit not reached yet), filled (price reached the entry in the runner\'s simulated book, not an order of the user\'s),',
-      'won, lost, or cancelled with the reason in `statusNote`. `note` describes the sweep and the structure break behind it.',
+      'Each row has the asset, side, timeframe, entry, stop, target, rr and the ET time the setup completed; `note` describes the',
+      'sweep and the structure break behind it. The v3 runner lists only plans the strategy holds now: one it cancels (close back',
+      'through the sweep, inverted gap, target reached first, timeout) or whose stop or target trades is gone on the next cycle.',
+      'Other pushers may set `status` (resting, filled, won, lost, cancelled) with a `statusNote`.',
       'These are a mechanical strategy\'s plans, not orders: check one against the chart and GEX before acting on it.',
     ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
         asset: { type: 'string', description: 'Only this asset, e.g. xyz:SP500. Default: all.' },
-        open: { type: 'boolean', description: 'Only resting and filled signals. Default: every status.' },
       },
       additionalProperties: false,
     },
@@ -790,12 +790,13 @@ async function callTool(name, args = {}) {
     const { status, json } = await http('GET', '/api/signals');
     if (status !== 200) return textResult({ status, ...json }, true);
     const rows = (json.signals ?? [])
-      .filter(s => (!args.asset || s.asset === args.asset) && (!args.open || s.status === 'resting' || s.status === 'filled'))
+      .filter(s => !args.asset || s.asset === args.asset)
       .map(s => ({
         id: s.id, strategy: s.strategy, asset: s.asset, side: s.side, tf: s.tf,
         time: etOf(s.time), entry: s.entry, stop: s.stop, target: s.target,
         rr: Number((Math.abs(s.target - s.entry) / Math.abs(s.entry - s.stop)).toFixed(2)),
-        status: s.status, statusNote: s.statusNote, ended: s.endTime ? etOf(s.endTime) : undefined, note: s.note,
+        ...(s.status !== 'resting' ? { status: s.status, statusNote: s.statusNote, ended: s.endTime ? etOf(s.endTime) : undefined } : {}),
+        note: s.note,
       }));
     return textResult({ signals: rows });
   }

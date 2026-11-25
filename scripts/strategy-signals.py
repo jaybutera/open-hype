@@ -3,26 +3,37 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyarrow>=15"]
 # ///
-"""Run an ict-strategies preset on live Hyperliquid candles and post its setups
-to the dev server's /api/signals, where they show as cards in the right column.
+"""Run an ict-strategies preset on live Hyperliquid candles and post the plans
+it has resting to the dev server's /api/signals, where they show as cards in
+the right column.
 
-Once a minute:
+Just after every minute closes:
   1. fetch the closed 1m candles of the preset's assets from Hyperliquid and
      append them to a parquet store (~/.hl-signals/data);
   2. replay the store through the backtest engine with a decision trace;
-  3. read the plans the strategy placed from the trace, with the sweep, the
-     structure break and the entry gap behind each (v3.rhai traces those), and
-     what became of them (resting, filled, won, lost, cancelled);
-  4. POST the current list to <url>/api/signals with replace: true.
+  3. read the plans the strategy has placed and not yet cancelled or closed
+     from the trace, with the sweep, the structure break and the entry gap
+     behind each (v3.rhai traces those);
+  4. POST that list to <url>/api/signals with replace: true, so a plan the
+     strategy killed leaves the app on the same cycle.
 
-The replay starts at a Monday at least --window-days back, so the detector
-state behind a signal is the same on every cycle of a week.
+Timing. The engine handles a 5m (15m, 1h, 4h) bar when the first 1m bar after
+it arrives. Waiting for that 1m bar to close would cost a minute, so the replay
+input ends with a flat placeholder for the minute that has just opened: the
+bar that closed a moment ago is acted on at once. The placeholder is never
+stored, and a 1m-timeframe plan first seen on it is held back until the real
+bar has closed.
 
-Hyperliquid serves the last 5000 candles per interval, so 1m history reaches
-back about 3.5 days. Older history comes from --seed-dir (a collector's
-{asset}_1m.parquet files) where given, and otherwise from 5m and 15m candles
-stored as one row per bar: the 5m and higher timeframes aggregate to the same
-bars, the 1m timeframe is thin there.
+History. The replay starts at a Monday at least --window-days back and uses
+1m bars from a Monday at least --fine-days back; before that it is fed 5m bars
+(one row per bar), which leaves the 5m and higher timeframes unchanged and
+makes a cycle about three times shorter. Both starts move once a week, so the
+detector state behind a plan is the same on every cycle of a week.
+
+Hyperliquid serves the last 5000 candles per interval, so its 1m history
+reaches back about 3.5 days. Older history comes from --seed-dir (a
+collector's {asset}_1m.parquet files) where given, and otherwise from 5m and
+15m candles.
 
   scripts/strategy-signals.py --once --dry-run         # one cycle, print the signals
   scripts/strategy-signals.py                          # run until stopped
@@ -33,6 +44,7 @@ engine binary), HL_FRONTEND_URL (default http://localhost:3000).
 from __future__ import annotations
 
 import argparse
+import bisect
 import datetime as dt
 import json
 import os
@@ -42,6 +54,7 @@ import sys
 import time
 import tomllib
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -61,13 +74,6 @@ LEVEL_NAMES = {
     "session_high": "Session high", "session_low": "Session low",
     "swing_high": "Swing high", "swing_low": "Swing low",
 }
-DEAD_REASONS = {
-    "closed_through_sweep_extreme": "closed back through the sweep",
-    "gap_inverted": "gap inverted",
-    "target_reached_before_entry": "target reached before entry",
-    "timed_out": "timed out",
-}
-BOOK_REASONS = {"deadline": "not reached in time", "driver": "cancelled by the strategy"}
 ORANGE, PURPLE, BLUE, GRAY = "#ff8c1a", "#a970ff", "#3d9bff", "#8a8f98"
 
 
@@ -108,6 +114,8 @@ class Store:
         self.asset = asset
         self.path = data_dir / f"{asset}_1m.parquet"
         self.rows: dict[int, Row] = {}
+        self._coarse: dict[int, Row] = {}
+        self._coarse_key: tuple[int, int] | None = None
         if self.path.exists():
             self.rows = read_parquet(self.path, 0)
 
@@ -136,19 +144,43 @@ class Store:
             del self.rows[t]
 
     def save(self) -> None:
-        ts = sorted(self.rows)
-        cols = list(zip(*(self.rows[t] for t in ts))) if ts else [[], [], [], [], []]
-        table = pa.table({
-            "timestamp": pa.array([t * 1_000_000 for t in ts], pa.timestamp("us")),
-            "open": cols[0], "high": cols[1], "low": cols[2], "close": cols[3], "volume": cols[4],
-        })
-        tmp = self.path.with_suffix(".tmp")
-        pq.write_table(table, tmp, row_group_size=1440)
-        tmp.replace(self.path)
+        write_parquet(self.path, self.rows)
+
+    def engine_rows(self, anchor: int, fine: int, minute: int) -> dict[int, Row]:
+        """What the engine replays: 5m bars from `anchor` to `fine`, 1m bars after, and a flat
+        placeholder for `minute` (the minute now forming) so the bars that just closed are handled."""
+        if self._coarse_key != (anchor, fine):
+            coarse: dict[int, list[float]] = {}
+            for t in sorted(t for t in self.rows if anchor <= t < fine):
+                o, h, l, c, v = self.rows[t]
+                bar = coarse.get(t - t % 300)
+                if bar is None:
+                    coarse[t - t % 300] = [o, h, l, c, v]
+                else:
+                    bar[1] = max(bar[1], h); bar[2] = min(bar[2], l); bar[3] = c; bar[4] += v
+            self._coarse = {t: tuple(b) for t, b in coarse.items()}
+            self._coarse_key = (anchor, fine)
+        out = dict(self._coarse)
+        out.update((t, r) for t, r in self.rows.items() if fine <= t < minute)
+        if out:
+            c = out[max(out)][3]
+            out[minute] = (c, c, c, c, 0.0)
+        return out
+
+
+def write_parquet(path: Path, rows: dict[int, Row]) -> None:
+    ts = sorted(rows)
+    cols = list(zip(*(rows[t] for t in ts))) if ts else [[], [], [], [], []]
+    table = pa.table({
+        "timestamp": pa.array([t * 1_000_000 for t in ts], pa.timestamp("us")),
+        "open": cols[0], "high": cols[1], "low": cols[2], "close": cols[3], "volume": cols[4],
+    })
+    tmp = path.with_suffix(".tmp")
+    pq.write_table(table, tmp, row_group_size=1440)
+    tmp.replace(path)
 
 
 def has_row_in(sorted_ts: list[int], lo: int, hi: int) -> bool:
-    import bisect
     i = bisect.bisect_left(sorted_ts, lo)
     return i < len(sorted_ts) and sorted_ts[i] < hi
 
@@ -176,6 +208,7 @@ def backfill(store: Store, anchor: int, seed_dir: Path | None, now: float) -> No
             for t, row in rows.items():
                 store.rows.setdefault(t, row)
             log(f"{store.asset}: {len(rows)} seed rows from {seed}")
+    store._coarse_key = None
     now_ms = int(now * 1000)
     n1 = store.add(hl_candles(store.asset, "1m", now_ms - 5000 * 60_000, now_ms), now)
     n5 = store.add(hl_candles(store.asset, "5m", max(anchor * 1000, now_ms - 5000 * 300_000), now_ms), now, 300, True)
@@ -185,8 +218,28 @@ def backfill(store: Store, anchor: int, seed_dir: Path | None, now: float) -> No
 
 
 def update(store: Store, now: float) -> int:
-    now_ms = int(now * 1000)
-    return store.add(hl_candles(store.asset, "1m", (store.last() - 600) * 1000, now_ms), now)
+    """Fetch the latest closed 1m bars. Right after a minute closes its bar may not be served
+    yet, so ask again briefly; a minute with no trades has no bar and is not waited for further."""
+    just_closed = int(now) // 60 * 60 - 60
+    n = 0
+    for attempt in range(3):
+        n += store.add(hl_candles(store.asset, "1m", (store.last() - 600) * 1000, int(time.time() * 1000)), time.time())
+        if store.last() >= just_closed:
+            break
+        time.sleep(0.7)
+    return n
+
+
+def refresh(store: Store, anchor: int, seed_dir: Path | None, now: float) -> int:
+    if not store.rows or min(store.rows) > anchor + 86400 or store.last() < now - 3 * 86400:
+        backfill(store, anchor, seed_dir, now)
+        n = 1
+    else:
+        n = update(store, now)
+    store.trim(anchor - 86400)
+    if n:
+        store.save()
+    return n
 
 
 # ------------------------------------------------------------------ engine ---
@@ -217,7 +270,7 @@ def run_engine(args, assets: list[str], data_dir: Path, trace_dir: Path, anchor:
 
 def read_trace(path: Path) -> dict:
     """The records a signal is built from, keyed the way they join."""
-    out = {"sweep": {}, "break": {}, "gap": {}, "dead": {}, "book": {}, "final": {}}
+    out = {"sweep": {}, "break": {}, "gap": {}, "book": {}, "final": {}}
     with path.open() as f:
         for line in f:
             if '"k":"v3.' not in line and '"k":"book.' not in line and '"k":"sw.final"' not in line:
@@ -232,8 +285,6 @@ def read_trace(path: Path) -> dict:
                 out["break"][r["run"]] = v
             elif k == "v3.gap" and r.get("o") == "plan_placed":
                 out["gap"][v["opp_id"]] = {**v, "run": r["run"], "tf": r["tf"]}
-            elif k == "v3.dead":
-                out["dead"][r["run"]] = r.get("o")
             elif k.startswith("book."):
                 out["book"].setdefault(v["opportunity_id"], []).append({**v, "b": r["b"]})
     return out
@@ -252,41 +303,28 @@ def extreme_minute(rows: dict[int, Row], start: int, dur: int, high: bool) -> in
     return best_t
 
 
-def build_signals(asset: str, tr: dict, rows: dict[int, Row], strategy: str, now: float, keep_hours: float) -> list[dict]:
+def build_signals(asset: str, tr: dict, rows: dict[int, Row], strategy: str, minute: int) -> list[dict]:
+    """The plans the strategy holds: placed, and neither cancelled nor closed. A plan whose
+    setup the strategy killed has an entry_cancelled record and is left out, which removes
+    its card. Whether the simulated book filled the entry is not reported."""
     signals = []
     for opp_id, events in tr["book"].items():
         placed = next((e for e in events if e["event"] == "entry_placed"), None)
-        if not placed:
+        if not placed or any(e["event"] in ("entry_cancelled", "closed") for e in events):
             continue
         bull = placed["direction"] == "bull"
         entry, stop, target = placed["entry"], placed["stop"], placed["tp"]
         t_placed = placed["b"]
-
-        status, status_note, end = "resting", None, None
         gap = tr["gap"].get(opp_id)
-        for e in events:
-            if e["event"] == "entry_filled":
-                status, status_note = "filled", f"entry reached {et(e['b'])}"
-            elif e["event"] == "entry_cancelled":
-                why = tr["dead"].get(gap["run"]) if gap else None
-                status, end = "cancelled", e["b"]
-                status_note = DEAD_REASONS.get(why, why) or BOOK_REASONS.get(e.get("reason"), e.get("reason"))
-            elif e["event"] == "closed":
-                r = e.get("r_pnl") or 0.0
-                status, end = ("won" if r > 0 else "lost"), e["b"]
-                status_note = f"{e.get('reason', 'closed')} {r:+.1f}R at {et(e['b'])}"
-        if status not in ("resting", "filled") and now - t_placed > keep_hours * 3600:
+        # Seen only on the placeholder for the forming minute: wait for the real 1m bar.
+        if t_placed >= minute and (gap["tf"] if gap else "1m") == "1m":
             continue
 
         sig = {
             "asset": asset, "strategy": strategy, "side": "long" if bull else "short",
-            "time": t_placed * 1000, "entry": entry, "stop": stop, "target": target, "status": status,
+            "time": t_placed * 1000, "entry": entry, "stop": stop, "target": target,
         }
-        if status_note:
-            sig["statusNote"] = status_note
-        if end:
-            sig["endTime"] = end * 1000
-        until = end * 1000 if end else "now"
+        until = "now"
 
         sweep = tr["sweep"].get(gap["run"]) if gap else None
         if not gap or not sweep:
@@ -358,7 +396,7 @@ def main() -> int:
     ap.add_argument("--assets", help="comma list; default: the preset's assets")
     ap.add_argument("--timeframes", default="5m,15m,1h,4h")
     ap.add_argument("--window-days", type=int, default=28, help="replay starts at a Monday at least this far back")
-    ap.add_argument("--keep-hours", type=float, default=24, help="how long a finished signal stays listed")
+    ap.add_argument("--fine-days", type=int, default=3, help="1m bars from a Monday at least this far back; 5m bars before it")
     ap.add_argument("--source", help="source name in /api/signals (default: the preset's file name)")
     ap.add_argument("--once", action="store_true", help="one cycle, then exit")
     ap.add_argument("--dry-run", action="store_true", help="print the signals instead of posting them")
@@ -381,60 +419,51 @@ def main() -> int:
     data_dir = args.state / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     shm = Path("/dev/shm")
-    trace_dir = (shm if shm.is_dir() else args.state) / f"hl-signals-trace-{source}"
+    scratch = (shm if shm.is_dir() else args.state) / f"hl-signals-{source}"
+    trace_dir, input_dir = scratch / "trace", scratch / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
     log(f"{source}: {', '.join(assets)} on {', '.join(args.timeframes)}; engine {args.engine}; posting to {args.url}")
 
     stores = {a: Store(a, data_dir) for a in assets}
+    pool = ThreadPoolExecutor(len(assets))
     last_sent: str | None = None
-    first = True
     while True:
         now = time.time()
+        minute = int(now) // 60 * 60
         anchor = monday_anchor(now, args.window_days)
+        fine = max(anchor, monday_anchor(now, args.fine_days))
         try:
-            fresh = 0
+            list(pool.map(lambda st: refresh(st, anchor, args.seed_dir, now), stores.values()))
             for a, st in stores.items():
-                if not st.rows or min(st.rows) > anchor + 86400 or st.last() < now - 3 * 86400:
-                    backfill(st, anchor, args.seed_dir, now)
-                    n = 1
-                else:
-                    n = update(st, now)
-                st.trim(anchor - 86400)
-                if n:
-                    st.save()
-                fresh += n
-            if fresh or first:
-                t0 = time.time()
-                run_engine(args, assets, data_dir, trace_dir, anchor)
-                signals = []
-                for a in assets:
-                    tp = trace_dir / f"{a.replace(':', '_')}.trace.jsonl"
-                    if tp.exists():
-                        signals += build_signals(a, read_trace(tp), stores[a].rows, source, now, args.keep_hours)
-                signals.sort(key=lambda s: -s["time"])
-                signals = signals[:100]
-                body = {"source": source, "replace": True, "signals": signals}
-                if args.dry_run:
-                    print(json.dumps(body, indent=1))
-                else:
-                    res = post(args.url, body)
-                    if res.get("added"):
-                        log(f"new: {', '.join(res['added'])}")
-                sent = json.dumps(signals, sort_keys=True)
-                if sent != last_sent or first:
-                    open_n = sum(s["status"] in ("resting", "filled") for s in signals)
-                    log(f"{len(signals)} signals ({open_n} open), cycle {time.time() - t0:.1f}s")
-                last_sent = sent
-                first = False
-            elif not args.dry_run and last_sent is not None:
-                # Nothing new, but a restarted dev server has an empty list: send it again.
-                post(args.url, {"source": source, "replace": True, "signals": json.loads(last_sent)})
+                write_parquet(input_dir / f"{a}_1m.parquet", st.engine_rows(anchor, fine, minute))
+            run_engine(args, assets, input_dir, trace_dir, anchor)
+            signals = []
+            for a in assets:
+                tp = trace_dir / f"{a.replace(':', '_')}.trace.jsonl"
+                if tp.exists():
+                    signals += build_signals(a, read_trace(tp), stores[a].rows, source, minute)
+            signals.sort(key=lambda s: -s["time"])
+            signals = signals[:100]
+            body = {"source": source, "replace": True, "signals": signals}
+            if args.dry_run:
+                print(json.dumps(body, indent=1))
+            else:
+                res = post(args.url, body)
+                for what in ("added", "removed"):
+                    if res.get(what):
+                        log(f"{what}: {', '.join(res[what])}")
+            sent = json.dumps(signals, sort_keys=True)
+            if sent != last_sent:
+                log(f"{len(signals)} live plans; posted {time.time() - minute:.1f}s after the {et(minute)} close")
+            last_sent = sent
         except Exception as e:  # a failed cycle must not stop the loop
             log(f"cycle failed: {e}")
             if args.once:
                 return 1
         if args.once:
             return 0
-        time.sleep(60 - time.time() % 60 + 5)
+        # Wake just after the next minute closes.
+        time.sleep(60 - time.time() % 60 + 1.5)
 
 
 if __name__ == "__main__":

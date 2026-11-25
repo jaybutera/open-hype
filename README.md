@@ -42,7 +42,7 @@ Alerts live on the dev server, which watches Hyperliquid directly, so they keep 
 
 ### Strategy signals
 
-A strategy can run beside the app and report its setups to `POST /api/signals` on the dev server. Each one shows as a card under the Buy/Sell button with its side, asset, timeframe, levels, R and status; clicking the card draws the entry, stop and target box on the chart together with the context the strategy sent, and moves the pane to that asset when it is not open. `scripts/strategy-signals.py` does this for the ict-strategies v3 preset: once a minute it replays live Hyperliquid candles through the backtest engine and posts each plan with its swept level, sweep extreme, structure break and entry gap. On box it runs as `deploy/hl-signals.service`. The API and the runner are described in `specs/signals.md`.
+A strategy can run beside the app and report its setups to `POST /api/signals` on the dev server. Each one shows as a card under the Buy/Sell button with its side, asset, timeframe, levels and R; clicking the card draws the entry, stop and target box on the chart together with the context the strategy sent, and moves the pane to that asset when it is not open. **set up** on the card turns it into one of the app's own setups to execute. `scripts/strategy-signals.py` does this for the ict-strategies v3 preset: just after each minute closes it replays live Hyperliquid candles through the backtest engine and posts the plans the strategy holds, each with its swept level, sweep extreme, structure break and entry gap; a plan the strategy kills loses its card on the same cycle. On box it runs as `deploy/hl-signals.service`. The API and the runner are described in `specs/signals.md`.
 
 ### Always-on server on box
 
