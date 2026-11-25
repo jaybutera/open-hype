@@ -40,6 +40,10 @@ Claude Code can read the chart you have open and draw on it. There is no chat pa
 
 Alerts live on the dev server, which watches Hyperliquid directly, so they keep working with the tab closed. Alt+click on the chart arms a cross alert at that price; alt+ctrl+click arms a close alert on the chart's interval. Armed alerts draw as dashed lines and are listed under the AI overlays, where `×` removes one. Claude arms them with the `set_alert` tool and waits on `scripts/hl-alert-wait.mjs <id>` in the background, so the session that set the alert is woken when it fires. Alerts persist in `.hl-alerts.json` (gitignored) across dev server restarts. Perps only (the feed is `allMids` and `candle`).
 
+### Strategy signals
+
+A strategy can run beside the app and report its setups to `POST /api/signals` on the dev server. Each one shows as a card under the Buy/Sell button with its side, asset, timeframe, levels, R and status; clicking the card draws the entry, stop and target box on the chart together with the context the strategy sent, and moves the pane to that asset when it is not open. `scripts/strategy-signals.py` does this for the ict-strategies v3 preset: once a minute it replays live Hyperliquid candles through the backtest engine and posts each plan with its swept level, sweep extreme, structure break and entry gap. On box it runs as `deploy/hl-signals.service`. The API and the runner are described in `specs/signals.md`.
+
 ### Always-on server on box
 
 The dev server (not a build: the AI link and alerts are Vite plugins) runs on the box machine as the systemd user unit in `deploy/hl-frontend.service`, bound to port 3000 and reachable over Tailscale at http://100.117.74.55:3000. `.mcp.json` points the MCP server there. To roll out the latest master, run `scripts/deploy-box.sh`: the unit pulls, installs dependencies and restarts.

@@ -19,6 +19,8 @@ import type { CandleInterval } from '../../types/market.ts';
 import { utcToChartTime, chartTimeToUtc, formatEt } from '../../utils/chartTime.ts';
 import { AiOverlayPrimitive } from './AiOverlayPrimitive.ts';
 import { useAiOverlayStore } from '../../store/useAiOverlayStore.ts';
+import { useSignalStore } from '../../store/useSignalStore.ts';
+import { signalOverlaySet } from '../../services/signals/overlay.ts';
 import { registerSnapshotProvider } from '../../services/ai/link.ts';
 import type { SnapshotCandle, OverlaySet } from '../../services/ai/types.ts';
 import { useAlertStore } from '../../store/useAlertStore.ts';
@@ -102,6 +104,9 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
   const aiPrimitivesRef = useRef<Map<string, AiOverlayPrimitive>>(new Map());
   const aiSets = useAiOverlayStore(s => s.sets);
   const aiEnabledIds = useAiOverlayStore(s => s.enabledIds);
+  const signalPrimitivesRef = useRef<Map<string, { prim: AiOverlayPrimitive; signal: unknown }>>(new Map());
+  const signals = useSignalStore(s => s.signals);
+  const signalEnabledIds = useSignalStore(s => s.enabledIds);
   const alerts = useAlertStore(s => s.alerts);
   const alertPrimRef = useRef<AiOverlayPrimitive | null>(null);
 
@@ -248,6 +253,7 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       orderLinePrimitivesRef.current.clear();
       hlinePrimitivesRef.current.clear();
       aiPrimitivesRef.current.clear();
+      signalPrimitivesRef.current.clear();
       alertPrimRef.current = null;
       sessionPrimitiveRef.current = null;
       fibPrimitiveRef.current = null;
@@ -831,6 +837,33 @@ export function TradingChart({ engine, paneId = 'primary' }: Props) {
       }
     }
   }, [aiSets, aiEnabledIds, currentAsset]);
+
+  // Strategy signals: the setup box with its sweep and structure break, one primitive per clicked card
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const primMap = signalPrimitivesRef.current;
+    const wanted = new Map(
+      signals.filter(s => signalEnabledIds.includes(s.id) && s.asset === currentAsset).map(s => [s.id, s]),
+    );
+    for (const [id, entry] of primMap) {
+      if (!wanted.has(id)) {
+        entry.prim.requestRedraw();
+        series.detachPrimitive(entry.prim);
+        primMap.delete(id);
+      }
+    }
+    for (const [id, signal] of wanted) {
+      const existing = primMap.get(id);
+      if (existing) {
+        if (existing.signal !== signal) { existing.prim.setSet(signalOverlaySet(signal)); existing.signal = signal; }
+      } else {
+        const prim = new AiOverlayPrimitive(signalOverlaySet(signal));
+        series.attachPrimitive(prim);
+        primMap.set(id, { prim, signal });
+      }
+    }
+  }, [signals, signalEnabledIds, currentAsset]);
 
   // Armed price alerts for this asset: one dashed line each while the Alerts toggle is on
   useEffect(() => {

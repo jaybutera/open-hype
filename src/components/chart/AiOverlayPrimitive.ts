@@ -115,7 +115,13 @@ function makeTimeToX(series: ISeriesApi<SeriesType, Time>, chart: IChartApi) {
       }
       logical = lo + (ct - times[lo]) / (times[hi] - times[lo]);
     }
-    return ts.logicalToCoordinate(logical as Logical);
+    // logicalToCoordinate answers 0 for a non-integer index, so a time between
+    // two bars (a 1m time on a 5m pane) is placed between its neighbours' coordinates.
+    const lo = Math.floor(logical);
+    const xa = ts.logicalToCoordinate(lo as Logical);
+    if (lo === logical || xa === null) return xa;
+    const xb = ts.logicalToCoordinate((lo + 1) as Logical);
+    return xb === null ? xa : xa + (xb - xa) * (logical - lo);
   };
 }
 

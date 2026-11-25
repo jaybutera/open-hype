@@ -11,6 +11,8 @@ import { useLiveAccountStore } from '../../store/useLiveAccountStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { useReplayStore } from '../../store/useReplayStore.ts';
 import { useAiOverlayStore, onOverlayToggle } from '../../store/useAiOverlayStore.ts';
+import { useSignalStore } from '../../store/useSignalStore.ts';
+import type { StrategySignal } from '../signals/book.ts';
 import { useAlertStore } from '../../store/useAlertStore.ts';
 import { useAiTradeStore } from '../../store/useAiTradeStore.ts';
 import { useWalletStore, selectActiveAccount } from '../../store/useWalletStore.ts';
@@ -220,10 +222,14 @@ export function startAiLink(engine?: PaperEngine): void {
   hot.on('hl-ai:trades', (data: { trades?: TradeProposal[] } | undefined) => {
     useAiTradeStore.getState().receive(Array.isArray(data?.trades) ? data!.trades : []);
   });
+  hot.on('hl-signals:list', (data: { signals?: StrategySignal[] } | undefined) => {
+    useSignalStore.getState().receive(Array.isArray(data?.signals) ? data!.signals : []);
+  });
   hot.on('vite:ws:disconnect', () => useAiOverlayStore.getState().setConnected(false));
   hot.on('vite:ws:connect', () => {
     useAiOverlayStore.getState().setConnected(true);
     hot.send('hl-ai:hello', {});
+    hot.send('hl-signals:hello', {});
   });
   onOverlayToggle((id, enabled) => hot.send('hl-ai:toggle', { id, enabled }));
 
@@ -267,5 +273,6 @@ export function startAiLink(engine?: PaperEngine): void {
   useAiOverlayStore.getState().setConnected(true);
   // Ask for the current overlay list (survives page reloads) and seed the cache.
   hot.send('hl-ai:hello', {});
+  hot.send('hl-signals:hello', {});
   sendSnapshot();
 }

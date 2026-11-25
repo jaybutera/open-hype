@@ -167,6 +167,25 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_signals',
+    description: [
+      'Trade setups reported by strategy runners (scripts/strategy-signals.py runs the ict-strategies presets on live candles and',
+      'posts to the dev server), newest first. The user sees the same list as cards in the right column and clicks one to draw it.',
+      'Each row has the asset, side, timeframe, entry, stop, target, rr, the ET time the setup completed, and `status`:',
+      'resting (limit not reached yet), filled (price reached the entry in the runner\'s simulated book, not an order of the user\'s),',
+      'won, lost, or cancelled with the reason in `statusNote`. `note` describes the sweep and the structure break behind it.',
+      'These are a mechanical strategy\'s plans, not orders: check one against the chart and GEX before acting on it.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        asset: { type: 'string', description: 'Only this asset, e.g. xyz:SP500. Default: all.' },
+        open: { type: 'boolean', description: 'Only resting and filled signals. Default: every status.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'get_gex',
     description: [
       'Dealer gamma exposure per strike from GEXBot (classic feed), via the dev server, which holds the key and caches 60s.',
@@ -766,6 +785,19 @@ async function callTool(name, args = {}) {
     out.lookbacks = minutes.map(m => gexPriorMajors(raw, m));
     if (interval && asked.length === 0) out.lookbackInterval = interval;
     return textResult(out);
+  }
+  if (name === 'get_signals') {
+    const { status, json } = await http('GET', '/api/signals');
+    if (status !== 200) return textResult({ status, ...json }, true);
+    const rows = (json.signals ?? [])
+      .filter(s => (!args.asset || s.asset === args.asset) && (!args.open || s.status === 'resting' || s.status === 'filled'))
+      .map(s => ({
+        id: s.id, strategy: s.strategy, asset: s.asset, side: s.side, tf: s.tf,
+        time: etOf(s.time), entry: s.entry, stop: s.stop, target: s.target,
+        rr: Number((Math.abs(s.target - s.entry) / Math.abs(s.entry - s.stop)).toFixed(2)),
+        status: s.status, statusNote: s.statusNote, ended: s.endTime ? etOf(s.endTime) : undefined, note: s.note,
+      }));
+    return textResult({ signals: rows });
   }
   if (name === 'clear_overlays') {
     const q = args.id ? `?id=${encodeURIComponent(args.id)}` : '';

@@ -1,0 +1,27 @@
+# systemd user unit: runs the ict-strategies v3 preset on live Hyperliquid
+# candles and posts its setups to the dev server's /api/signals (the
+# "Strategy signals" cards in the app's right column).
+#
+# Needs on box: ~/src/ict-strategies (the presets), the engine's v3 branch
+# built at ~/src/backtest-engine-v3, and uv.
+#
+# Install (on box):  cp deploy/hl-signals.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now hl-signals
+# Logs:  journalctl --user -u hl-signals -f
+[Unit]
+Description=Strategy signals for Open Hype (ict-strategies v3 on live candles)
+After=network-online.target hl-frontend.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/src/hl-frontend
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=ICT_STRATEGIES_DIR=%h/src/ict-strategies
+Environment=BT_BIN=%h/src/backtest-engine-v3/target/release/backtest
+Environment=HL_FRONTEND_URL=http://127.0.0.1:3000
+# The collector's 1m files supply the history older than Hyperliquid's own 1m candles.
+ExecStart=/usr/bin/env uv run --quiet scripts/strategy-signals.py --seed-dir %h/src/ict-scanner/data
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

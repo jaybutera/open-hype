@@ -10,6 +10,7 @@ import { prepareOrder, submitPrepared, ensureSynced, type LiveOrderInput, type P
 import { fitLeverage, fitLiveLeverage } from '../../services/hl/leverageFit.ts';
 import { LiveOrderConfirm } from './LiveOrderConfirm.tsx';
 import { AiOverlayPanel } from './AiOverlayPanel.tsx';
+import { SignalPanel } from './SignalPanel.tsx';
 import { AiTradePanel } from './AiTradePanel.tsx';
 import { AlertPanel } from './AlertPanel.tsx';
 
@@ -600,6 +601,7 @@ export function OrderPanel({ engine }: Props) {
       {success && <div ref={successRef} style={{ color: 'var(--up)', fontSize: 12 }}>{success}</div>}
 
       <AiTradePanel />
+      <SignalPanel />
       <AiOverlayPanel />
       <AlertPanel />
     </div>
