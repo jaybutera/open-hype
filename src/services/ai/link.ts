@@ -12,7 +12,7 @@ import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
 import { useReplayStore } from '../../store/useReplayStore.ts';
 import { useAiOverlayStore, onOverlayToggle } from '../../store/useAiOverlayStore.ts';
 import { useSignalStore } from '../../store/useSignalStore.ts';
-import type { StrategySignal } from '../signals/book.ts';
+import type { SignalSource, StrategySignal } from '../signals/book.ts';
 import { useAlertStore } from '../../store/useAlertStore.ts';
 import { useAiTradeStore } from '../../store/useAiTradeStore.ts';
 import { useWalletStore, selectActiveAccount } from '../../store/useWalletStore.ts';
@@ -222,8 +222,8 @@ export function startAiLink(engine?: PaperEngine): void {
   hot.on('hl-ai:trades', (data: { trades?: TradeProposal[] } | undefined) => {
     useAiTradeStore.getState().receive(Array.isArray(data?.trades) ? data!.trades : []);
   });
-  hot.on('hl-signals:list', (data: { signals?: StrategySignal[] } | undefined) => {
-    useSignalStore.getState().receive(Array.isArray(data?.signals) ? data!.signals : []);
+  hot.on('hl-signals:list', (data: { signals?: StrategySignal[]; sources?: SignalSource[] } | undefined) => {
+    useSignalStore.getState().receive(Array.isArray(data?.signals) ? data!.signals : [], Array.isArray(data?.sources) ? data!.sources : []);
   });
   hot.on('vite:ws:disconnect', () => useAiOverlayStore.getState().setConnected(false));
   hot.on('vite:ws:connect', () => {

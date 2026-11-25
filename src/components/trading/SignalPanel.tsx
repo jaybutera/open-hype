@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useSignalStore } from '../../store/useSignalStore.ts';
 import { useMarketStore } from '../../store/useMarketStore.ts';
 import { useTradeSetupStore } from '../../store/useTradeSetupStore.ts';
@@ -6,6 +7,9 @@ import { formatEt, utcToChartTime } from '../../utils/chartTime.ts';
 
 /** Cards shown; older signals are counted in the header. The right column does not scroll. */
 const MAX_CARDS = 4;
+
+/** A runner reports every minute; after this long without a push it counts as down. */
+const STALE_MS = 150_000;
 
 const STATUS_COLOR: Record<StrategySignal['status'], string> = {
   resting: '#f0b90b',
@@ -63,13 +67,21 @@ const isOpen = (s: StrategySignal) => s.status === 'resting' || s.status === 'fi
  */
 export function SignalPanel() {
   const signals = useSignalStore(s => s.signals);
+  const sources = useSignalStore(s => s.sources);
+  // A source that stops reporting sends nothing to re-render on; the clock tick turns its dot red.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick(n => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
   const enabledIds = useSignalStore(s => s.enabledIds);
   const unseenIds = useSignalStore(s => s.unseenIds);
   const toggle = useSignalStore(s => s.toggle);
   const dismiss = useSignalStore(s => s.dismiss);
   const clearAll = useSignalStore(s => s.clearAll);
 
-  if (signals.length === 0) return null;
+  if (signals.length === 0 && sources.length === 0) return null;
+  const now = Date.now();
 
   const onClick = (s: StrategySignal) => {
     const turningOn = !enabledIds.includes(s.id);
@@ -77,7 +89,6 @@ export function SignalPanel() {
     if (turningOn) paneFor(s.asset);
   };
 
-  const now = Date.now();
   // Plans still in play first; the list arrives newest first and the sort is stable.
   const shown = [...signals].sort((a, b) => Number(isOpen(b)) - Number(isOpen(a))).slice(0, MAX_CARDS);
   const hidden = signals.length - shown.length;
@@ -87,10 +98,29 @@ export function SignalPanel() {
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
         <span style={{ fontSize: 11, color: '#8a8f98', fontWeight: 600 }}>Strategy signals</span>
         {hidden > 0 && <span style={{ fontSize: 10, color: '#555', marginLeft: 6 }}>+{hidden} older</span>}
-        <button className="btn-ghost" onClick={clearAll} style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 6px' }}>
-          clear
-        </button>
+        {signals.length > 0 && (
+          <button className="btn-ghost" onClick={clearAll} style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 6px' }}>
+            clear
+          </button>
+        )}
       </div>
+      {sources.map(src => {
+        const alive = now - src.lastPushAt < STALE_MS;
+        const n = signals.filter(s => s.source === src.source).length;
+        return (
+          <div
+            key={src.source}
+            data-testid="signal-source"
+            title={[src.watching, src.lagSec !== undefined ? `last report ${src.lagSec}s after the bar close` : ''].filter(Boolean).join('\n')}
+            style={{ display: 'flex', gap: 6, fontSize: 10, color: '#8a8f98', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden' }}
+          >
+            <span style={{ color: alive ? 'var(--up)' : 'var(--down)' }}>●</span>
+            <span style={{ color: '#c5c9d1' }}>{src.source}</span>
+            <span>{alive ? (n === 0 ? 'running, no setups' : `running, ${n} setup${n === 1 ? '' : 's'}`) : 'not reporting'}</span>
+            <span style={{ marginLeft: 'auto' }}>{alive ? '' : 'last '}{when(src.lastPushAt, now)}</span>
+          </div>
+        );
+      })}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {shown.map(s => {
           const on = enabledIds.includes(s.id);

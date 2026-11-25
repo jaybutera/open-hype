@@ -444,7 +444,8 @@ def main() -> int:
                     signals += build_signals(a, read_trace(tp), stores[a].rows, source, minute)
             signals.sort(key=lambda s: -s["time"])
             signals = signals[:100]
-            body = {"source": source, "replace": True, "signals": signals}
+            body = {"source": source, "replace": True, "signals": signals, "lagSec": round(time.time() - minute, 1),
+                    "watching": f"{' '.join(a.replace('xyz:', '') for a in assets)}, {' '.join(args.timeframes)}"}
             if args.dry_run:
                 print(json.dumps(body, indent=1))
             else:

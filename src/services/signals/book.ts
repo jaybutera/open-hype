@@ -43,6 +43,17 @@ export interface StrategySignal {
   updatedAt: number;
 }
 
+/** A pusher and its last push: the page shows it so a quiet strategy can be told from a dead one. */
+export interface SignalSource {
+  source: string;
+  /** When the server last received a push from it, UTC ms. */
+  lastPushAt: number;
+  /** Seconds between the bar close the push was computed for and the push, when the pusher says. */
+  lagSec?: number;
+  /** What it runs on, e.g. "SP500 XYZ100 CL SILVER, 5m 15m 1h 4h". */
+  watching?: string;
+}
+
 export class SignalValidationError extends Error {
   readonly details: string[];
   constructor(message: string, details: string[] = []) {
@@ -169,13 +180,18 @@ export class SignalBook {
   private signals = new Map<string, StrategySignal>();
   /** Ids the user removed; a pusher that keeps sending them does not bring them back. */
   private dismissed = new Set<string>();
+  private sources = new Map<string, SignalSource>();
+
+  listSources(): SignalSource[] {
+    return [...this.sources.values()].sort((a, b) => a.source.localeCompare(b.source));
+  }
 
   list(): StrategySignal[] {
     return [...this.signals.values()].sort((a, b) => b.time - a.time || a.id.localeCompare(b.id));
   }
 
   /**
-   * Body `{ source, signals, replace? }`. With `replace`, `signals` is the
+   * Body `{ source, signals, replace?, lagSec?, watching? }`. With `replace`, `signals` is the
    * source's whole current list and its other signals are dropped. Nothing is
    * stored when any signal is invalid.
    */
@@ -205,6 +221,10 @@ export class SignalBook {
     if (details.length > 0) {
       throw new SignalValidationError(`${details.length} problem(s); nothing was stored, fix and push again`, details);
     }
+
+    const lag = typeof b.lagSec === 'number' && Number.isFinite(b.lagSec) && b.lagSec >= 0 ? Math.round(b.lagSec * 10) / 10 : undefined;
+    const watching = str(b.watching, 120);
+    this.sources.set(source, { source, lastPushAt: now, ...(lag !== undefined ? { lagSec: lag } : {}), ...(watching ? { watching } : {}) });
 
     const added: string[] = [];
     const updated: string[] = [];

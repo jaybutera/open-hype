@@ -51,6 +51,12 @@ describe('SignalBook', () => {
     expect(() => book.push({ source: 'v3', signals: [sig({ shapes: [{ type: 'circle' }] })] }, NOW)).toThrow(SignalValidationError);
   });
 
+  it('records each source\'s last push, also an empty one', () => {
+    const book = new SignalBook();
+    book.push({ source: 'v3', replace: true, signals: [], lagSec: 6.24, watching: 'SP500, 5m' }, NOW);
+    expect(book.listSources()).toEqual([{ source: 'v3', lastPushAt: NOW, lagSec: 6.2, watching: 'SP500, 5m' }]);
+  });
+
   it('drops signals older than the age limit', () => {
     const book = new SignalBook();
     book.push({ source: 'v3', signals: [sig({ time: NOW - SIGNAL_MAX_AGE_MS - 1 })] }, NOW);

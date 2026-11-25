@@ -13,8 +13,8 @@ the risk setting, to execute like any other. A card stays only while the strateg
 The dev server (`vite-signals-plugin.ts`) keeps the list in memory. Validation and storage are in
 `src/services/signals/book.ts`.
 
-    GET    /api/signals         { signals }, newest first
-    POST   /api/signals         { source, signals, replace? }
+    GET    /api/signals         { signals, sources }, newest first; sources = each pusher's last push
+    POST   /api/signals         { source, signals, replace?, lagSec?, watching? }
     DELETE /api/signals[?id=]   remove one signal, or all
 
 `source` names the pusher (`v3`). A signal is upserted by `source` plus its `key`, so a later push
@@ -90,6 +90,12 @@ files are, and otherwise from 5m and 15m candles.
 
     scripts/strategy-signals.py --once --dry-run     # one cycle, print the signals
     scripts/strategy-signals.py --url http://100.117.74.55:3000
+
+`scripts/signals.sh start|stop|restart|status|logs` controls the box unit from the laptop; `start`
+also copies the presets to box, so run it after a change to `v3.rhai` or `v3.toml`. Every push
+carries `lagSec` (seconds after the bar close) and `watching`; the panel shows one line per source
+with a green dot while it reports each minute and a red one after 150 s of silence, so a strategy
+with no setups can be told from one that is down.
 
 It needs `uv`, the presets (`ICT_STRATEGIES_DIR`, default `~/src/ict-strategies`) and an engine
 binary built from the backtest-engine `v3` branch (`BT_BIN` or `--engine`). On box it runs as the

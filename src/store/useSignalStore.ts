@@ -1,15 +1,17 @@
 import { create } from 'zustand';
-import type { StrategySignal } from '../services/signals/book.ts';
+import type { SignalSource, StrategySignal } from '../services/signals/book.ts';
 
 interface SignalStore {
   /** Signals pushed to the dev server's /api/signals, newest first. */
   signals: StrategySignal[];
+  /** The pushers and when each last reported. */
+  sources: SignalSource[];
   /** Signals drawn on the chart. Nothing is drawn until a card is clicked. */
   enabledIds: string[];
   /** Signals that arrived while the page was open and have not been clicked yet. */
   unseenIds: string[];
   /** Replace the list from the server. Ids that were not there before count as unseen, except on the first list. */
-  receive: (signals: StrategySignal[]) => void;
+  receive: (signals: StrategySignal[], sources?: SignalSource[]) => void;
   toggle: (id: string) => void;
   /** Remove one signal here and on the server. */
   dismiss: (id: string) => void;
@@ -25,10 +27,11 @@ function deleteOnServer(id?: string) {
 
 export const useSignalStore = create<SignalStore>((set, get) => ({
   signals: [],
+  sources: [],
   enabledIds: [],
   unseenIds: [],
 
-  receive: (signals) => {
+  receive: (signals, sources) => {
     const ids = new Set(signals.map(s => s.id));
     const first = !loaded;
     loaded = true;
@@ -37,6 +40,7 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
       const fresh = first ? [] : signals.filter(x => !known.has(x.id)).map(x => x.id);
       return {
         signals,
+        sources: sources ?? s.sources,
         enabledIds: s.enabledIds.filter(id => ids.has(id)),
         unseenIds: [...s.unseenIds.filter(id => ids.has(id)), ...fresh],
       };
@@ -70,5 +74,5 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
 /** Tests only: forget that a first list was received. */
 export function resetSignalStoreForTest() {
   loaded = false;
-  useSignalStore.setState({ signals: [], enabledIds: [], unseenIds: [] });
+  useSignalStore.setState({ signals: [], sources: [], enabledIds: [], unseenIds: [] });
 }

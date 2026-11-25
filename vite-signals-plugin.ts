@@ -7,8 +7,8 @@ import { SignalBook, SignalValidationError } from './src/services/signals/book.t
  * anything that can POST JSON) reports trade setups, and the page lists them
  * in the right column. Clicking one draws it on the chart. Dev server only.
  *
- *   GET    /api/signals        -> { signals } newest first
- *   POST   /api/signals        -> { source, signals: Signal[], replace? }; upsert by source + key
+ *   GET    /api/signals        -> { signals, sources } newest first; sources = each pusher's last push time
+ *   POST   /api/signals        -> { source, signals: Signal[], replace?, lagSec?, watching? }; upsert by source + key
  *   DELETE /api/signals[?id=]  -> remove one signal (or all); a removed id stays out while its source keeps sending it
  *
  * A Signal is { key, asset, entry, stop, target, time, side?, tf?, strategy?,
@@ -19,7 +19,7 @@ import { SignalBook, SignalValidationError } from './src/services/signals/book.t
  * `replace: true` on every cycle, so a restarted server is filled again within
  * one cycle.
  *
- * Websocket events: server -> client hl-signals:list { signals }, client -> server hl-signals:hello {}.
+ * Websocket events: server -> client hl-signals:list { signals, sources }, client -> server hl-signals:hello {}.
  */
 const MAX_BODY = 2_000_000;
 
@@ -51,7 +51,7 @@ export function signalsPlugin(): Plugin {
   return {
     name: 'hl-signals',
     configureServer(server) {
-      const payload = () => ({ signals: book.list() });
+      const payload = () => ({ signals: book.list(), sources: book.listSources() });
       const broadcast = () => server.ws.send('hl-signals:list', payload());
       server.ws.on('hl-signals:hello', (_data: unknown, client) => client.send('hl-signals:list', payload()));
 
@@ -63,7 +63,8 @@ export function signalsPlugin(): Plugin {
           if (req.method === 'GET') return sendJson(res, 200, payload());
           if (req.method === 'POST') {
             const result = book.push(await readJson(req));
-            if (result.added.length || result.updated.length || result.removed.length) broadcast();
+            // Every push goes out, also an unchanged one: the page shows when each source last reported.
+            broadcast();
             if (result.added.length) server.config.logger.info(`[signals] new: ${result.added.join(', ')}`);
             return sendJson(res, 200, result);
           }

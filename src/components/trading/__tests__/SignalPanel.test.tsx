@@ -19,6 +19,19 @@ describe('SignalPanel', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('shows each runner with a live dot, also with no setups, and flags one that stopped reporting', () => {
+    act(() => useSignalStore.getState().receive([], [
+      { source: 'v3', lastPushAt: Date.now() - 20_000, lagSec: 6.2, watching: 'SP500 XYZ100, 5m 15m' },
+      { source: 'old', lastPushAt: Date.now() - 600_000 },
+    ]));
+    render(<SignalPanel />);
+    const rows = screen.getAllByTestId('signal-source');
+    expect(rows[0]).toHaveTextContent('v3running, no setups');
+    expect(rows[0]).toHaveAttribute('title', 'SP500 XYZ100, 5m 15m\nlast report 6.2s after the bar close');
+    expect(rows[1]).toHaveTextContent('not reporting');
+    expect(screen.queryByText('clear')).toBeNull();
+  });
+
   it('shows a card per signal with levels, R and status: four at most, open plans first', () => {
     act(() => useSignalStore.getState().receive([
       signal('a', { status: 'cancelled', statusNote: 'gap inverted' }),
