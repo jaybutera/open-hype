@@ -34,9 +34,9 @@ except ValueError:
     sys.exit("dev server did not answer: " + last[:200])
 for s in d.get("sources", []):
     age = time.time() - s["lastPushAt"] / 1000
-    print(f"{s[\"source\"]}: last report {age:.0f}s ago, {s.get(\"lagSec\", \"?\")}s after the bar close; {s.get(\"watching\", \"\")}")
+    print("%s: last report %.0fs ago, %ss after the bar close; %s" % (s["source"], age, s.get("lagSec", "?"), s.get("watching", "")))
 for s in d["signals"]:
-    print(f"  {s[\"side\"]:5} {s[\"asset\"]:11} {s.get(\"tf\", \"\"):3} entry {s[\"entry\"]} stop {s[\"stop\"]} target {s[\"target\"]}")
+    print("  %-5s %-11s %-3s entry %s stop %s target %s" % (s["side"], s["asset"], s.get("tf", ""), s["entry"], s["stop"], s["target"]))
 if not d["signals"]:
     print("  no live setups")'
 }
